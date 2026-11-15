@@ -1,0 +1,43 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hermes}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-hermes}
+    volumes:
+      - hermes_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hermes} -d ${POSTGRES_DB:-hermes}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  hermes-api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${HERMES_PORT:-5258}:8080"
+    environment:
+      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=${POSTGRES_DB:-hermes};Username=${POSTGRES_USER:-hermes};Password=${POSTGRES_PASSWORD}"
+      Hermes__ServerName: ${HERMES_SERVER_NAME:-Hermes Media Server}
+      Hermes__ArtworkDirectory: /data/artwork
+      Hermes__TranscodeDirectory: /tmp/hermes-transcodes
+      Hermes__TmdbApiKey: ${HERMES_TMDB_API_KEY:-}
+      Security__JwtSigningKey: ${HERMES_JWT_SECRET:?Set HERMES_JWT_SECRET (min 32 chars) in .env}
+      Security__StreamTicketSecret: ${HERMES_STREAM_TICKET_SECRET:?Set HERMES_STREAM_TICKET_SECRET (min 32 chars) in .env}
+    volumes:
+      - hermes_artwork:/data/artwork
+      - hermes_transcodes:/tmp/hermes-transcodes
+      - ${HERMES_MEDIA_PATH:-./sample-media}:/media:ro
+
+volumes:
+  hermes_pgdata:
+  hermes_artwork:
+  hermes_transcodes:
