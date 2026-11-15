@@ -19,9 +19,10 @@ public sealed class TagLibAudioMetadataReader : IAudioMetadataReader
                 ? Path.GetFileNameWithoutExtension(filePath)
                 : tagFile.Tag.Title.Trim();
 
-            var artist = tagFile.Tag.FirstPerformer
-                ?? tagFile.Tag.FirstAlbumArtist
-                ?? "Unknown Artist";
+            var rawArtist = !string.IsNullOrWhiteSpace(tagFile.Tag.FirstPerformer)
+                ? tagFile.Tag.FirstPerformer
+                : tagFile.Tag.FirstAlbumArtist;
+            var artist = string.IsNullOrWhiteSpace(rawArtist) ? "Unknown Artist" : rawArtist.Trim();
 
             var album = string.IsNullOrWhiteSpace(tagFile.Tag.Album)
                 ? "Unknown Album"
@@ -51,7 +52,7 @@ public sealed class TagLibAudioMetadataReader : IAudioMetadataReader
                 bitDepth,
                 artwork is { Length: > 0 } ? artwork : null);
         }
-        catch (Exception ex) when (ex is TagLib.CorruptFileException or TagLib.UnsupportedFormatException)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             var ext = Path.GetExtension(filePath).TrimStart('.').ToLowerInvariant();
             return new ProbedAudioTrackMetadata(

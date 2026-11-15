@@ -186,6 +186,8 @@ public sealed partial class LibraryScannerService(
                 seriesByKey[seriesKey] = series;
             }
 
+            await TryEnrichSeriesFromTmdbAsync(series, seriesTitle, year, cancellationToken);
+
             var season = series.Seasons.FirstOrDefault(s => s.SeasonNumber == seasonNumber);
             if (season is null)
             {
@@ -290,7 +292,14 @@ public sealed partial class LibraryScannerService(
                 string? artworkHash = null;
                 if (meta.EmbeddedArtworkBytes is { Length: > 0 })
                 {
-                    artworkHash = await artworkStore.SaveArtworkVariantsAsync(meta.EmbeddedArtworkBytes, cancellationToken);
+                    try
+                    {
+                        artworkHash = await artworkStore.SaveArtworkVariantsAsync(meta.EmbeddedArtworkBytes, cancellationToken);
+                    }
+                    catch (Exception) when (!cancellationToken.IsCancellationRequested)
+                    {
+                        artworkHash = null;
+                    }
                 }
 
                 album = new Album(artist.Id, meta.AlbumTitle, meta.Year, artworkHash);
@@ -346,16 +355,56 @@ public sealed partial class LibraryScannerService(
             return;
         }
 
-        var candidates = await tmdbClient.SearchAsync(LibraryMediaType.Movies, parsedTitle, parsedYear, cancellationToken);
-        var match = candidates.FirstOrDefault();
-        if (match is null)
+        var enriched = await TryFetchTmdbEnrichmentAsync(LibraryMediaType.Movies, parsedTitle, parsedYear, cancellationToken);
+        if (enriched is not null)
+        {
+            var (match, posterHash, backdropHash) = enriched.Value;
+            movie.ApplyScannedMetadata(match.Title, match.Year ?? parsedYear, match.Overview, match.TmdbId, posterHash, backdropHash);
+        }
+    }
+
+    private async Task TryEnrichSeriesFromTmdbAsync(
+        TvSeries series,
+        string parsedTitle,
+        int? parsedYear,
+        CancellationToken cancellationToken)
+    {
+        if (series.IsMetadataLocked || series.TmdbId is not null)
         {
             return;
         }
 
-        var posterHash = await TryCacheTmdbArtworkAsync(match.PosterPath, cancellationToken);
-        var backdropHash = await TryCacheTmdbArtworkAsync(match.BackdropPath, cancellationToken);
-        movie.ApplyScannedMetadata(match.Title, match.Year ?? parsedYear, match.Overview, match.TmdbId, posterHash, backdropHash);
+        var enriched = await TryFetchTmdbEnrichmentAsync(LibraryMediaType.Series, parsedTitle, parsedYear, cancellationToken);
+        if (enriched is not null)
+        {
+            var (match, posterHash, backdropHash) = enriched.Value;
+            series.ApplyScannedMetadata(match.Title, match.Year ?? parsedYear, match.Overview, match.TmdbId, posterHash, backdropHash);
+        }
+    }
+
+    private async Task<(TmdbSearchCandidate Match, string? PosterHash, string? BackdropHash)?> TryFetchTmdbEnrichmentAsync(
+        LibraryMediaType mediaType,
+        string parsedTitle,
+        int? parsedYear,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var candidates = await tmdbClient.SearchAsync(mediaType, parsedTitle, parsedYear, cancellationToken);
+            var match = candidates.FirstOrDefault();
+            if (match is null)
+            {
+                return null;
+            }
+
+            var posterHash = await TryCacheTmdbArtworkAsync(match.PosterPath, cancellationToken);
+            var backdropHash = await TryCacheTmdbArtworkAsync(match.BackdropPath, cancellationToken);
+            return (match, posterHash, backdropHash);
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            return null;
+        }
     }
 
     private async Task<string?> TryCacheTmdbArtworkAsync(string? remotePath, CancellationToken cancellationToken)
@@ -475,7 +524,7 @@ public sealed partial class LibraryScannerService(
     [GeneratedRegex(@"^(?<title>.+?)\s*[\(\[](?<year>(?:19|20)\d{2})[\)\]](?:\s+.*)?$")]
     private static partial Regex MovieParenthesizedYearRegex();
 
-    [GeneratedRegex(@"^(?<title>.+?)[.\s_-]+(?<year>(?:19|20)\d{2})$")]
+    [GeneratedRegex(@"^(?<title>.+?)[.\s_-]+(?<year>(?:19|20)\d{2})(?:[.\s_-]+.*)?$")]
     private static partial Regex MovieTrailingYearRegex();
 
     [GeneratedRegex(@"^(?<series>.+?)[.\s_-]+[Ss](?<season>\d{1,2})[Ee](?<episode>\d{1,3})")]
