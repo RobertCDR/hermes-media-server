@@ -30,6 +30,14 @@ public sealed record WatchProgressDto(
     bool IsWatched,
     DateTimeOffset UpdatedAtUtc);
 
+public sealed record WatchProgressUpdatedEvent(
+    Guid? MovieId,
+    Guid? EpisodeId,
+    long PositionMs,
+    long DurationMs,
+    bool IsWatched,
+    DateTimeOffset UpdatedAtUtc);
+
 public sealed record MovieSummaryDto(
     Guid Id,
     string Title,

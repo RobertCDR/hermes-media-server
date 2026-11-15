@@ -1,7 +1,9 @@
 using System.Security.Claims;
 using Hermes.Api.Features.System;
+using Hermes.Api.Hubs;
 using Hermes.Domain.Entities;
 using Hermes.Infrastructure.Persistence;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 
 namespace Hermes.Api.Features.Cinema;
@@ -21,6 +23,7 @@ public static class WatchProgressEndpoints
         UpdateWatchProgressRequest request,
         ClaimsPrincipal principal,
         HermesDbContext db,
+        IHubContext<PlaybackSyncHub> hubContext,
         TimeProvider timeProvider,
         CancellationToken cancellationToken)
     {
@@ -78,6 +81,18 @@ public static class WatchProgressEndpoints
 
         await db.SaveChangesAsync(cancellationToken);
 
-        return Results.Ok(CinemaEndpoints.MapProgress(progress));
+        var dto = CinemaEndpoints.MapProgress(progress)!;
+        var realtimeEvent = new WatchProgressUpdatedEvent(
+            progress.MovieId,
+            progress.EpisodeId,
+            dto.PositionMs,
+            dto.DurationMs,
+            dto.IsWatched,
+            dto.UpdatedAtUtc);
+        await hubContext.Clients
+            .Group(PlaybackSyncHub.UserGroupName(userId))
+            .SendAsync("WatchProgressUpdated", realtimeEvent, cancellationToken);
+
+        return Results.Ok(dto);
     }
 }

@@ -5,13 +5,16 @@ using System.Text;
 using Hermes.Api.Features.Admin;
 using Hermes.Api.Features.Auth;
 using Hermes.Api.Features.Cinema;
+using Hermes.Api.Features.Music;
 using Hermes.Api.Features.Setup;
 using Hermes.Api.Features.Streaming;
 using Hermes.Api.Features.System;
+using Hermes.Api.Hubs;
 using Hermes.Domain.Enums;
 using Hermes.Domain.Ports;
 using Hermes.Infrastructure.Media;
 using Hermes.Infrastructure.Persistence;
+using Hermes.Infrastructure.Realtime;
 using Hermes.Infrastructure.Security;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.RateLimiting;
@@ -73,6 +76,10 @@ builder.Services.AddSingleton<SubtitleExtractorService>();
 builder.Services.AddSingleton<LibraryScanChannel>();
 builder.Services.AddScoped<LibraryScannerService>();
 builder.Services.AddHostedService<LibraryScanWorker>();
+builder.Services.AddSingleton<IDevicePresenceRegistry, InMemoryDevicePresenceRegistry>();
+builder.Services.AddSingleton<PlaybackSessionLockProvider>();
+builder.Services.AddScoped<PlaybackConnectService>();
+builder.Services.AddSignalR();
 
 builder.Services.AddDbContext<HermesDbContext>((sp, options) =>
 {
@@ -101,6 +108,20 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
             ClockSkew = TimeSpan.FromSeconds(30),
             NameClaimType = ClaimTypes.Name,
             RoleClaimType = ClaimTypes.Role
+        };
+        options.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = context =>
+            {
+                var accessToken = context.Request.Query["access_token"];
+                var path = context.HttpContext.Request.Path;
+                if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs/sync"))
+                {
+                    context.Token = accessToken;
+                }
+
+                return Task.CompletedTask;
+            }
         };
     });
 
@@ -135,6 +156,9 @@ app.MapArtworkEndpoints();
 app.MapCinemaEndpoints();
 app.MapWatchProgressEndpoints();
 app.MapStreamEndpoints();
+app.MapMusicEndpoints();
+app.MapPlaylistEndpoints();
+app.MapHub<PlaybackSyncHub>("/hubs/sync");
 
 await app.RunAsync();
 
