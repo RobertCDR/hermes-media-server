@@ -35,16 +35,16 @@ Thank you for contributing to **Hermes Media Server**. Please follow the archite
 Run all checks locally from the repository root:
 
 ```bash
-# 1. Backend build, architecture rules, unit & integration tests (Release)
-dotnet test backend/Hermes.slnx --configuration Release --verbosity minimal
+# 1. Backend build, architecture rules, unit & integration tests + coverage (Release)
+dotnet test backend/Hermes.slnx --configuration Release --verbosity minimal --collect:"XPlat Code Coverage" --settings backend/coverlet.runsettings --results-directory backend/TestResults
 
 # 2. Transitive NuGet security audit
 dotnet list backend/Hermes.slnx package --vulnerable --include-transitive
 
-# 3. Flutter static analysis and unit/widget tests
+# 3. Flutter static analysis and unit/widget tests + LCOV coverage
 cd client
 flutter analyze --fatal-infos
-flutter test
+flutter test --coverage
 ```
 
 All PRs targeting `main` are validated by GitHub Actions:

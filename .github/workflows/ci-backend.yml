@@ -24,5 +24,73 @@ jobs:
       - name: Build solution
         run: dotnet build backend/Hermes.slnx --configuration Release --no-restore
 
-      - name: Run unit and integration tests
-        run: dotnet test backend/Hermes.slnx --configuration Release --no-build --verbosity normal
+      - name: Run unit and integration tests with coverage
+        run: >-
+          dotnet test backend/Hermes.slnx
+          --configuration Release
+          --no-build
+          --verbosity normal
+          --collect:"XPlat Code Coverage"
+          --settings backend/coverlet.runsettings
+          --results-directory backend/TestResults
+
+      - name: Publish backend coverage summary
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import glob
+          import os
+          import xml.etree.ElementTree as ET
+
+          files = sorted(glob.glob("backend/TestResults/**/coverage.cobertura.xml", recursive=True))
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+          lines_out = ["### Backend Code Coverage (.NET 10 Union: Unit + Integration)", ""]
+
+          if not files:
+              lines_out.append("_No Cobertura coverage files were generated._")
+          else:
+              by_pkg = {}
+              for path in files:
+                  tree = ET.parse(path)
+                  root = tree.getroot()
+                  for pkg in root.findall(".//package"):
+                      pkg_name = pkg.attrib.get("name", "unknown")
+                      pkg_lines = by_pkg.setdefault(pkg_name, {})
+                      for cls in pkg.findall(".//class"):
+                          filename = cls.attrib.get("filename", "").replace("\\", "/")
+                          for ln in cls.findall("./lines/line"):
+                              key = (filename, int(ln.attrib["number"]))
+                              hits = int(ln.attrib.get("hits", "0"))
+                              pkg_lines[key] = pkg_lines.get(key, 0) + hits
+
+              lines_out.append("| Assembly | Covered Lines | Total Lines | Line Coverage |")
+              lines_out.append("| :--- | ---: | ---: | ---: |")
+              grand_covered = 0
+              grand_total = 0
+              for pkg_name in sorted(by_pkg):
+                  pkg_lines = by_pkg[pkg_name]
+                  total = len(pkg_lines)
+                  covered = sum(1 for h in pkg_lines.values() if h > 0)
+                  pct = (covered / total * 100.0) if total else 0.0
+                  grand_covered += covered
+                  grand_total += total
+                  lines_out.append(f"| `{pkg_name}` | {covered} | {total} | **{pct:.2f}%** |")
+
+              grand_pct = (grand_covered / grand_total * 100.0) if grand_total else 0.0
+              lines_out.append(f"| **Total** | **{grand_covered}** | **{grand_total}** | **{grand_pct:.2f}%** |")
+
+          text = "\n".join(lines_out) + "\n"
+          print(text)
+          if summary_path:
+              with open(summary_path, "a", encoding="utf-8") as fh:
+                  fh.write(text)
+          PY
+
+      - name: Upload backend coverage reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage-cobertura
+          path: backend/TestResults/**/coverage.cobertura.xml
+          if-no-files-found: error
