@@ -2,31 +2,31 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans (chosen inline) or superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Construirea completă, de la zero, a platformei **Hermes Media Server** într-un repository public curat (`<repo-root>`), livrată prin 10 PR-uri verticale testate automat (Backend `.NET 10 LTS` + `PostgreSQL 17` + `FFmpeg` + `SignalR v2` și Client nativ `Flutter` Windows/Android cu `media_kit`/`libmpv`, `Dual-World Hub: Cinema | Music` și tema `Obsidian Crimson`).
+**Goal:** Build **Hermes Media Server** completely from scratch in a clean public repository (`<repo-root>`), delivered through 10 automated, vertically tested PRs (Backend `.NET 10 LTS` + `PostgreSQL 17` + `FFmpeg` + `SignalR v2` and native `Flutter` client for Windows/Android with `media_kit`/`libmpv`, `Dual-World Hub: Cinema | Music`, and the `Obsidian Crimson` token theme).
 
-**Architecture:** Monorepo structurat în `backend/` (**Vertical Slice Architecture + Pragmatic DDD** pe `.NET 10`: `Hermes.Domain` cu entități bogate, invariante încapsulate și `Ports/` fără dependențe NuGet; `Hermes.Infrastructure` cu `HermesDbContext` pe PostgreSQL 17 și adaptoare externe; `Hermes.Api` organizat pe `Features/` verticale fără stratul redundant `Application` sau `GenericRepository<T>`; plus `Hermes.UnitTests` cu `NetArchTest.Rules` și `Hermes.IntegrationTests` cu `Testcontainers.PostgreSql`), `client/` (aplicație nativă Flutter compilată GPU cu `Riverpod`, `media_kit`, `audio_service` și `smtc_windows`) și `deploy/` (`Dockerfile` multi-stage cu `ffmpeg` + `docker-compose.yml`). Starea media folosește modelul `1:N MediaSources` per film/episod, artwork pre-generat WebP pe disc cu `ETag` (zero BLOB-uri în SQL), streaming hibrid Direct Play + FFmpeg HLS/Audio transcoding și sincronizare deterministă cu versiune monotonică `long Version`.
+**Architecture:** Monorepo organized into `backend/` (**Vertical Slice Architecture + Pragmatic DDD** on `.NET 10`: `Hermes.Domain` with rich entities, encapsulated invariants, and zero-dependency `Ports/`; `Hermes.Infrastructure` with `HermesDbContext` on PostgreSQL 17 and external adapters; `Hermes.Api` structured into vertical `Features/` without a redundant `Application` layer or `GenericRepository<T>`; plus `Hermes.UnitTests` with `NetArchTest.Rules` and `Hermes.IntegrationTests` with `Testcontainers.PostgreSql`), `client/` (GPU-rendered native Flutter client for Windows & Android), and `deploy/` (multi-stage `Dockerfile` with `ffmpeg` + `docker-compose.yml`). Media state uses a `1:N MediaSources` model per movie/episode, pre-generated WebP artwork on disk with `ETag` (zero BLOBs in SQL), hybrid Direct Play + FFmpeg HLS/Audio transcoding, and deterministic SignalR sync using monotonic `long Version`.
 
-**Tech Stack:** `.NET SDK 10.0.401+`, ASP.NET Core 10, EF Core 10 (`Npgsql.EntityFrameworkCore.PostgreSQL`), `PostgreSQL 17` (`pg_trgm`), `FluentValidation`, `TagLibSharp`, `TMDbLib`, `SkiaSharp`, `FFmpeg`/`FFprobe`, `xUnit`, `NetArchTest.Rules`, `Testcontainers.PostgreSql`, `Flutter 3.x` (Windows & Android), `flutter_riverpod`, `media_kit` (`libmpv`), `audio_service`, `smtc_windows`, `flutter_secure_storage`, `dio`, `signalr_netcore`.
+**Tech Stack:** `.NET SDK 10.0.401+`, ASP.NET Core 10, EF Core 10 (`Npgsql.EntityFrameworkCore.PostgreSQL`), `PostgreSQL 17` (`pg_trgm`), `FluentValidation`, `TagLibSharp`, `SkiaSharp`, `FFmpeg`/`FFprobe`, `xUnit`, `NetArchTest.Rules`, `Testcontainers.PostgreSql`, `Flutter 3.50.0` (`Windows` & `Android`), `http`, `material_ui`.
 
-**Spec:** [2026-11-15-hermes-media-server-design.md](../../specs/2026-11-15-hermes-media-server-design.md) *(și copiat în repo la `docs/specs/2026-11-15-hermes-media-server-design.md` în Task 1)*
+**Spec:** [2026-11-15-hermes-media-server-design.md](../../specs/2026-11-15-hermes-media-server-design.md) *(copied into the repository at `docs/specs/2026-11-15-hermes-media-server-design.md` in Task 1)*
 
 ## Global Constraints
 
-- **Repo vechi neatins:** `<legacy-prototype-repo>` nu se modifică și rămâne arhivă privată de licență.
-- **Organizare Desktop:** La începutul Task 1 se creează `<projects-root>`, se mută `<projects-root>\other-project-a` și `<projects-root>\other-project-b` în `<projects-root>\`, iar noul repo se inițializează în `<repo-root>` (`<local-media-folder>` rămâne pe loc pentru testare).
-- **Zero secrete sau căi personale în Git:** Nicio cheie TMDb, niciun secret JWT, niciun path local (`<local-media-folder>`), IP sau serial hardware nu intră în cod sau config-uri comise.
-- **Calitate strictă la compilare:** `<TargetFramework>net10.0</TargetFramework>`, `<Nullable>enable</Nullable>`, `<TreatWarningsAsErrors>true</TreatWarningsAsErrors>`, `<NuGetAudit>true</NuGetAudit>`, fără `AutoMapper`, fără `GenericRepository<T>` și fără `SixLabors.ImageSharp`.
-- **Zero BLOB-uri în SQL și zero `Task.WhenAll` pe același `DbContext`:** Imaginile stau exclusiv pe disc/volum indexate după `ArtworkHash`, iar `EnsureCreatedAsync()` este interzis (se folosesc doar migrații EF Core reale).
-- **Scanner strict read-only:** `TagLib.File` se deschide doar pentru citire în bloc `using`; fișierele utilizatorului nu sunt modificate niciodată.
-- **Flux Git:** Fiecare Task (1–10) se lucrează pe propriul branch (`feat/pr-XX-...` sau `chore/pr-01-...`), cu commit-uri convenționale atomice și deschidere/merge de PR verificat cu teste verzi.
+- **Legacy repo untouched:** `<legacy-prototype-repo>` is never modified and stays as a private thesis archive.
+- **Desktop workspace layout:** At the start of Task 1, create `<projects-root>`, move `<projects-root>\other-project-a` and `<projects-root>\other-project-b` into `<projects-root>\`, and initialize the new repo at `<repo-root>` (`<local-media-folder>` remains untouched for local manual testing).
+- **Zero secrets or personal paths in Git:** No TMDb API key, JWT secret, local path (`<local-media-folder>`), IP address, or hardware serial may ever enter source code or committed configuration files.
+- **Strict compilation quality:** `<TargetFramework>net10.0</TargetFramework>`, `<Nullable>enable</Nullable>`, `<TreatWarningsAsErrors>true</TreatWarningsAsErrors>`, `<NuGetAudit>true</NuGetAudit>`, zero `AutoMapper`, zero `GenericRepository<T>`, and zero `SixLabors.ImageSharp`.
+- **Zero BLOBs in SQL & zero `Task.WhenAll` on the same `DbContext`:** Images reside strictly on disk/volume indexed by `ArtworkHash`, and `EnsureCreatedAsync()` is forbidden (only real EF Core migrations are allowed).
+- **Strictly read-only scanner:** `TagLib.File` is opened read-only inside a `using` scope; user media files are never mutated.
+- **Git workflow:** Each Task (1–10) is developed on its own branch (`feat/pr-XX-...` or `chore/pr-XX-...`), with atomic conventional commits and PR creation/merge verified by green test runs.
 
 ## Review Focus
 
-1. **Condiție de cursă la First-Run Setup (`POST /api/v1/setup`):** Două request-uri concurente când baza de date nu are utilizatori trebuie să creeze exact un singur cont `Admin` (`201 Created`), iar al doilea să primească `409 Conflict` / `410 Gone` (acoperit în **Task 3**).
-2. **Expirarea tichetului în timpul unui film lung sau sesiuni HLS:** Un `StreamTicket` legat de `(UserId, MediaSourceId)` trebuie să permită cereri HTTP Range și segmente HLS pe toată durata sesiunii active (TTL `6 ore` pentru stream session, reînnoibil) și să respingă cu `403 Forbidden` orice alt `MediaSourceId` (acoperit în **Task 3** și **Task 5**).
-3. **Epuizarea sloturilor FFmpeg (`MaxConcurrentVideoTranscodes = 2`) și procese orfane:** Al 3-lea stream video transcodat simultan trebuie să primească `429 TooManyRequests` cu codul `"transcode_slots_exhausted"` (fără blocarea thread-ului), iar oprirea/expirarea sesiunii trebuie să oprească procesul `ffmpeg` și să șteargă directorul temporar de segmente (acoperit în **Task 5**).
-4. **Mutații SignalR sosite out-of-order și deconectarea dispozitivului activ de redare:** Mutațiile/mesajele cu `Version <= LastAppliedVersion` sunt ignorate fără regresii de UI/seek, iar deconectarea SignalR a `ActiveRendererDeviceId` trece automat sesiunea în `Paused` în DB și notifică grupul utilizatorului fără a porni audio nesolicitat pe dispozitivul telecomandă (acoperit în **Task 6** și **Task 9**).
-5. **Fișiere media dispărute temporar sau cu diacritice în nume:** Când un fișier lipsește la rescanare, scanner-ul setează `MediaSource.MissingSince = utcNow` fără a șterge `Movie`/`Episode` sau `WatchProgress`, și resetează `MissingSince = null` dacă fișierul reapare (acoperit în **Task 4**).
+1. **First-Run Setup race condition (`POST /api/v1/setup`):** Two concurrent requests when the database has zero users must create exactly one `Admin` account (`201 Created`), while the second receives `409 Conflict` / `410 Gone` (covered in **Task 3**).
+2. **Stream ticket expiry during long movies or HLS sessions:** A `StreamTicket` bound to `(UserId, MediaSourceId)` must authorize HTTP Range requests and HLS segments throughout an active session (`6-hour` stream TTL) and reject any other `MediaSourceId` with `403 Forbidden` (covered in **Task 3** and **Task 5**).
+3. **FFmpeg slot exhaustion (`MaxConcurrentVideoTranscodes = 2`) & orphan process prevention:** A third simultaneous transcoded video stream must return `429 TooManyRequests` with `"transcode_slots_exhausted"` (without blocking threads), and stopping/expiring a session must terminate the `ffmpeg` process and delete temporary segment directories (covered in **Task 5**).
+4. **Out-of-order SignalR updates & active renderer disconnection:** Messages/mutations with `Version <= LastAppliedVersion` are ignored without UI/seek regressions, and SignalR disconnection of `ActiveRendererDeviceId` automatically pauses the session in the database and notifies the user group without starting unrequested audio on remote controller devices (covered in **Task 6** and **Task 9**).
+5. **Temporarily missing media files or diacritics in filenames:** When a file is missing during a rescan, the scanner sets `MediaSource.MissingSince = utcNow` without deleting `Movie`/`Episode` or `WatchProgress`, and resets `MissingSince = null` if the file reappears (covered in **Task 4**).
 
 ---
 
@@ -418,7 +418,7 @@ git commit -m "feat(streaming): add Direct Play, FFmpeg video/audio quality tran
 Run: `dotnet test backend/tests/Hermes.IntegrationTests --filter PlaybackHubIntegrationTests`
 Expected: FAIL.
 
-- [ ] **Step 3: Implement `MusicEndpoints` (`pg_trgm` single-query search, zero `Task.WhenAll` on `DbContext`), `PlaylistEndpoints`, `InMemoryDevicePresenceRegistry`, `PlaybackConnectService` (delegant mutațiile pe `PlaybackSession` din Domain), și `PlaybackSyncHub`**
+- [ ] **Step 3: Implement `MusicEndpoints` (`pg_trgm` single-query search, zero `Task.WhenAll` on `DbContext`), `PlaylistEndpoints`, `InMemoryDevicePresenceRegistry`, `PlaybackConnectService` (delegating mutations to `PlaybackSession` in Domain), and `PlaybackSyncHub`**
 
 - [ ] **Step 4: Run full backend test suite (`UnitTests` + `IntegrationTests`)**
 

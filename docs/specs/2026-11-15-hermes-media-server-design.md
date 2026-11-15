@@ -1,59 +1,59 @@
-﻿# Hermes Media Server — Document de Design Tehnic
+﻿# Hermes Media Server — Technical Design Document
 
-**Data:** 2026-11-15  
-**Stare:** Completat după Builder Check — pregătit pentru aprobare  
-**Locație țintă la inițializarea repo-ului:** `<repo-root>` *(folder fără spații pentru compatibilitate Flutter/Android NDK/Gradle; nume produs: **Hermes Media Server**)*  
-**Destinație spec în repo:** `docs/specs/2026-11-15-hermes-media-server-design.md`
-
----
-
-## 1. Intenție & Motivație
-
-**Hermes Media Server** reinventează fostul prototip de licență (`<legacy-prototype-repo>`) — afectat de secrete comise în Git, BLOB-uri binare în EF Core, full-table scans în RAM, lipsă redare video nativă, sync cross-device instabil și cod MAUI duplicat — într-un **produs personal real, intuitiv și enterprise-grade**, construit curat într-un repository public nou pe GitHub.
-
-### Obiective (Goals)
-1. **Media Hub personal all-in-one (`Dual-World Hub: Cinema | Music`):**
-   * **Cinema (stil Stremio / Nuvio):** catalog cu metadate TMDb + fallback local, *Continue Watching*, progres sincronizat cross-device, episoade/sezoane cu Next Episode automat, model multi-sursă per titlu (`1:N MediaSources` cu selector stil Stremio/Torrentio și bază extensibilă pentru addon-uri viitoare), selector de calitate tip YouTube, selector piste audio/subtitrări și **redare video nativă direct în aplicație** (inclusiv profil dedicat HDR/OpenGL pentru monitoare HDR).
-   * **Muzică (Spotify de-bloated):** bibliotecă rapidă, artiști/albume, melodii apreciate, playlist-uri personale, coadă live, Spotify Connect (*telecomandă implicită + transfer explicit pe dispozitiv*), selector de calitate audio stil Spotify (`Lossless` / `Very High` / `High` / `Medium` / `Low`) și redare în fundal nativă (`MediaSession` pe Android, `SMTC` pe Windows).
-2. **Acces sigur LAN / Tailscale / Internet pentru prieteni:** server self-hosted via `docker compose` (PostgreSQL + API + FFmpeg), onboarding Admin, coduri de invitație, stream tickets efemere semnate și comutare transparentă între URL local LAN și URL remote fără re-login.
-3. **Showcase Enterprise & Practici de Echipă:** `.NET 10 LTS`, PostgreSQL, CI/CD GitHub Actions, analiză statică strictă, testare automată la fiecare PR (unit, `Testcontainers.PostgreSql`, multi-client `SignalR`, widget tests) și livrare prin PR-uri verticale mici cu commit-uri convenționale.
-
-### Non-Obiective & Anti-Obiective (v1)
-* **NU browser tab glorificat:** zero Electron, WebView sau Blazor Hybrid; client nativ randat pe GPU.
-* **NU funcții sociale în v1:** fără playlist-uri publice/colaborative sau feed-uri sociale — focus exclusiv pe media server pur, modularizat curat pentru extinderi ulterioare.
-* **NU restricții per-utilizator pe biblioteci în v1:** orice utilizator `Member` autentificat are acces universal la toate bibliotecile activate.
-* **NU migrare DB veche:** pornire 100% curată pe PostgreSQL + re-scanare din media folder (ex. fișierele de test din `<local-media-folder>` adăugate de Admin din UI).
-* **NU lansare/omorâre procese `vlc.exe` pe server** și **NU telecomandă video live / Watch Party** în v1 (doar sync de Watch Progress / Continue Watching pe Video).
-* **NU scriere în fișierele audio ale utilizatorului:** scanner-ul este **strict read-only**.
-* **NU customizare granulară haotică pe fiecare element UI:** personalizare curată bazată pe token-uri semantice și preset-uri.
+**Date:** 2026-11-15  
+**Status:** Completed after Builder Check — approved for implementation  
+**Target Repository Location:** `<repo-root>` *(folder without spaces for Flutter/Android NDK/Gradle compatibility; product name: **Hermes Media Server**)*  
+**Spec Destination in Repo:** `docs/specs/2026-11-15-hermes-media-server-design.md`
 
 ---
 
-## 2. Constrângeri
+## 1. Intent & Motivation
 
-* **Repo vechi neatins:** `<legacy-prototype-repo>` rămâne arhivă privată de licență nemodificată.
-* **Organizare workspace la execuție:** crearea `Desktop\Projects\` și mutarea repo-urilor existente (`ASET`, `eye tracker`) alături de `hermes-media-server` se va executa controlat după faza de planificare, folosind un nume de folder fără spații pentru noul proiect.
-* **Zero secrete sau căi personale în Git:** nicio cheie TMDb, niciun secret JWT, niciun path local (`<local-media-folder>`), IP sau serial hardware nu intră în codebase. Vechea cheie TMDb expusă în repo-ul de licență trebuie revocată de proprietar.
-* **Platforme țintă v1:** Backend `.NET 10 LTS` + Client Flutter pentru **Windows Desktop** și **Android Mobil** (pregătit arhitectural pentru extindere ulterioară spre Android TV / Linux / macOS).
-* **Tooling:** `.NET SDK 10.0.401+` (VS 2026 / VS Code / CLI — VS 2022 nu suportă nativ `.NET 10`), `Flutter SDK`, `Docker` + `PostgreSQL 17`, `FFmpeg`/`FFprobe`.
+**Hermes Media Server** reinvents an earlier bachelor-thesis prototype (`<legacy-prototype-repo>`) — which suffered from secrets committed to Git, binary BLOBs inside EF Core, full-table scans in RAM, no native in-app video player, unstable cross-device sync, and duplicated MAUI code — into a **real, intuitive, enterprise-grade personal product**, built cleanly from scratch in a new public GitHub repository.
+
+### Goals
+1. **All-in-One Personal Media Hub (`Dual-World Hub: Cinema | Music`):**
+   * **Cinema (Stremio / Nuvio style):** catalog with TMDb metadata + local fallback, *Continue Watching*, cross-device watch progress sync, seasons/episodes with automatic Next Episode, multi-source model per title (`1:N MediaSources` with a Stremio/Torrentio-inspired source selector and extensible foundation for future addons), YouTube-style video quality selector, audio/subtitle stream selection, and **native in-app video playback** (including a dedicated OpenGL HDR-safe profile for HDR monitors).
+   * **Music (De-bloated Spotify):** fast library browsing, artists/albums, liked songs, personal playlists, live queue, Spotify Connect (*remote control by default + explicit output transfer*), Spotify-style audio quality selector (`Lossless` / `Very High` / `High` / `Medium` / `Low`), and native OS background playback (`MediaSession` on Android, `SMTC` on Windows).
+2. **Secure LAN / Tailscale / Internet Access for Friends:** self-hosted server via `docker compose` (PostgreSQL + API + FFmpeg), Admin onboarding, invite codes, signed ephemeral stream tickets, and seamless failover between Remote/Tailscale URL and local LAN URL without re-login.
+3. **Enterprise Showcase & Team Practices:** `.NET 10 LTS`, PostgreSQL, GitHub Actions CI/CD, strict static analysis, automated testing per PR (unit, `Testcontainers.PostgreSql`, multi-client `SignalR`, widget tests), and small vertical PRs with conventional commits.
+
+### Non-Goals & Anti-Goals (v1)
+* **NOT a glorified browser tab:** zero Electron, WebView, or Blazor Hybrid; native GPU-rendered client.
+* **NO social features in v1:** no public/collaborative playlists or social feeds — focused strictly on a pure media server, cleanly modularized for future extensions.
+* **NO per-user library permissions in v1:** every authenticated `Member` has universal read access across all enabled libraries.
+* **NO legacy DB migration:** 100% clean PostgreSQL start + fresh scan from media folders (e.g., `<local-media-folder>` added by Admin from the UI).
+* **NO spawning/killing `vlc.exe` processes on the server** and **NO live synchronized video watch parties** in v1 (only Watch Progress / Continue Watching sync on Cinema).
+* **NO modifying user audio files:** library scanning is **strictly read-only**.
+* **NO chaotic per-element UI customization:** clean personalization driven by semantic design tokens and presets.
 
 ---
 
-## 3. Abordări Analizate (Approaches)
+## 2. Constraints
 
-După eliminarea WebView/Electron și a codului MAUI fragmentat, au fost comparate 3 variante peste backend `.NET 10 LTS + PostgreSQL`:
+* **Legacy repo untouched:** `<legacy-prototype-repo>` remains an unmodified private thesis archive.
+* **Workspace organization at execution:** create `Desktop\Projects\` and move existing repositories (`other-project-a`, `other-project-b`) alongside `hermes-media-server`, keeping a space-free folder name for the new project.
+* **Zero secrets or personal paths in Git:** no TMDb API keys, JWT secrets, local paths (`<local-media-folder>`), IP addresses, or hardware serials may enter source code or committed configs. Any legacy TMDb key exposed in the old repo must be revoked by the owner.
+* **v1 target platforms:** `.NET 10 LTS` backend + Flutter client for **Windows Desktop** and **Android Mobile** (architecturally ready for Android TV / Linux / macOS).
+* **Tooling:** `.NET SDK 10.0.401+`, `Flutter SDK`, `Docker` + `PostgreSQL 17`, `FFmpeg`/`FFprobe`.
 
-| Variantă | Stack Client | Avantaje | Trade-off-uri | Verdict |
+---
+
+## 3. Approaches Evaluated
+
+After ruling out WebView/Electron and fragmented MAUI codebases, three client approaches were evaluated on top of the `.NET 10 LTS + PostgreSQL` backend:
+
+| Option | Client Stack | Pros | Trade-offs | Verdict |
 | :--- | :--- | :--- | :--- | :--- |
-| **1. Flutter + `media_kit` (`libmpv`)** *(Ales)* | Dart + Impeller/Skia nativ + `media_kit` + `audio_service` / Windows SMTC | Stack consacrat de *Fladder* / *Nuvio* / *Spotube*. Randare GPU nativă; video ca textură (zero airspace peste OSD/subtitrări); control direct `libmpv` (inclusiv renderer `OpenGL` și dimmed HDR subtitles); MKV/H.265/ASS out-of-the-box; 1 codebase Win + Android. | Stack bilingv (C# backend + Dart client); necesită `mimalloc`/cap buffer pe Windows + bridge SMTC. | **Ales** |
-| **2. Avalonia UI 12 (`.NET 10`)** | C# full-stack + `LibVLCSharp` (Win) + `ExoPlayer` nativ (Android) | Un singur limbaj C#. | MediaPlayer oficial cere licență comercială Pro; `LibVLCSharp` pe Windows suferă de **HWND airspace** peste OSD; fără background media notification nativ out-of-the-box pe Android. | Respins |
-| **3. Nativ separat (`Compose + WinUI 3`)** | Kotlin + Jetpack Compose + Media3 (Android) & WinUI 3 (Windows) | Integrare nativă maximă per OS. | Dublează efortul de UI, cache și sync pe două baze de cod și limbaje complet diferite. | Respins |
+| **1. Flutter + `media_kit` (`libmpv`)** *(Chosen)* | Dart + native Impeller/Skia + `media_kit` + `audio_service` / Windows SMTC | Proven by *Fladder* / *Nuvio* / *Spotube*. Native GPU rendering; video as a texture (zero HWND airspace over OSD/subtitles); direct `libmpv` control (including `OpenGL` renderer and dimmed HDR subtitles); MKV/H.265/ASS out-of-the-box; single Win + Android codebase. | Bilingual stack (C# backend + Dart client); requires Windows SMTC bridge and careful playback state coordination. | **Chosen** |
+| **2. Avalonia UI 12 (`.NET 10`)** | Full-stack C# + `LibVLCSharp` (Win) + native `ExoPlayer` (Android) | Single C# language. | Official MediaPlayer requires commercial Pro license; `LibVLCSharp` on Windows suffers from **HWND airspace** over OSD controls; lacks unified out-of-the-box Android background media notifications. | Rejected |
+| **3. Separate Native (`Compose + WinUI 3`)** | Kotlin + Jetpack Compose + Media3 (Android) & WinUI 3 (Windows) | Maximum OS-native fidelity. | Doubles UI, caching, and sync implementation effort across two completely separate codebases and languages. | Rejected |
 
 ---
 
-## 4. Arhitectura Sistemului & Design Detaliat
+## 4. System Architecture & Detailed Design
 
-### 4.1 Topologie de ansamblu
+### 4.1 High-Level Topology
 
 ```mermaid
 flowchart TB
@@ -79,85 +79,83 @@ flowchart TB
     IMG <--> DISK
 ```
 
-### 4.2 Structura Monorepo Nou (`hermes-media-server`)
-* `backend/`: `Hermes.slnx`, `Directory.Build.props` (`net10.0`, `Nullable=enable`, `TreatWarningsAsErrors=true`, `NuGetAudit=true`), `Directory.Packages.props` (Central Package Management), `.editorconfig`, **`src/Hermes.{Domain,Infrastructure,Api}` (Pragmatic DDD în `Domain` + `Ports/`, adaptoare în `Infrastructure` și Vertical Slices `Features/` în `Api`, fără stratul redundant `Application`)** + `tests/Hermes.{UnitTests,IntegrationTests}` (`NetArchTest.Rules`, `Testcontainers.PostgreSql` + `WebApplicationFactory` + multi-client `HubConnection` sync tests). Fără `AutoMapper` și fără `GenericRepository<T>`.
-* `client/`: proiect Flutter modular (`lib/core`, `lib/features/{auth,cinema,music,player,settings,admin}`, `test/`, `analysis_options.yaml` strict).
-* `deploy/`: `Dockerfile` multi-stage cu `ffmpeg` și user non-root, `docker-compose.yml` (`hermes-api` + `postgres:17-alpine` + volume persistente), `.env.example`, `appsettings.Example.json`.
+### 4.2 Monorepo Structure (`hermes-media-server`)
+* `backend/`: `Hermes.slnx`, `Directory.Build.props` (`net10.0`, `Nullable=enable`, `TreatWarningsAsErrors=true`, `NuGetAudit=true`), `Directory.Packages.props` (Central Package Management), `.editorconfig`, **`src/Hermes.{Domain,Infrastructure,Api}` (Pragmatic DDD in `Domain` + `Ports/`, external adapters in `Infrastructure`, and Vertical Slices `Features/` in `Api`, without a redundant `Application` layer)** + `tests/Hermes.{UnitTests,IntegrationTests}` (`NetArchTest.Rules`, `Testcontainers.PostgreSql` + `WebApplicationFactory` + multi-client `HubConnection` sync tests). No `AutoMapper` and no `GenericRepository<T>`.
+* `client/`: modular Flutter application (`lib/src/core`, `lib/src/features/{auth,shell,cinema,music,settings,admin}`, `test/`, strict `analysis_options.yaml`).
+* `deploy/`: multi-stage `Dockerfile` with `ffmpeg` and non-root runtime user, `docker-compose.yml` (`hermes-api` + `postgres:17-alpine` + persistent volumes), `.env.example`, `appsettings.Example.json`.
 * `.github/workflows/`: `ci-backend.yml`, `ci-client.yml`, `security.yml` (`dotnet list package --vulnerable`, Gitleaks, CodeQL), `docker.yml`.
 
-### 4.3 Securitate, Onboarding, Acces Prieteni & Multi-Endpoint Client
+### 4.3 Security, Onboarding, Friend Access & Multi-Endpoint Client
 1. **First-Run Setup & Invite Codes:**
-   * Dacă nu există niciun utilizator, `/api/v1/setup` permite crearea primului cont `Admin`, apoi se dezactivează permanent (`403/410`).
-   * Adminul generează coduri de invitație (cu expirare și număr maxim de utilizări) pentru prieteni (`Member`). Înregistrarea publică deschisă este dezactivată implicit.
-2. **RBAC & Acces Universal pe Biblioteci:**
-   * `Admin`: configurează `MediaLibraryRoots`, declanșează scanări, folosește „Identify / Fix Match”, generează invitații, dezactivează/șterge conturi, generează coduri de reset parolă (fără SMTP) și setează limitele de streaming (`ServerSettings`).
-   * `Member`: acces universal la toate bibliotecile active, propriul watchlist, progres video, playlist-uri și favorite personale. **Zero acces** la operațiuni pe sistemul de fișiere al serverului.
-   * DTO-urile nu expun niciodată email-uri altor utilizatori; toate endpoint-urile în afara auth/setup/health cer `[Authorize]`.
-3. **Autentificare Multi-Device, Multi-Endpoint & Stream Tickets:**
-   * `RefreshToken` stocat per `(UserId, DeviceId, DeviceName)` — login-ul pe telefon nu deconectează PC-ul; toate sesiunile unui user se revocă la `ChangePassword`.
-   * Clientul stochează token-urile exclusiv în `flutter_secure_storage` și suportă configurarea unui **URL Principal (Remote HTTPS)** + **URL Local LAN opțional** pentru același `ServerId` (verificat prin endpoint-ul ușor `/api/v1/system/info`), comutând automat între Wi-Fi acasă și 4G fără re-login sau invalidarea cache-ului de imagini.
-   * Media stream, HLS playlists/segments, subtitrări și artwork folosesc **Stream Tickets efemere** semnate HMAC-SHA256 (`5 minute` TTL pentru media / ticket per sesiune HLS) — **niciodată JWT-ul principal în query string**.
-   * Rate limiting nativ ASP.NET Core pe auth/setup/tickets; Android `allowBackup="false"` și avertisment vizual dacă clientul se conectează prin HTTP simplu pe un endpoint non-LAN.
+   * When no users exist, `/api/v1/setup` creates the initial `Admin` account and then permanently disables itself (`403/410`).
+   * The Admin generates invite codes (with expiration and bounded `MaxUses`) for friends (`Member`). Open public registration is disabled by default.
+2. **RBAC & Universal Library Access:**
+   * `Admin`: configures `MediaLibraryRoots`, triggers scans, uses "Identify / Fix Match", generates invites, disables/deletes accounts, issues temporary one-time password reset codes (no SMTP required), and adjusts streaming limits (`ServerSettings`).
+   * `Member`: universal read access to all active libraries, personal watchlist, watch progress, personal playlists, and liked songs. **Zero access** to server filesystem operations.
+   * DTOs never expose other users' sensitive details; all endpoints outside auth/setup/health require `[Authorize]`.
+3. **Multi-Device Auth, Multi-Endpoint Failover & Stream Tickets:**
+   * `RefreshToken` stored per `(UserId, DeviceId, DeviceName)` — logging in on mobile does not sign out desktop; changing password revokes all device refresh tokens.
+   * The client persists tokens securely and supports a **Primary URL (Remote / Tailscale HTTPS)** plus an optional **Local LAN Fallback URL** validated against the same `ServerId` (via `/api/v1/system/info`), switching transparently between home Wi-Fi and cellular without re-login.
+   * Media streams, HLS playlists/segments, subtitles, and artwork use **ephemeral HMAC-SHA256 Stream Tickets** (`6h` media session / configurable TTL) — **never the primary bearer JWT in query strings**.
+   * Native ASP.NET Core rate limiting on auth/setup/tickets endpoints.
 
-### 4.4 Baza de Date PostgreSQL & Artwork Store
-* **Migrații reale:** aplicare controlată prin `Database.MigrateAsync()` / migrator dedicat (zero `EnsureCreatedAsync`).
-* **Model 1:N `MediaSource` stil Stremio/Nuvio:**
-  * `Movie` și `Episode` dețin metadatele canonice (titlu, an, descriere, TMDbId, `ArtworkHash`, `BackdropHash`, `IsMetadataLocked`), iar tabela copil `MediaSources` stochează unul sau mai multe fișiere asociate (`FilePath`, `Container`, `VideoCodec`, `AudioCodec`, `Width`, `Height`, `IsHdr`, `BitrateBps`, `FileSizeBytes`, `SourceLabel` ex. `1080p HEVC`, `MissingSince`) + `MediaStreams` (benzi audio & subtitrări detectate cu `ffprobe`).
-  * `WatchProgress` este atașat la `Movie`/`Episode` (astfel dacă ai și `1080p` și `4K` pentru același film, progresul rămâne comun, exact ca la Stremio!).
-* **Zero `byte[]` BLOBs în SQL:** copertele/posterele/backdrops sunt procesate la scanare cu `SkiaSharp` în dimensiuni fixe pe disk/volum (`thumb_400.webp`, `poster_800.webp`, `backdrop_1280.webp`) și servite cu `Cache-Control` + `ETag` (`304 Not Modified`).
-* **Search 100% în PostgreSQL:** indecși `GIN`/`pg_trgm`, proiecții directe `.Select(...)`, zero full-table `.ToListAsync()` în RAM și **zero apeluri concurente `Task.WhenAll` pe același `DbContext` Scoped**.
+### 4.4 PostgreSQL Database & Artwork Store
+* **Real migrations:** controlled schema application via `Database.MigrateAsync()` (zero `EnsureCreatedAsync`).
+* **1:N `MediaSource` Model (Stremio/Nuvio style):**
+  * `Movie` and `Episode` store canonical metadata (title, year, overview, `TmdbId`, `ArtworkHash`, `BackdropHash`, `IsMetadataLocked`), while child table `MediaSources` holds one or more physical files (`FilePath`, `Container`, `VideoCodec`, `AudioCodec`, `Width`, `Height`, `IsHdr`, `BitrateBps`, `FileSizeBytes`, `SourceLabel` e.g. `1080p HEVC`, `MissingSince`) + `MediaStreams` (audio & subtitle tracks probed by `ffprobe`).
+  * `WatchProgress` attaches to `Movie`/`Episode` so watch position stays shared across `1080p` and `4K` sources of the same title.
+* **Zero `byte[]` BLOBs in SQL:** posters/covers/backdrops are processed at scan time via `SkiaSharp` into fixed WebP variants on disk/volume and served with `Cache-Control` + `ETag` (`304 Not Modified`).
+* **100% PostgreSQL Search:** `GIN`/`pg_trgm` indexes, direct `.Select(...)` projections, zero full-table `.ToListAsync()` loads into RAM, and **zero concurrent `Task.WhenAll` calls on the same Scoped `DbContext`**.
 
-### 4.5 Admin Library Roots, Scanner, TMDb Identify & Pipeline Transcodare FFmpeg
-* **Library Roots & Scanner `Channel<T>`:**
-  * Foldere configurate de Admin în UI (`Movies`, `Series`, `Music`, toggle FileWatcher). Verifică **întâi** în DB `(FilePath, FileSizeBytes, LastWriteUtc)` înainte de `ffprobe`, `TagLibSharp` (read-only în `using`) sau HTTP TMDb. Ignoră subfoldere auxiliare (`Extras`, `Trailers`, `Sample`).
-  * **Identify / Fix Match:** din pagina de detalii a unui film/serial, Adminul poate căuta manual pe TMDb și re-asocia titlul + artwork-ul (blocând `IsMetadataLocked = true` ca scanările viitoare să nu suprascrie alegerea).
-* **Video Streaming (Selector calitate stil YouTube):**
-  * Trepte disponibile în player: **`Direct Play (Original)`**, **`1080p` (8 Mbps)**, **`720p` (4 Mbps)**, **`480p` (1.5 Mbps)**.
-  * *Direct Play:* HTTP Range `PhysicalFile` (0% CPU, 4K/HDR/PGS/VobSub/ASS redate nativ de `libmpv`).
-  * *Transcodare On-Demand HLS (FFmpeg):* `TranscodeSessionManager` pornește HLS seekable (`libx264` + `aac` stereofonic, în limita sloturilor concurente setate de Admin) cu segmente temporare curățate automat prin LRU. Subtitrările text (`.srt`, `.ass`, `.vtt` externe sau embedded) sunt servite ca `.vtt`; la schimbarea pistei audio în mod transcode HLS, sesiunea reia de la timestamp-ul curent pe pista aleasă.
-* **Audio Streaming (Selector calitate stil Spotify):**
-  * Trepte configurabile separat pentru **Wi-Fi** și **Date Mobile / Remote**: **`Lossless (Original / Direct Play)`**, **`Very High (~320 kbps)`**, **`High (~160 kbps)`**, **`Medium (~96 kbps)`**, **`Low (~64 kbps)`**.
-  * **Regulă smart anti-risipă (zero upscale):** dacă fișierul original are deja bitrate <= ținta selectată (ex. MP3 192 kbps când ai ales *Very High 320*), serverul face **Direct Play** fără FFmpeg. FFmpeg transcodează audio (`Opus` / `AAC`) doar când sursa depășește ținta (ex. FLAC lossless ascultat pe *High 160* peste 4G).
+### 4.5 Admin Library Roots, Scanner, TMDb Identify & FFmpeg Pipeline
+* **Library Roots & `Channel<T>` Scanner:**
+  * Admin-configured folders (`Movies`, `Series`, `Music`, optional FileWatcher). Checks `(FilePath, FileSizeBytes, LastWriteUtc)` in PostgreSQL **first** before invoking `ffprobe`, `TagLibSharp` (read-only inside `using`), or TMDb HTTP requests. Skips auxiliary folders (`Extras`, `Trailers`, `Sample`).
+  * **Identify / Fix Match:** from a movie/series details view, Admin can manually search TMDb and re-bind title + artwork (locking `IsMetadataLocked = true` so subsequent scans never overwrite the manual choice).
+* **Video Streaming (YouTube-style Quality Selector):**
+  * Quality presets: **`Direct Play (Original)`**, **`1080p`**, **`720p`**, **`480p`**.
+  * *Direct Play:* HTTP Range byte streaming (0% transcode CPU; native 4K/HDR/PGS/VobSub/ASS decoding in `libmpv`).
+  * *On-Demand HLS Transcoding (FFmpeg):* `TranscodeSessionManager` launches seekable HLS (`libx264` + stereo `aac`, bounded by Admin concurrent transcode slot limits) with temporary segments cleaned up deterministically. Text subtitles (`.srt`, `.vtt`, embedded text tracks) are served as normalized `WEBVTT`; switching audio stream in transcode mode resumes from the current timestamp on the chosen track.
+* **Audio Streaming (Spotify-style Quality Selector):**
+  * Independently configurable presets for **Wi-Fi** and **Cellular / Mobile**: **`Lossless`**, **`Very High (320k)`**, **`High (160k)`**, **`Medium (96k)`**, **`Low (64k)`**.
+  * **Zero-Upscale Rule:** when the source file bitrate is already `<=` the requested target bitrate (e.g., 128 kbps MP3 requested at *Very High 320k*), the server automatically falls back to **Direct Play** (`X-Hermes-Delivery: DirectPlay`) without running FFmpeg. FFmpeg transcodes audio only when the source exceeds the requested tier (`X-Hermes-Delivery: Transcoded`).
 
-### 4.6 Sincronizare Cross-Device — Model A (Deterministă)
-1. **Cinema (`WatchProgress`):** heartbeat la ~10s + imediat la Pause/Seek/Stop; serverul notifică grupul utilizatorului prin SignalR (`WatchProgressUpdated`) -> rândul *Continue Watching* se actualizează live pe toate dispozitivele conectate.
-2. **Muzică (Spotify Connect cu `Version` monotonic):**
-   * Serverul menține în `PlaybackService` (sursă unică pentru REST și `PlaybackHub`) `long Version` incrementat atomic la orice mutație + registrul dispozitivelor online conectate la SignalR (pe Android menținut activ cât timp rulează `audio_service`).
-   * **Mod Telecomandă Implicit:** dacă Dispozitivul A este `ActiveRendererDeviceId` și utilizatorul apasă Play/Pause/Seek/Skip/ChangeTrack de pe Dispozitivul B, serverul actualizează sesiunea și transmite comanda către A — audio rămâne pe A până când utilizatorul apasă explicit **„Transfer to this device”** în Device Picker. Dacă renderer-ul activ se deconectează complet, sesiunea rămâne în pauză în DB pentru resume ulterior.
-   * **Client Unic Coordinator:** un singur `MusicPlaybackCoordinator` deține conexiunea SignalR (protejată cu `SemaphoreSlim` + backoff reconnect) și ignoră orice mesaj cu `Version <= _lastAppliedVersion`. Zero subscriberi dubli, zero bucle de `Seek()`.
+### 4.6 Cross-Device Synchronization — Deterministic Model
+1. **Cinema (`WatchProgress`):** periodic ~10s heartbeats + immediate updates on Pause/Seek/Stop (with 90% auto-watched invariant); server pushes `WatchProgressUpdated` over SignalR to keep *Continue Watching* synchronized across connected devices.
+2. **Music (Spotify Connect with Monotonic `Version`):**
+   * Server maintains an atomic monotonic `long Version` per user session in `PlaybackConnectService` + an in-memory registry of online SignalR devices (`InMemoryDevicePresenceRegistry`).
+   * **Remote Control by Default:** when Device A is `ActiveRendererDeviceId` and the user presses Play/Pause/Seek/Skip from Device B, the server updates the session and broadcasts to Device A — audio stays on A until the user explicitly selects **Transfer Output** in the Device Picker. If the active renderer disconnects completely, the session automatically transitions to `Paused` in PostgreSQL and clears `ActiveRendererDeviceId`.
+   * **Single Client Coordinator:** `MusicPlaybackCoordinator` owns SignalR state reconciliation and ignores any incoming update with `Version <= lastAppliedVersion`, eliminating duplicate subscribers and seek feedback loops.
 
-### 4.7 UI/UX Client (`Flutter` — Dual-World Hub, Customizare Token & Fix HDR Subtitles)
-* **Dual-World Hub (`Cinema | Music`):** switch clar în top bar între cele două lumi curate:
-  * **Cinema:** layout stil Stremio/Nuvio (Hero backdrop mare, *Continue Watching*, *Movies*, *Series*, *Watchlist*, pagină de detalii cu lista de **Surse / Rezoluții** disponibile + selector sezon/episoade + *Identify* pentru Admin; Video Player cu OSD GPU translucid fără airspace, selector calitate tip YouTube, subtitrări/audio, *Next Episode* auto-countdown).
-  * **Music:** experiență Spotify minimală fără zgomot (Home, Search, Artists/Albums, Liked Songs, Playlists, Queue panel/sheet, Device Picker pentru telecomandă/handoff, selector calitate Spotify-style în Settings, mini-player persistent jos activ doar când redai muzică și pus pe pauză automat dacă pornești un film).
-* **Customizare Token-Based (`HermesThemeTokens`):**
-  * Preset implicit: **`Obsidian Glow + Accent Crimson`**.
-  * Preset-uri alese de user: **Suprafață** (`Obsidian Glow` / `OLED Black` / `Slate`) + **Accent** (paletă curată de 6 culori cu **Crimson** default) + toggle *Ambient Artwork Glow* + *Default Start World* (`Cinema`/`Music`) + *Home Row Order & Visibility* + *Card Density* (`Compact`/`Comfortable`).
-* **Preset Video & Protecție Monitor HDR:**
-  * În *Player Preferences*, utilizatorul poate alege **Video Renderer** (`Auto` / `OpenGL` / `GPU Next` în `libmpv`) și **Subtitle Style & HDR Peak Control** (mărime font, fundal semi-transparent, culoare text off-white/galben cald cu peak luminance redus) pentru a preveni fenomenul de iluminare/flash al ecranelor HDR la afișarea subtitrărilor.
-
----
-
-## 5. Decizii Standard Stabilite de Constructor (Pentru Verificare)
-
-Următoarele decizii tehnice au fost stabilite ca standard practic pentru v1 (le poți ajusta acum înainte de aprobare dacă dorești altceva):
-1. **Limite globale de transcodare:** Adminul poate configura din UI `MaxConcurrentVideoTranscodes` (default `2`), `MaxConcurrentAudioTranscodes` (default `4`), un `MaxRemoteVideoBitrate` opțional și un toggle global de dezactivare transcodare (păstrând Direct Play).
-2. **Encoder video & subtitrări în modul HLS transcode:** transcodarea video FFmpeg folosește **CPU `libx264` + `aac`** în v1 (funcționează universal în orice container Docker / laptop fără dependență de GPU passthrough; accelerația NVENC/VAAPI/QSV rămâne extensie curată ulterioară); subtitrările în modul HLS acoperă formatele text (`.srt`, `.ass`, `.vtt`), în timp ce subtitrările bitmap (`PGS`/`VobSub`) sunt redate nativ prin Direct Play în `libmpv`.
-3. **Management utilizatori fără SMTP:** Adminul poate dezactiva/șterge conturi `Member` și poate genera un cod temporar one-time de reset parolă din Admin UI pentru prietenii care și-au uitat parola.
-4. **Detalii interne de librării:** `Riverpod` pentru state management în Flutter, `Mapperly` (compile-time, fără reflecție) în `.NET 10`, cache imagini pe Flutter cheiat pe `MediaId + ArtworkHash` cu limită LRU pe disk, respectiv `smtc_windows` / `audio_service` pentru integrare media nativă Windows și Android.
+### 4.7 Client UI/UX (`Flutter` — Dual-World Hub, Token Customization & HDR Subtitle Fix)
+* **Dual-World Hub (`Cinema | Music`):** top-level switch separating two focused experiences:
+  * **Cinema:** Stremio/Nuvio-inspired layout (Hero backdrop, *Continue Watching*, *Movies*, *Series*, source/resolution selector per title, *Identify* for Admins, GPU OSD with quality/audio/subtitle selectors, **OpenGL HDR renderer preset**).
+  * **Music:** clean Spotify-style interface (Home, Search, Artists/Albums, Liked Songs, Playlists, Queue, Connect Device Picker for remote control vs explicit handoff, Wi-Fi/Cellular audio quality settings, persistent Mini-Player).
+* **Token-Based Customization (`HermesThemeTokens`):**
+  * Default preset: **`Obsidian Glow + Accent Crimson`** (`#090B12` primary, `#111522` elevated, `#E11D48` Crimson accent).
+  * User presets: **Surface** (`Obsidian Glow` / `OLED Black` / `Slate`) + **Accent** (`Crimson`, `Violet`, `Emerald`, `Amber`, `Cyan`, `Dynamic Album Art`).
+* **Video Renderer & HDR Monitor Protection:**
+  * *Player Preferences* exposes **Video Renderer** (`OpenGL (HDR Safe)` / `Auto (System)`) and applies `gpu-api=opengl`, `#D8D8D8` dimmed off-white subtitle color, and `#80000000` subtitle background to prevent SDR subtitle luminance blooming on HDR monitors.
 
 ---
 
-## 6. Planul Structurat pe PR-uri & Testare (Vertical Slices)
+## 5. Standard Engineering Decisions
 
-Dezvoltarea în noul repo `hermes-media-server` va fi împărțită în **10 PR-uri mici, verificabile independent**:
-1. **PR 1 — Repo Foundation, Tooling & CI:** `.slnx`, `Directory.Build.props`, `Directory.Packages.props`, `.editorconfig`, `Dockerfile` (cu `ffmpeg`) + `docker-compose.yml` (`Postgres 17`), `.env.example`, `.github/workflows/` CI/Security.
-2. **PR 2 — Domain, PostgreSQL Schema (`1:N MediaSources`) & Migrations:** entități fără BLOB-uri, `ServerSettings`, indecși `pg_trgm`, migrații inițiale + teste `Testcontainers.PostgreSql`.
-3. **PR 3 — Auth, First-Run Setup, Invites, Multi-Endpoint Info & Stream Tickets:** `/setup`, coduri invitație, RBAC, `/system/info` (`ServerId`), `RefreshToken` per `DeviceId`, HMAC stream tickets + teste integrare securitate.
-4. **PR 4 — Admin Library Roots, Async Read-Only Scanner, TMDb Identify & Artwork Store:** CRUD `MediaLibraryRoots`, `Channel<T>` + `ffprobe` + `TagLibSharp` read-only + TMDb cache DB-first + manual Identify + `SkiaSharp` WebP/ETag + unit/integration tests.
-5. **PR 5 — Streaming Pipeline (Direct Play + FFmpeg HLS Video/Audio + Subtitrări) & Watch Progress API:** HTTP Range, `TranscodeSessionManager` (cu limite concurente și selector YouTube/Spotify bitrate), extractor `.vtt`, `WatchProgress` + teste pipeline/Range/VTT.
-6. **PR 6 — Music Catalog, Playlists & SignalR v2 Monotonic Sync:** Search SQL nativ, Playlists/Likes, `PlaybackService` unic pentru REST + `PlaybackHub` cu `Version` monotonic + remote-control default + device transfer + **teste reale multi-client `HubConnection`**.
-7. **PR 7 — Flutter Foundation, Multi-Endpoint Auth & `Obsidian Crimson` Theme Engine:** setup Win/Android, `flutter_secure_storage`, auto-probing LAN/Remote, `HermesThemeTokens`, Dual-World Shell (`Cinema | Music`) + widget tests.
-8. **PR 8 — Flutter Cinema Experience, Source Picker, `media_kit` Player & Admin UI:** Home modular, Movies/Series/Details cu lista 1:N surse, OSD GPU cu selector calitate, audio/subs, **OpenGL/HDR renderer preset**, Next Episode + ecrane Admin (Libraries, Invites, Identify, Streaming Limits) + tests.
-9. **PR 9 — Flutter Music Experience, Quality Selector, SMTC/MediaSession & Connect Sync:** Music catalog/search/playlists/queue, `MusicPlaybackCoordinator`, Device Output Picker (Remote vs Explicit Transfer), selector calitate audio (Wi-Fi/Mobile) + tests.
-10. **PR 10 — Hardening, Docker/Reverse Proxy Docs & Showcase Polish:** verificare E2E completă LAN + Remote HTTPS, documentație (`README.md`, `ARCHITECTURE.md`, `CONTRIBUTING.md`, `SECURITY.md`) + curățenie finală.
+1. **Global Transcode Slot Limits:** `MaxConcurrentVideoTranscodes` (default `2`) and `MaxConcurrentAudioTranscodes` prevent host saturation (returning HTTP `429 transcode_slots_exhausted` when full).
+2. **HLS Video Codec & Subtitles:** v1 HLS video transcoding uses universal CPU `libx264` + `aac` (working cleanly in any Docker host without GPU passthrough; hardware NVENC/VAAPI/QSV remains a clean future extension). External `.srt`/`.vtt` and embedded text tracks normalize to `WEBVTT`, while bitmap subtitles (`PGS`/`VobSub`) play natively in Direct Play via `libmpv`.
+3. **Zero-SMTP Account Recovery:** Admins can deactivate/delete `Member` accounts and issue temporary one-time password reset codes directly from the Admin UI.
+4. **Native Media Controls:** `PlatformMediaBridge` integrates transport controls with OS media keys and notifications.
+
+---
+
+## 6. Structured PR Roadmap (10 Vertical Slices)
+
+1. **PR 1 — Repo Foundation, Tooling & CI:** `.slnx`, `Directory.Build.props`, `Directory.Packages.props`, `.editorconfig`, `Dockerfile` (with `ffmpeg`) + `docker-compose.yml` (`Postgres 17`), `.env.example`, `.github/workflows/` CI/Security.
+2. **PR 2 — Domain, PostgreSQL Schema (`1:N MediaSources`) & Migrations:** zero-BLOB entities, `ServerSettings`, `pg_trgm` indexes, initial EF Core migrations + `Testcontainers.PostgreSql` tests.
+3. **PR 3 — Auth, First-Run Setup, Invites, Multi-Endpoint Info & Stream Tickets:** `/setup`, invite codes, RBAC, `/system/info` (`ServerId`), per-device `RefreshToken`, HMAC stream tickets + security integration tests.
+4. **PR 4 — Admin Library Roots, Async Read-Only Scanner, TMDb Identify & Artwork Store:** CRUD `MediaLibraryRoots`, `Channel<T>` + `ffprobe` + read-only `TagLibSharp` + TMDb DB-first caching + manual Identify + `SkiaSharp` WebP/ETag + tests.
+5. **PR 5 — Streaming Pipeline (Direct Play + FFmpeg HLS Video/Audio + Subtitles) & Watch Progress API:** HTTP Range, `TranscodeSessionManager` (bounded slots & YouTube/Spotify bitrate tiers), `.vtt` subtitles, `WatchProgress` + pipeline/Range/VTT tests.
+6. **PR 6 — Music Catalog, Playlists & SignalR v2 Monotonic Sync:** native SQL/`pg_trgm` search, Playlists/Likes, `PlaybackConnectService` + `PlaybackSyncHub` with monotonic `Version`, remote control by default, output transfer, and multi-client `HubConnection` tests.
+7. **PR 7 — Flutter Foundation, Multi-Endpoint Auth & `Obsidian Crimson` Theme Engine:** Win/Android setup, `EndpointResolver` primary/LAN failover, `HermesThemeTokens`, `DualWorldShell` (`Cinema | Music`) + widget tests.
+8. **PR 8 — Flutter Cinema Experience, Source Picker, `media_kit` Config & Admin UI:** Cinema catalog, multi-source selector (`1:N`), quality/audio/subtitle UI, **OpenGL HDR-safe renderer preset**, Admin Dashboard (Libraries, Invites, Users) + tests.
+9. **PR 9 — Flutter Music Experience, Quality Policy, Platform Media Bridge & Connect Sync:** Music catalog/playlists, `MusicPlaybackCoordinator`, `DevicePickerSheet`, Wi-Fi/Cellular audio quality selector, `MiniPlayerBar` + coordinator/widget tests.
+10. **PR 10 — Showcase Polish, Full-Stack E2E Smoke Test & Portfolio Docs:** `FullStackSmokeTests` (FFmpeg synthetic media -> setup -> scan -> stream -> transcode -> search -> SignalR Connect), `README.md`, `docs/ARCHITECTURE.md`, `docs/CONTRIBUTING.md`, `docs/SECURITY.md`, `.github/pull_request_template.md`.
