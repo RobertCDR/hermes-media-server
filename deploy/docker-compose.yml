@@ -1,6 +1,9 @@
+name: hermes
+
 services:
   postgres:
     image: postgres:17-alpine
+    container_name: hermes-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-hermes}
@@ -15,6 +18,8 @@ services:
       retries: 10
 
   hermes-api:
+    image: hermes-media-server:latest
+    container_name: hermes-api
     build:
       context: ..
       dockerfile: deploy/Dockerfile

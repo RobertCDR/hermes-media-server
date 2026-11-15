@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json.schemastore.org/launchsettings.json",
+  "profiles": {
+    "Hermes.Api (Local Dev)": {
+      "commandName": "Project",
+      "dotnetRunMessages": true,
+      "launchBrowser": true,
+      "launchUrl": "api/v1/system/info",
+      "applicationUrl": "http://localhost:5258",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "Hermes__ServerName": "Hermes Media Server (Local Dev)",
+        "Hermes__ArtworkDirectory": "artwork-cache",
+        "Hermes__TranscodeDirectory": "transcodes"
+      }
+    },
+    "Hermes.Api (Headless Dev)": {
+      "commandName": "Project",
+      "dotnetRunMessages": true,
+      "launchBrowser": false,
+      "applicationUrl": "http://localhost:5258",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "Hermes__ServerName": "Hermes Media Server (Local Dev)",
+        "Hermes__ArtworkDirectory": "artwork-cache",
+        "Hermes__TranscodeDirectory": "transcodes"
+      }
+    },
+    "Hermes.Api (Production Mode)": {
+      "commandName": "Project",
+      "dotnetRunMessages": true,
+      "launchBrowser": false,
+      "applicationUrl": "http://localhost:5258",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Production"
+      }
+    }
+  }
+}
