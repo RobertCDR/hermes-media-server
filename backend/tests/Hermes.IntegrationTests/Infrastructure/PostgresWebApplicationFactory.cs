@@ -15,6 +15,7 @@ public sealed class PostgresWebApplicationFactory : WebApplicationFactory<Progra
     private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:17-alpine").Build();
     private readonly string _jwtSigningKey = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
     private readonly string _streamTicketSecret = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+    private readonly string _artworkDirectory = Path.Combine(Path.GetTempPath(), $"hermes-art-{Guid.NewGuid():N}");
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -24,6 +25,7 @@ public sealed class PostgresWebApplicationFactory : WebApplicationFactory<Progra
         builder.UseSetting("Security:JwtAudience", "HermesClients");
         builder.UseSetting("Security:JwtSigningKey", _jwtSigningKey);
         builder.UseSetting("Security:StreamTicketSecret", _streamTicketSecret);
+        builder.UseSetting("Hermes:ArtworkDirectory", _artworkDirectory);
 
         builder.ConfigureAppConfiguration((_, config) =>
         {
@@ -33,13 +35,15 @@ public sealed class PostgresWebApplicationFactory : WebApplicationFactory<Progra
                 ["Security:JwtIssuer"] = "HermesMediaServer",
                 ["Security:JwtAudience"] = "HermesClients",
                 ["Security:JwtSigningKey"] = _jwtSigningKey,
-                ["Security:StreamTicketSecret"] = _streamTicketSecret
+                ["Security:StreamTicketSecret"] = _streamTicketSecret,
+                ["Hermes:ArtworkDirectory"] = _artworkDirectory
             });
         });
     }
 
     public async Task InitializeAsync()
     {
+        Directory.CreateDirectory(_artworkDirectory);
         await _postgres.StartAsync();
         using var scope = Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<HermesDbContext>();
@@ -50,5 +54,9 @@ public sealed class PostgresWebApplicationFactory : WebApplicationFactory<Progra
     {
         await base.DisposeAsync();
         await _postgres.DisposeAsync();
+        if (Directory.Exists(_artworkDirectory))
+        {
+            Directory.Delete(_artworkDirectory, recursive: true);
+        }
     }
 }
