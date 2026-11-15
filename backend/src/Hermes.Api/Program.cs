@@ -10,6 +10,7 @@ using Hermes.Api.Features.Setup;
 using Hermes.Api.Features.Streaming;
 using Hermes.Api.Features.System;
 using Hermes.Api.Hubs;
+using Hermes.Domain.Entities;
 using Hermes.Domain.Enums;
 using Hermes.Domain.Ports;
 using Hermes.Infrastructure.Media;
@@ -157,6 +158,37 @@ try
     if (await db.Database.CanConnectAsync())
     {
         await db.Database.MigrateAsync();
+
+        if (!await db.MediaLibraryRoots.AnyAsync())
+        {
+            var defaultRoots = new (string Name, LibraryMediaType MediaType, string RootPath)[]
+            {
+                ("Movies", LibraryMediaType.Movies, "/media/Movies"),
+                ("Series", LibraryMediaType.Series, "/media/Series"),
+                ("Music", LibraryMediaType.Music, "/media/Music"),
+            };
+
+            var seeded = new List<MediaLibraryRoot>();
+            foreach (var (name, mediaType, rootPath) in defaultRoots)
+            {
+                if (Directory.Exists(rootPath))
+                {
+                    seeded.Add(new MediaLibraryRoot(name, mediaType, rootPath, watchEnabled: true));
+                }
+            }
+
+            if (seeded.Count > 0)
+            {
+                db.MediaLibraryRoots.AddRange(seeded);
+                await db.SaveChangesAsync();
+
+                var scanChannel = migrationScope.ServiceProvider.GetRequiredService<LibraryScanChannel>();
+                foreach (var root in seeded)
+                {
+                    await scanChannel.EnqueueScanAsync(root.Id, CancellationToken.None);
+                }
+            }
+        }
     }
 }
 catch (Exception)
