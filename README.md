@@ -73,15 +73,16 @@ For an in-depth breakdown of assemblies, PostgreSQL schema, SignalR Connect sema
    ```
    Edit `deploy/.env` and provide strong secrets for `POSTGRES_PASSWORD`, `HERMES_JWT_SECRET` (min 32 characters), `HERMES_STREAM_TICKET_SECRET` (min 32 characters), and set `HERMES_MEDIA_PATH` to your read-only host media directory.
 
-2. Start PostgreSQL 17 and `hermes-api`:
+2. Start PostgreSQL 17 and `hermes-api` under the `hermes` Docker Compose stack:
    ```bash
-   docker compose -f deploy/docker-compose.yml up -d --build
+   docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d --build
    ```
 
 3. Verify server health and complete first-run setup:
    - Health check: `GET http://localhost:5258/health/live`
    - Server info: `GET http://localhost:5258/api/v1/system/info`
-   - Open the Flutter client, enter `http://localhost:5258` (or your Tailscale URL + LAN fallback), create the admin account on first launch, and add your `/media/...` library roots from the Admin Dashboard.
+   - Open the Flutter client (`flutter run -d edge` or Windows/Android), enter `http://localhost:5258` (or your Tailscale URL + LAN fallback), create the admin account on first launch, and add your `/media/...` library roots from the Admin Dashboard.
+   - Or launch directly in **Visual Studio 2026** (`backend/Hermes.slnx` with `launchSettings.json` profiles) or **VS Code** (`.vscode/launch.json`). See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ---
 
@@ -112,6 +113,9 @@ flutter test --coverage
 ## Documentation
 
 - [Architecture Guide](docs/ARCHITECTURE.md) — DDD layers, PostgreSQL schema, FFmpeg/SignalR flows, Flutter client architecture
+- [API Reference](docs/API.md) — Complete REST endpoint contracts, DTO shapes, and SignalR `/hubs/sync` real-time protocol
+- [Deployment & IDE Setup](docs/DEPLOYMENT.md) — Docker Compose `hermes` stack, `.env` secrets, Visual Studio 2026 & VS Code launch profiles, Tailscale/reverse-proxy configuration
+- [Flutter Client Guide](client/README.md) — Client module structure, theme presets, Connect coordinator, Web/Windows/Android build instructions
 - [Security Overview](docs/SECURITY.md) — Authentication, cryptographic primitives, stream tickets, process isolation, CI checks
 - [Contributing Guide](docs/CONTRIBUTING.md) — Coding standards, TDD workflow, PR template checklist
 - [Design Specification](docs/specs/2026-11-15-hermes-media-server-design.md) — Complete system design document

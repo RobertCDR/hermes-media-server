@@ -33,8 +33,8 @@ class AuthService {
       uri,
       headers: const {'Content-Type': 'application/json'},
       body: jsonEncode({
-        'adminUsername': adminUsername,
-        'adminPassword': adminPassword,
+        'username': adminUsername,
+        'password': adminPassword,
         'serverName': serverName,
       }),
     );
@@ -118,42 +118,41 @@ class AuthService {
 
     final future = _performRefresh(resolvedBaseUrl);
     _inFlightRefresh = future;
-    future.whenComplete(() {
-      if (identical(_inFlightRefresh, future)) {
-        _inFlightRefresh = null;
-      }
-    });
     return future;
   }
 
   Future<HermesSession> _performRefresh(String resolvedBaseUrl) async {
-    final current = await sessionStore.load();
-    if (current == null) {
-      throw const AuthException('No active session to refresh.');
+    try {
+      final current = await sessionStore.load();
+      if (current == null) {
+        throw const AuthException('No active session to refresh.');
+      }
+
+      final uri = Uri.parse(resolvedBaseUrl).resolve('/api/v1/auth/refresh');
+      final response = await httpClient.post(
+        uri,
+        headers: const {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'deviceId': current.deviceId,
+          'refreshToken': current.refreshToken,
+        }),
+      );
+
+      if (response.statusCode != 200) {
+        await sessionStore.clear();
+        throw AuthException('Session refresh failed (${response.statusCode})', statusCode: response.statusCode);
+      }
+
+      final payload = jsonDecode(response.body) as Map<String, dynamic>;
+      final updated = current.copyWith(
+        accessToken: payload['accessToken'] as String,
+        refreshToken: payload['refreshToken'] as String,
+        role: payload['role'] as String?,
+      );
+      await sessionStore.save(updated);
+      return updated;
+    } finally {
+      _inFlightRefresh = null;
     }
-
-    final uri = Uri.parse(resolvedBaseUrl).resolve('/api/v1/auth/refresh');
-    final response = await httpClient.post(
-      uri,
-      headers: const {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'deviceId': current.deviceId,
-        'refreshToken': current.refreshToken,
-      }),
-    );
-
-    if (response.statusCode != 200) {
-      await sessionStore.clear();
-      throw AuthException('Session refresh failed (${response.statusCode})', statusCode: response.statusCode);
-    }
-
-    final payload = jsonDecode(response.body) as Map<String, dynamic>;
-    final updated = current.copyWith(
-      accessToken: payload['accessToken'] as String,
-      refreshToken: payload['refreshToken'] as String,
-      role: payload['role'] as String?,
-    );
-    await sessionStore.save(updated);
-    return updated;
   }
 }
