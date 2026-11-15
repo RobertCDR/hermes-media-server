@@ -2,6 +2,12 @@ using Hermes.Domain.Enums;
 
 namespace Hermes.Domain.Ports;
 
+public interface IPasswordHasher
+{
+    string HashPassword(string password);
+    bool VerifyPassword(string password, string passwordHash);
+}
+
 public interface ITokenService
 {
     string CreateAccessToken(Guid userId, string username, UserRole role);
