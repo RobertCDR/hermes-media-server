@@ -17,3 +17,6 @@ csharp_new_line_before_open_brace = all
 csharp_style_namespace_declarations = file_scoped:warning
 csharp_style_prefer_primary_constructors = true:suggestion
 dotnet_diagnostic.IDE0005.severity = warning
+
+[**/Migrations/*.cs]
+generated_code = true

@@ -3,6 +3,9 @@
     <RootNamespace>Hermes.Infrastructure</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\Hermes.Domain\Hermes.Domain.csproj" />
   </ItemGroup>
 </Project>
