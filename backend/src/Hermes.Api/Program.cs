@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Hermes.Api.Features.Admin;
 using Hermes.Api.Features.Auth;
+using Hermes.Api.Features.Cinema;
 using Hermes.Api.Features.Setup;
 using Hermes.Api.Features.Streaming;
 using Hermes.Api.Features.System;
@@ -61,6 +62,14 @@ builder.Services.AddSingleton<IArtworkStore>(sp =>
     var artworkDir = config["Hermes:ArtworkDirectory"];
     return new SkiaArtworkStore(string.IsNullOrWhiteSpace(artworkDir) ? "artwork-cache" : artworkDir);
 });
+builder.Services.AddSingleton(sp =>
+{
+    var config = sp.GetRequiredService<IConfiguration>();
+    var transcodeDir = config["Hermes:TranscodeDirectory"];
+    return new FfmpegTranscodeSessionManager(string.IsNullOrWhiteSpace(transcodeDir) ? "transcodes" : transcodeDir);
+});
+builder.Services.AddSingleton<ITranscodeSessionManager>(sp => sp.GetRequiredService<FfmpegTranscodeSessionManager>());
+builder.Services.AddSingleton<SubtitleExtractorService>();
 builder.Services.AddSingleton<LibraryScanChannel>();
 builder.Services.AddScoped<LibraryScannerService>();
 builder.Services.AddHostedService<LibraryScanWorker>();
@@ -123,6 +132,9 @@ app.MapUserManagementEndpoints();
 app.MapLibraryAdminEndpoints();
 app.MapIdentifyEndpoints();
 app.MapArtworkEndpoints();
+app.MapCinemaEndpoints();
+app.MapWatchProgressEndpoints();
+app.MapStreamEndpoints();
 
 await app.RunAsync();
 
