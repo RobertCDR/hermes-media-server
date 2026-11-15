@@ -1,0 +1,131 @@
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'music_models.dart';
+
+class MusicApiException implements Exception {
+  const MusicApiException(this.message, {this.statusCode});
+
+  final String message;
+  final int? statusCode;
+
+  @override
+  String toString() => 'MusicApiException($statusCode): $message';
+}
+
+class MusicService {
+  MusicService({
+    required this.baseUri,
+    required this.accessToken,
+    required this.httpClient,
+  });
+
+  final Uri baseUri;
+  final String accessToken;
+  final http.Client httpClient;
+
+  Map<String, String> get _headers => {
+        'Authorization': 'Bearer $accessToken',
+        'Content-Type': 'application/json',
+      };
+
+  Future<List<ArtistSummaryModel>> listArtists() async {
+    final response = await httpClient.get(baseUri.resolve('/api/v1/music/artists'), headers: _headers);
+    if (response.statusCode != 200) {
+      throw MusicApiException('Failed to load artists', statusCode: response.statusCode);
+    }
+    final decoded = jsonDecode(response.body) as List<dynamic>;
+    return decoded.map((e) => ArtistSummaryModel.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
+  Future<List<AlbumSummaryModel>> listAlbums() async {
+    final response = await httpClient.get(baseUri.resolve('/api/v1/music/albums'), headers: _headers);
+    if (response.statusCode != 200) {
+      throw MusicApiException('Failed to load albums', statusCode: response.statusCode);
+    }
+    final decoded = jsonDecode(response.body) as List<dynamic>;
+    return decoded.map((e) => AlbumSummaryModel.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
+  Future<List<SongModel>> listSongs() async {
+    final response = await httpClient.get(baseUri.resolve('/api/v1/music/songs'), headers: _headers);
+    if (response.statusCode != 200) {
+      throw MusicApiException('Failed to load songs', statusCode: response.statusCode);
+    }
+    final decoded = jsonDecode(response.body) as List<dynamic>;
+    return decoded.map((e) => SongModel.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
+  Future<List<SongModel>> listLikedSongs() async {
+    final response = await httpClient.get(baseUri.resolve('/api/v1/music/songs/liked'), headers: _headers);
+    if (response.statusCode != 200) {
+      throw MusicApiException('Failed to load liked songs', statusCode: response.statusCode);
+    }
+    final decoded = jsonDecode(response.body) as List<dynamic>;
+    return decoded.map((e) => SongModel.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
+  Future<bool> toggleLikeSong(String songId) async {
+    final response = await httpClient.post(baseUri.resolve('/api/v1/music/songs/$songId/like'), headers: _headers);
+    if (response.statusCode != 200) {
+      throw MusicApiException('Failed to toggle like', statusCode: response.statusCode);
+    }
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    return decoded['isLiked'] as bool? ?? false;
+  }
+
+  Future<List<PlaylistSummaryModel>> listPlaylists() async {
+    final response = await httpClient.get(baseUri.resolve('/api/v1/music/playlists'), headers: _headers);
+    if (response.statusCode != 200) {
+      throw MusicApiException('Failed to load playlists', statusCode: response.statusCode);
+    }
+    final decoded = jsonDecode(response.body) as List<dynamic>;
+    return decoded.map((e) => PlaylistSummaryModel.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
+  Future<PlaylistDetailModel> createPlaylist({required String name, String? description}) async {
+    final response = await httpClient.post(
+      baseUri.resolve('/api/v1/music/playlists'),
+      headers: _headers,
+      body: jsonEncode({'name': name, 'description': ?description}),
+    );
+    if (response.statusCode != 201 && response.statusCode != 200) {
+      throw MusicApiException('Failed to create playlist', statusCode: response.statusCode);
+    }
+    return PlaylistDetailModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<String> issueAudioTicket(String songId) async {
+    final response = await httpClient.post(
+      baseUri.resolve('/api/v1/auth/stream-tickets'),
+      headers: _headers,
+      body: jsonEncode({'mediaSourceId': songId}),
+    );
+    if (response.statusCode != 200) {
+      throw MusicApiException('Failed to issue audio ticket', statusCode: response.statusCode);
+    }
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    return decoded['ticket'] as String;
+  }
+
+  Future<List<OnlineDeviceModel>> getOnlineDevices() async {
+    final response = await httpClient.get(baseUri.resolve('/api/v1/music/devices'), headers: _headers);
+    if (response.statusCode != 200) {
+      throw MusicApiException('Failed to query online devices', statusCode: response.statusCode);
+    }
+    final decoded = jsonDecode(response.body) as List<dynamic>;
+    return decoded.map((e) => OnlineDeviceModel.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
+  Uri buildAudioStreamUri({
+    required String songId,
+    required String ticket,
+    required AudioQualityPreset quality,
+  }) {
+    return baseUri.resolve('/api/v1/streams/$songId/audio').replace(
+      queryParameters: {
+        'quality': quality.apiValue,
+        'ticket': ticket,
+      },
+    );
+  }
+}
