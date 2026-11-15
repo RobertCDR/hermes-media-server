@@ -29,5 +29,52 @@ jobs:
       - name: Analyze Dart and Flutter code
         run: flutter analyze --fatal-infos
 
-      - name: Run Flutter unit and widget tests
-        run: flutter test
+      - name: Run Flutter unit and widget tests with coverage
+        run: flutter test --coverage
+
+      - name: Publish Flutter coverage summary
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os
+
+          lcov_path = "coverage/lcov.info"
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+          lines_out = ["### Flutter Client Code Coverage (LCOV)", ""]
+
+          if not os.path.exists(lcov_path):
+              lines_out.append("_No coverage/lcov.info file was generated._")
+          else:
+              covered = 0
+              total = 0
+              file_count = 0
+              with open(lcov_path, "r", encoding="utf-8") as fh:
+                  for line in fh:
+                      line = line.strip()
+                      if line.startswith("SF:"):
+                          file_count += 1
+                      elif line.startswith("LF:"):
+                          total += int(line[3:])
+                      elif line.startswith("LH:"):
+                          covered += int(line[3:])
+
+              pct = (covered / total * 100.0) if total else 0.0
+              lines_out.append("| Scope | Files | Covered Lines | Total Lines | Line Coverage |")
+              lines_out.append("| :--- | ---: | ---: | ---: | ---: |")
+              lines_out.append(f"| `client/lib` | {file_count} | **{covered}** | **{total}** | **{pct:.2f}%** |")
+
+          text = "\n".join(lines_out) + "\n"
+          print(text)
+          if summary_path:
+              with open(summary_path, "a", encoding="utf-8") as fh:
+                  fh.write(text)
+          PY
+
+      - name: Upload Flutter coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: client-coverage-lcov
+          path: client/coverage/lcov.info
+          if-no-files-found: error

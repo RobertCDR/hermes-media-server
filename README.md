@@ -93,18 +93,18 @@ For an in-depth breakdown of assemblies, PostgreSQL schema, SignalR Connect sema
 - `ffmpeg` and `ffprobe` on `PATH`
 - Flutter `3.50.0` (Dart `3.14.0`)
 
-### Backend Build, Test & Audit
+### Backend Build, Test, Coverage & Audit
 ```bash
-dotnet test backend/Hermes.slnx --configuration Release --verbosity minimal
+dotnet test backend/Hermes.slnx --configuration Release --verbosity minimal --collect:"XPlat Code Coverage" --settings backend/coverlet.runsettings --results-directory backend/TestResults
 dotnet list backend/Hermes.slnx package --vulnerable --include-transitive
 ```
 
-### Flutter Client Analysis & Tests
+### Flutter Client Analysis, Tests & Coverage
 ```bash
 cd client
 flutter pub get
 flutter analyze --fatal-infos
-flutter test
+flutter test --coverage
 ```
 
 ---
