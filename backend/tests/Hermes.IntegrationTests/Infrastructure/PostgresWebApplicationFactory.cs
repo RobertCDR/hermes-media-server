@@ -16,6 +16,7 @@ public sealed class PostgresWebApplicationFactory : WebApplicationFactory<Progra
     private readonly string _jwtSigningKey = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
     private readonly string _streamTicketSecret = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
     private readonly string _artworkDirectory = Path.Combine(Path.GetTempPath(), $"hermes-art-{Guid.NewGuid():N}");
+    private readonly string _transcodeDirectory = Path.Combine(Path.GetTempPath(), $"hermes-transcode-{Guid.NewGuid():N}");
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -26,6 +27,7 @@ public sealed class PostgresWebApplicationFactory : WebApplicationFactory<Progra
         builder.UseSetting("Security:JwtSigningKey", _jwtSigningKey);
         builder.UseSetting("Security:StreamTicketSecret", _streamTicketSecret);
         builder.UseSetting("Hermes:ArtworkDirectory", _artworkDirectory);
+        builder.UseSetting("Hermes:TranscodeDirectory", _transcodeDirectory);
 
         builder.ConfigureAppConfiguration((_, config) =>
         {
@@ -36,7 +38,8 @@ public sealed class PostgresWebApplicationFactory : WebApplicationFactory<Progra
                 ["Security:JwtAudience"] = "HermesClients",
                 ["Security:JwtSigningKey"] = _jwtSigningKey,
                 ["Security:StreamTicketSecret"] = _streamTicketSecret,
-                ["Hermes:ArtworkDirectory"] = _artworkDirectory
+                ["Hermes:ArtworkDirectory"] = _artworkDirectory,
+                ["Hermes:TranscodeDirectory"] = _transcodeDirectory
             });
         });
     }
@@ -44,6 +47,7 @@ public sealed class PostgresWebApplicationFactory : WebApplicationFactory<Progra
     public async Task InitializeAsync()
     {
         Directory.CreateDirectory(_artworkDirectory);
+        Directory.CreateDirectory(_transcodeDirectory);
         await _postgres.StartAsync();
         using var scope = Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<HermesDbContext>();
@@ -54,9 +58,15 @@ public sealed class PostgresWebApplicationFactory : WebApplicationFactory<Progra
     {
         await base.DisposeAsync();
         await _postgres.DisposeAsync();
-        if (Directory.Exists(_artworkDirectory))
+        TryDeleteDirectory(_artworkDirectory);
+        TryDeleteDirectory(_transcodeDirectory);
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        if (Directory.Exists(path))
         {
-            Directory.Delete(_artworkDirectory, recursive: true);
+            Directory.Delete(path, recursive: true);
         }
     }
 }
