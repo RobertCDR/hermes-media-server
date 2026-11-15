@@ -128,6 +128,15 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
 builder.Services.AddAuthorizationBuilder()
     .AddPolicy("AdminOnly", policy => policy.RequireRole(nameof(UserRole.Admin)));
 
+builder.Services.AddCors(options =>
+{
+    options.AddDefaultPolicy(policy =>
+        policy.SetIsOriginAllowed(_ => true)
+            .AllowAnyHeader()
+            .AllowAnyMethod()
+            .AllowCredentials());
+});
+
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
@@ -141,6 +150,21 @@ builder.Services.AddRateLimiter(options =>
 
 var app = builder.Build();
 
+try
+{
+    using var migrationScope = app.Services.CreateScope();
+    var db = migrationScope.ServiceProvider.GetRequiredService<HermesDbContext>();
+    if (await db.Database.CanConnectAsync())
+    {
+        await db.Database.MigrateAsync();
+    }
+}
+catch (Exception)
+{
+    // Startup continues when running in environments without an active PostgreSQL instance (e.g., lightweight health probes).
+}
+
+app.UseCors();
 app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
