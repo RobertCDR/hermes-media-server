@@ -5,9 +5,11 @@ using System.Text;
 using Hermes.Api.Features.Admin;
 using Hermes.Api.Features.Auth;
 using Hermes.Api.Features.Setup;
+using Hermes.Api.Features.Streaming;
 using Hermes.Api.Features.System;
 using Hermes.Domain.Enums;
 using Hermes.Domain.Ports;
+using Hermes.Infrastructure.Media;
 using Hermes.Infrastructure.Persistence;
 using Hermes.Infrastructure.Security;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -49,6 +51,19 @@ builder.Services.AddSingleton<IStreamTicketService>(sp =>
         GetOrCreateSecret(config, "Security:StreamTicketSecret", 16),
         sp.GetRequiredService<TimeProvider>());
 });
+
+builder.Services.AddHttpClient<ITmdbClient, TmdbMetadataClient>();
+builder.Services.AddSingleton<IMediaProbeService, FfprobeMediaProbeService>();
+builder.Services.AddSingleton<IAudioMetadataReader, TagLibAudioMetadataReader>();
+builder.Services.AddSingleton<IArtworkStore>(sp =>
+{
+    var config = sp.GetRequiredService<IConfiguration>();
+    var artworkDir = config["Hermes:ArtworkDirectory"];
+    return new SkiaArtworkStore(string.IsNullOrWhiteSpace(artworkDir) ? "artwork-cache" : artworkDir);
+});
+builder.Services.AddSingleton<LibraryScanChannel>();
+builder.Services.AddScoped<LibraryScannerService>();
+builder.Services.AddHostedService<LibraryScanWorker>();
 
 builder.Services.AddDbContext<HermesDbContext>((sp, options) =>
 {
@@ -105,6 +120,9 @@ app.MapSetupEndpoints();
 app.MapAuthEndpoints();
 app.MapInviteEndpoints();
 app.MapUserManagementEndpoints();
+app.MapLibraryAdminEndpoints();
+app.MapIdentifyEndpoints();
+app.MapArtworkEndpoints();
 
 await app.RunAsync();
 

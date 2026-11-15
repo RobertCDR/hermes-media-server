@@ -39,6 +39,25 @@ public interface IMediaProbeService
     Task<ProbedMediaInfo?> ProbeAsync(string filePath, CancellationToken cancellationToken);
 }
 
+public sealed record ProbedAudioTrackMetadata(
+    string Title,
+    string ArtistName,
+    string AlbumTitle,
+    int? Year,
+    int TrackNumber,
+    int DiscNumber,
+    long DurationMs,
+    string Codec,
+    long BitrateBps,
+    int SampleRateHz,
+    int BitDepth,
+    byte[]? EmbeddedArtworkBytes);
+
+public interface IAudioMetadataReader
+{
+    ProbedAudioTrackMetadata? ReadMetadata(string filePath);
+}
+
 public sealed record TmdbSearchCandidate(int TmdbId, string Title, int? Year, string? Overview, string? PosterPath, string? BackdropPath);
 
 public interface ITmdbClient
