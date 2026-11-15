@@ -1,0 +1,47 @@
+# .NET
+bin/
+obj/
+out/
+TestResults/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+artifacts/
+
+# Secrets & local runtime config
+.env
+.env.*
+!.env.example
+appsettings.Development.json
+appsettings.Local.json
+*.pfx
+*.key
+
+# Superpowers & IDE agent scratch
+.superpowers/
+
+# Flutter / Dart
+client/.dart_tool/
+client/.flutter-plugins
+client/.flutter-plugins-dependencies
+client/.packages
+client/build/
+client/**/*.g.dart
+client/**/*.freezed.dart
+client/android/.gradle/
+client/android/local.properties
+client/windows/flutter/ephemeral/
+client/linux/flutter/ephemeral/
+client/macos/Flutter/ephemeral/
+
+# OS & media caches
+.DS_Store
+Thumbs.db
+hermes-cache/
+transcodes/
+artwork-cache/
