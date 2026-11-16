@@ -60,11 +60,18 @@ public interface IAudioMetadataReader
 
 public sealed record TmdbSearchCandidate(int TmdbId, string Title, int? Year, string? Overview, string? PosterPath, string? BackdropPath);
 
+public sealed record TmdbEpisodeCandidate(int EpisodeNumber, string Title, string? Overview, string? StillPath);
+
 public interface ITmdbClient
 {
     Task<IReadOnlyList<TmdbSearchCandidate>> SearchAsync(LibraryMediaType mediaType, string query, int? year, CancellationToken cancellationToken);
     Task<TmdbSearchCandidate?> GetDetailsAsync(LibraryMediaType mediaType, int tmdbId, CancellationToken cancellationToken);
     Task<byte[]?> DownloadImageBytesAsync(string remotePath, CancellationToken cancellationToken);
+    Task<IReadOnlyList<TmdbEpisodeCandidate>> GetSeasonEpisodesAsync(
+        int seriesTmdbId,
+        int seasonNumber,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<TmdbEpisodeCandidate>>([]);
 }
 
 public interface IArtworkStore

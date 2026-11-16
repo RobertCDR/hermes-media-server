@@ -35,14 +35,39 @@ public sealed class TmdbMetadataClient(HttpClient httpClient, IConfiguration con
             return [];
         }
 
+        var normalizedQuery = query.Trim();
+
         return response.Results
-            .Select(r => new TmdbSearchCandidate(
-                r.Id,
-                r.Title ?? r.Name ?? query,
-                TryParseYear(r.ReleaseDate ?? r.FirstAirDate),
-                r.Overview,
-                r.PosterPath,
-                r.BackdropPath))
+            .Select(r =>
+            {
+                var candidateTitle = r.Title ?? r.Name ?? query;
+                var candidateYear = TryParseYear(r.ReleaseDate ?? r.FirstAirDate);
+                var exactMatch =
+                    string.Equals(r.Title?.Trim(), normalizedQuery, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(r.Name?.Trim(), normalizedQuery, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(r.OriginalTitle?.Trim(), normalizedQuery, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(r.OriginalName?.Trim(), normalizedQuery, StringComparison.OrdinalIgnoreCase);
+                var exactYearMatch = year is not null && candidateYear == year;
+                return new
+                {
+                    Candidate = new TmdbSearchCandidate(
+                        r.Id,
+                        candidateTitle,
+                        candidateYear,
+                        r.Overview,
+                        r.PosterPath,
+                        r.BackdropPath),
+                    ExactMatch = exactMatch,
+                    ExactYearMatch = exactYearMatch,
+                    r.VoteCount,
+                    r.Popularity,
+                };
+            })
+            .OrderByDescending(x => x.ExactMatch)
+            .ThenByDescending(x => x.ExactYearMatch)
+            .ThenByDescending(x => x.VoteCount)
+            .ThenByDescending(x => x.Popularity)
+            .Select(x => x.Candidate)
             .ToList();
     }
 
@@ -94,6 +119,33 @@ public sealed class TmdbMetadataClient(HttpClient httpClient, IConfiguration con
         return await response.Content.ReadAsByteArrayAsync(cancellationToken);
     }
 
+    public async Task<IReadOnlyList<TmdbEpisodeCandidate>> GetSeasonEpisodesAsync(
+        int seriesTmdbId,
+        int seasonNumber,
+        CancellationToken cancellationToken)
+    {
+        var apiKey = configuration["Hermes:TmdbApiKey"];
+        if (string.IsNullOrWhiteSpace(apiKey) || seriesTmdbId <= 0 || seasonNumber < 0)
+        {
+            return [];
+        }
+
+        var url = $"https://api.themoviedb.org/3/tv/{seriesTmdbId}/season/{seasonNumber}?api_key={Uri.EscapeDataString(apiKey)}";
+        var season = await httpClient.GetFromJsonAsync<TmdbSeasonResponse>(url, cancellationToken);
+        if (season?.Episodes is null)
+        {
+            return [];
+        }
+
+        return season.Episodes
+            .Select(e => new TmdbEpisodeCandidate(
+                e.EpisodeNumber,
+                e.Name ?? $"Episode {e.EpisodeNumber}",
+                e.Overview,
+                e.StillPath))
+            .ToList();
+    }
+
     private static int? TryParseYear(string? dateText)
     {
         if (!string.IsNullOrWhiteSpace(dateText) &&
@@ -123,6 +175,12 @@ public sealed class TmdbMetadataClient(HttpClient httpClient, IConfiguration con
         [JsonPropertyName("name")]
         public string? Name { get; init; }
 
+        [JsonPropertyName("original_title")]
+        public string? OriginalTitle { get; init; }
+
+        [JsonPropertyName("original_name")]
+        public string? OriginalName { get; init; }
+
         [JsonPropertyName("overview")]
         public string? Overview { get; init; }
 
@@ -137,5 +195,32 @@ public sealed class TmdbMetadataClient(HttpClient httpClient, IConfiguration con
 
         [JsonPropertyName("backdrop_path")]
         public string? BackdropPath { get; init; }
+
+        [JsonPropertyName("vote_count")]
+        public int VoteCount { get; init; }
+
+        [JsonPropertyName("popularity")]
+        public double Popularity { get; init; }
+    }
+
+    private sealed class TmdbSeasonResponse
+    {
+        [JsonPropertyName("episodes")]
+        public List<TmdbEpisodeItem>? Episodes { get; init; }
+    }
+
+    private sealed class TmdbEpisodeItem
+    {
+        [JsonPropertyName("episode_number")]
+        public int EpisodeNumber { get; init; }
+
+        [JsonPropertyName("name")]
+        public string? Name { get; init; }
+
+        [JsonPropertyName("overview")]
+        public string? Overview { get; init; }
+
+        [JsonPropertyName("still_path")]
+        public string? StillPath { get; init; }
     }
 }

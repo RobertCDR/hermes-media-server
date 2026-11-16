@@ -211,6 +211,22 @@ public sealed class Episode
 
     public TvSeason TvSeason { get; private set; } = null!;
     public ICollection<MediaSource> Sources { get; } = [];
+
+    public void ApplyScannedMetadata(string title, string? overview, string? stillArtworkHash)
+    {
+        if (IsMetadataLocked)
+        {
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(title))
+        {
+            Title = title.Trim();
+        }
+
+        Overview = overview ?? Overview;
+        StillArtworkHash = stillArtworkHash ?? StillArtworkHash;
+    }
 }
 
 public sealed class MediaSource

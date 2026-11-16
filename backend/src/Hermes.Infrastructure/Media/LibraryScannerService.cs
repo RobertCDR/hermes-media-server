@@ -235,6 +235,15 @@ public sealed partial class LibraryScannerService(
             upserted++;
         }
 
+        foreach (var series in seriesByKey.Values)
+        {
+            await TryEnrichSeriesFromTmdbAsync(series, series.Title, series.Year, cancellationToken);
+            if (series.TmdbId is int seriesTmdbId)
+            {
+                await TryEnrichSeriesEpisodesFromTmdbAsync(series, seriesTmdbId, cancellationToken);
+            }
+        }
+
         var utcNow = timeProvider.GetUtcNow();
         var markedMissing = 0;
         foreach (var existingSource in existingSourcesByPath.Values)
@@ -379,6 +388,50 @@ public sealed partial class LibraryScannerService(
         {
             var (match, posterHash, backdropHash) = enriched.Value;
             series.ApplyScannedMetadata(match.Title, match.Year ?? parsedYear, match.Overview, match.TmdbId, posterHash, backdropHash);
+        }
+    }
+
+    private async Task TryEnrichSeriesEpisodesFromTmdbAsync(
+        TvSeries series,
+        int seriesTmdbId,
+        CancellationToken cancellationToken)
+    {
+        foreach (var season in series.Seasons)
+        {
+            if (season.Episodes.Count == 0 || season.Episodes.All(e => !string.IsNullOrWhiteSpace(e.Overview)))
+            {
+                continue;
+            }
+
+            try
+            {
+                var remoteEpisodes = await tmdbClient.GetSeasonEpisodesAsync(seriesTmdbId, season.SeasonNumber, cancellationToken);
+                if (remoteEpisodes.Count == 0)
+                {
+                    continue;
+                }
+
+                var byNumber = remoteEpisodes.ToDictionary(e => e.EpisodeNumber);
+                foreach (var episode in season.Episodes)
+                {
+                    if (!byNumber.TryGetValue(episode.EpisodeNumber, out var remote) || episode.IsMetadataLocked)
+                    {
+                        continue;
+                    }
+
+                    string? stillHash = episode.StillArtworkHash;
+                    if (string.IsNullOrWhiteSpace(stillHash))
+                    {
+                        stillHash = await TryCacheTmdbArtworkAsync(remote.StillPath, cancellationToken);
+                    }
+
+                    episode.ApplyScannedMetadata(remote.Title, remote.Overview, stillHash);
+                }
+            }
+            catch (Exception) when (!cancellationToken.IsCancellationRequested)
+            {
+                // Transient TMDb season lookup errors must not abort the library scan.
+            }
         }
     }
 
