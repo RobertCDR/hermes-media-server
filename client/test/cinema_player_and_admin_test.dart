@@ -3,10 +3,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_client/src/core/theme/hermes_theme_tokens.dart';
 import 'package:hermes_client/src/features/admin/admin_service.dart';
 import 'package:hermes_client/src/features/admin/admin_dashboard_screen.dart';
+import 'package:hermes_client/src/features/cinema/cinema_catalog_screen.dart';
 import 'package:hermes_client/src/features/cinema/cinema_models.dart';
 import 'package:hermes_client/src/features/cinema/cinema_service.dart';
 import 'package:hermes_client/src/features/cinema/hermes_video_player.dart';
 import 'package:hermes_client/src/features/cinema/source_selector_card.dart';
+import 'package:hermes_client/src/features/music/music_playback_coordinator.dart';
+import 'package:hermes_client/src/features/music/music_service.dart';
+import 'package:hermes_client/src/features/music/music_world_screen.dart';
+import 'package:hermes_client/src/features/music/platform_media_bridge.dart';
 import 'package:hermes_client/src/features/settings/player_and_theme_settings_screen.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -299,6 +304,212 @@ void main() {
       await tester.tap(find.text('Scan Now'));
       await tester.pumpAndSettle();
       expect(scannedLibraryId, 'lib-1');
+    });
+
+    testWidgets('CinemaCatalogScreen renders hero spotlight, continue watching, and poster cards', (tester) async {
+      tester.view.devicePixelRatio = 1.0;
+      tester.view.physicalSize = const Size(1280, 900);
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final client = MockClient((req) async {
+        if (req.url.path == '/api/v1/cinema/movies') {
+          return http.Response(
+            jsonEncode([
+              {
+                'id': 'mov-1',
+                'title': 'Primal Fear',
+                'year': 1996,
+                'overview': 'Courtroom thriller.',
+                'tmdbId': 1592,
+                'watchProgress': {
+                  'positionMs': 300000,
+                  'durationMs': 7800000,
+                  'isWatched': false,
+                  'updatedAtUtc': '2026-11-16T08:00:00Z',
+                },
+                'sources': [
+                  {
+                    'id': 'src-1',
+                    'sourceLabel': '2160p HDR',
+                    'container': 'mkv',
+                    'videoCodec': 'hevc',
+                    'audioCodec': 'eac3',
+                    'width': 3840,
+                    'height': 2160,
+                    'isHdr': true,
+                    'bitrateBps': 20000000,
+                    'durationMs': 7800000,
+                    'isAvailable': true,
+                    'streams': [],
+                  },
+                ],
+              },
+            ]),
+            200,
+          );
+        }
+        if (req.url.path == '/api/v1/cinema/series') {
+          return http.Response(
+            jsonEncode([
+              {
+                'id': 'ser-1',
+                'title': 'Dark',
+                'year': 2017,
+                'overview': 'Time travel mystery in Winden.',
+                'tmdbId': 70523,
+                'seasons': [
+                  {
+                    'id': 'sea-1',
+                    'seasonNumber': 1,
+                    'title': 'Season 1',
+                    'episodes': [
+                      {
+                        'id': 'ep-1',
+                        'episodeNumber': 1,
+                        'title': 'Secrets',
+                        'sources': [],
+                      },
+                    ],
+                  },
+                ],
+              },
+            ]),
+            200,
+          );
+        }
+        return http.Response('[]', 200);
+      });
+
+      final service = CinemaService(
+        baseUri: Uri.parse('http://localhost:5258'),
+        accessToken: 'jwt',
+        httpClient: client,
+      );
+      final tokens = HermesThemeTokens.resolve();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: tokens.toThemeData(),
+          home: Scaffold(
+            body: CinemaCatalogScreen(
+              cinemaService: service,
+              playerConfig: HermesVideoPlayerConfig.hdrSafeDefault(tokens: tokens),
+              defaultQuality: VideoQualityPreset.directPlay,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Continue Watching'), findsOneWidget);
+      expect(find.text('Watch Now'), findsOneWidget);
+      expect(find.text('Primal Fear'), findsWidgets);
+
+      await tester.tap(find.text('TV Series'));
+      await tester.pumpAndSettle();
+      expect(find.text('TV Series (1)'), findsOneWidget);
+      expect(find.text('Dark'), findsWidgets);
+    });
+
+    testWidgets('MusicWorldScreen shows albums, artists, songs, and hides technical quality chips', (tester) async {
+      tester.view.devicePixelRatio = 1.0;
+      tester.view.physicalSize = const Size(1280, 900);
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final client = MockClient((req) async {
+        return switch (req.url.path) {
+          '/api/v1/music/artists' => http.Response(
+              jsonEncode([
+                {'id': 'art-1', 'name': 'Sleep Token', 'albumCount': 1},
+              ]),
+              200,
+            ),
+          '/api/v1/music/albums' => http.Response(
+              jsonEncode([
+                {
+                  'id': 'alb-1',
+                  'artistId': 'art-1',
+                  'artistName': 'Sleep Token',
+                  'title': 'Take Me Back To Eden',
+                  'year': 2023,
+                  'songCount': 1,
+                },
+              ]),
+              200,
+            ),
+          '/api/v1/music/songs' => http.Response(
+              jsonEncode([
+                {
+                  'id': 'song-1',
+                  'artistId': 'art-1',
+                  'artistName': 'Sleep Token',
+                  'albumId': 'alb-1',
+                  'albumTitle': 'Take Me Back To Eden',
+                  'title': 'The Summoning',
+                  'trackNumber': 2,
+                  'discNumber': 1,
+                  'durationMs': 395000,
+                  'codec': 'flac',
+                  'bitrateBps': 1411000,
+                  'sampleRateHz': 44100,
+                  'bitDepth': 16,
+                  'isLiked': false,
+                  'isMissing': false,
+                },
+              ]),
+              200,
+            ),
+          '/api/v1/music/playlists' => http.Response('[]', 200),
+          '/api/v1/search' => http.Response(
+              jsonEncode({
+                'query': 'summoning',
+                'movies': [],
+                'series': [],
+                'artists': [],
+                'albums': [],
+                'songs': [],
+              }),
+              200,
+            ),
+          _ => http.Response('[]', 200),
+        };
+      });
+
+      final musicService = MusicService(
+        baseUri: Uri.parse('http://localhost:5258'),
+        accessToken: 'jwt',
+        httpClient: client,
+      );
+      final coordinator = MusicPlaybackCoordinator(
+        localDeviceId: 'dev-1',
+        musicService: musicService,
+        audioEngine: NoOpAudioEngineAdapter(),
+        mediaBridge: InMemoryPlatformMediaBridge(),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: HermesThemeTokens.resolve().toThemeData(),
+          home: Scaffold(
+            body: MusicWorldScreen(
+              musicService: musicService,
+              coordinator: coordinator,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Take Me Back To Eden'), findsWidgets);
+      expect(find.text('The Summoning'), findsOneWidget);
+      expect(find.text('FLAC'), findsOneWidget);
+      expect(find.text('6:35'), findsOneWidget);
+      expect(find.textContaining('Audio Streaming Quality'), findsNothing);
+
+      final search = await musicService.searchLibrary('summoning');
+      expect(search.isEmpty, isTrue);
     });
   });
 }

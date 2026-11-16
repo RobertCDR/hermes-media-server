@@ -128,4 +128,22 @@ class MusicService {
       },
     );
   }
+
+  Uri? buildArtworkUri(String? artworkHash, {String variant = 'thumb_400'}) {
+    if (artworkHash == null || artworkHash.isEmpty) {
+      return null;
+    }
+    return baseUri.resolve('/api/v1/artwork/$artworkHash/$variant.webp');
+  }
+
+  Future<UnifiedSearchResult> searchLibrary(String query) async {
+    final uri = baseUri.resolve('/api/v1/search').replace(
+      queryParameters: {'q': query.trim()},
+    );
+    final response = await httpClient.get(uri, headers: _headers);
+    if (response.statusCode != 200) {
+      throw MusicApiException('Library search failed', statusCode: response.statusCode);
+    }
+    return UnifiedSearchResult.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
 }
