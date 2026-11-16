@@ -155,4 +155,35 @@ class AuthService {
       _inFlightRefresh = null;
     }
   }
+
+  Future<void> changePassword({
+    required String baseUrl,
+    required String accessToken,
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    final uri = Uri.parse(baseUrl).resolve('/api/v1/auth/change-password');
+    final response = await httpClient.post(
+      uri,
+      headers: {
+        'Authorization': 'Bearer $accessToken',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        'currentPassword': currentPassword,
+        'newPassword': newPassword,
+      }),
+    );
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw AuthException(
+        'Password change failed (${response.statusCode})',
+        statusCode: response.statusCode,
+      );
+    }
+  }
+
+  Future<void> signOut() async {
+    await sessionStore.clear();
+  }
 }

@@ -5,6 +5,7 @@ import 'package:material_ui/material_ui.dart';
 import 'src/core/auth/auth_service.dart';
 import 'src/core/auth/session_store.dart';
 import 'src/core/network/endpoint_resolver.dart';
+import 'src/core/settings/hermes_preferences.dart';
 import 'src/core/theme/hermes_theme_tokens.dart';
 import 'src/core/widgets/hermes_artwork_image.dart';
 import 'src/features/admin/admin_dashboard_screen.dart';
@@ -43,9 +44,16 @@ class _HermesAppState extends State<HermesApp> {
   late final _endpointResolver = EndpointResolver(httpClient: _httpClient);
   late final _authService = AuthService(httpClient: _httpClient, sessionStore: _sessionStore);
 
+  late final _accountPreferencesService =
+      AccountPreferencesService(httpClient: _httpClient);
+
+  HermesDevicePreferences _devicePrefs = const HermesDevicePreferences();
+  HermesAccountPreferences _accountPrefs = const HermesAccountPreferences();
   HermesThemeTokens _tokens = HermesThemeTokens.resolve();
   VideoRendererBackend _rendererBackend = VideoRendererBackend.openGl;
   VideoQualityPreset _defaultVideoQuality = VideoQualityPreset.directPlay;
+  bool _switchingServer = false;
+  SettingsTabKind _settingsInitialTab = SettingsTabKind.device;
   HermesSession? _session;
   ResolvedEndpoint? _endpoint;
   MusicPlaybackCoordinator? _musicCoordinator;
@@ -71,12 +79,78 @@ class _HermesAppState extends State<HermesApp> {
       mediaBridge: _mediaBridge,
     );
 
+    coordinator.updateQualityPolicy(_devicePrefs.toAudioQualityPolicy());
+
     setState(() {
       _musicCoordinator?.dispose();
       _session = nextSession;
       _endpoint = nextEndpoint;
+      _switchingServer = false;
       _musicService = musicService;
       _musicCoordinator = coordinator;
+    });
+
+    unawaited(_loadAccountPreferences(nextSession, nextEndpoint));
+  }
+
+  Future<void> _loadAccountPreferences(
+    HermesSession session,
+    ResolvedEndpoint endpoint,
+  ) async {
+    try {
+      final prefs = await _accountPreferencesService.fetch(
+        baseUrl: endpoint.baseUri.toString(),
+        accessToken: session.accessToken,
+      );
+      if (!mounted || _session?.accessToken != session.accessToken) return;
+      setState(() {
+        _accountPrefs = prefs;
+      });
+    } catch (_) {
+      // Keep defaults when server is offline or preferences endpoint is unavailable.
+    }
+  }
+
+  Future<void> _syncAccountPreferences(HermesAccountPreferences next) async {
+    setState(() {
+      _accountPrefs = next;
+    });
+    final session = _session;
+    final endpoint = _endpoint;
+    if (session == null || endpoint == null) return;
+    try {
+      await _accountPreferencesService.save(
+        baseUrl: endpoint.baseUri.toString(),
+        accessToken: session.accessToken,
+        preferences: next,
+      );
+    } catch (_) {
+      // Local state already updated; retry on next change or login.
+    }
+  }
+
+  Future<void> _changePassword(String currentPassword, String newPassword) async {
+    final session = _session;
+    final endpoint = _endpoint;
+    if (session == null || endpoint == null) return;
+    await _authService.changePassword(
+      baseUrl: endpoint.baseUri.toString(),
+      accessToken: session.accessToken,
+      currentPassword: currentPassword,
+      newPassword: newPassword,
+    );
+  }
+
+  Future<void> _signOut() async {
+    await _authService.signOut();
+    _musicCoordinator?.dispose();
+    if (!mounted) return;
+    setState(() {
+      _session = null;
+      _switchingServer = false;
+      _musicCoordinator = null;
+      _musicService = null;
+      _accountPrefs = const HermesAccountPreferences();
     });
   }
 
@@ -252,13 +326,31 @@ class _HermesAppState extends State<HermesApp> {
       title: 'Hermes Media Server',
       debugShowCheckedModeBanner: false,
       theme: _tokens.toThemeData(),
-      home: session == null || endpoint == null || musicService == null || musicCoordinator == null
+      builder: (context, child) {
+        final media = MediaQuery.of(context);
+        return MediaQuery(
+          data: media.copyWith(
+            textScaler: TextScaler.linear(_devicePrefs.textSize.scaleFactor),
+            disableAnimations: _devicePrefs.reduceMotion,
+          ),
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
+      home: _switchingServer ||
+              session == null ||
+              endpoint == null ||
+              musicService == null ||
+              musicCoordinator == null
           ? SetupAndLoginScreen(
               endpointResolver: _endpointResolver,
               authService: _authService,
               deviceId: 'hermes-${Platform.operatingSystem}',
               deviceName: Platform.localHostname,
+              initialPrimaryUrl: endpoint?.baseUri.toString() ?? 'http://localhost:5000',
               onAuthenticated: _onAuthenticated,
+              onCancel: session != null && endpoint != null
+                  ? () => setState(() => _switchingServer = false)
+                  : null,
             )
           : Builder(
               builder: (navContext) {
@@ -280,35 +372,52 @@ class _HermesAppState extends State<HermesApp> {
                 return DualWorldShell(
                   username: session.username,
                   isAdmin: session.isAdmin,
+                  serverName: endpoint.info.serverName,
+                  endpointLabel: endpoint.usedFallback ? 'LAN fallback' : 'Tailscale',
                   onOpenSearch: () => unawaited(
                     _openLibrarySearchDialog(navContext, musicService, musicCoordinator),
                   ),
-                  onOpenAdmin: () {
-                    Navigator.of(navContext).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => AdminDashboardScreen(adminService: adminService),
-                      ),
-                    );
-                  },
-                  onOpenSettings: () {
-                    Navigator.of(navContext).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => PlayerAndThemeSettingsScreen(
-                          tokens: _tokens,
-                          rendererBackend: _rendererBackend,
-                          defaultVideoQuality: _defaultVideoQuality,
-                          networkMode: musicCoordinator.networkMode,
-                          audioQualityPolicy: musicCoordinator.audioQualityPolicy,
-                          onThemeChanged: (next) => setState(() => _tokens = next),
-                          onRendererChanged: (next) => setState(() => _rendererBackend = next),
-                          onDefaultVideoQualityChanged: (next) =>
-                              setState(() => _defaultVideoQuality = next),
-                          onNetworkModeChanged: musicCoordinator.setNetworkMode,
-                          onAudioQualityPolicyChanged: musicCoordinator.updateQualityPolicy,
-                        ),
-                      ),
-                    );
-                  },
+                  onOpenSettings: () => setState(
+                    () => _settingsInitialTab = SettingsTabKind.device,
+                  ),
+                  onOpenAccountSettings: () => setState(
+                    () => _settingsInitialTab = SettingsTabKind.account,
+                  ),
+                  onSwitchServer: () => setState(() => _switchingServer = true),
+                  onSignOut: () => unawaited(_signOut()),
+                  adminBuilder: (_) => AdminDashboardScreen(adminService: adminService),
+                  settingsBuilder: (_) => PlayerAndThemeSettingsScreen(
+                    tokens: _tokens,
+                    rendererBackend: _rendererBackend,
+                    defaultVideoQuality: _defaultVideoQuality,
+                    networkMode: musicCoordinator.networkMode,
+                    audioQualityPolicy: musicCoordinator.audioQualityPolicy,
+                    devicePreferences: _devicePrefs,
+                    accountPreferences: _accountPrefs,
+                    username: session.username,
+                    deviceName: Platform.localHostname,
+                    initialTab: _settingsInitialTab,
+                    onThemeChanged: (next) => setState(() => _tokens = next),
+                    onRendererChanged: (next) =>
+                        setState(() => _rendererBackend = next),
+                    onDefaultVideoQualityChanged: (next) =>
+                        setState(() => _defaultVideoQuality = next),
+                    onNetworkModeChanged: musicCoordinator.setNetworkMode,
+                    onAudioQualityPolicyChanged: musicCoordinator.updateQualityPolicy,
+                    onDevicePreferencesChanged: (next) {
+                      setState(() {
+                        _devicePrefs = next;
+                        _tokens = next.toThemeTokens();
+                        _rendererBackend = next.rendererBackend;
+                        _defaultVideoQuality = next.defaultVideoQuality;
+                      });
+                    },
+                    onAccountPreferencesChanged: (next) =>
+                        unawaited(_syncAccountPreferences(next)),
+                    onChangePassword: _changePassword,
+                    onSwitchServer: () => setState(() => _switchingServer = true),
+                    onSignOut: () => unawaited(_signOut()),
+                  ),
                   cinemaBuilder: (_) => CinemaCatalogScreen(
                     cinemaService: cinemaService,
                     playerConfig: playerConfig,
