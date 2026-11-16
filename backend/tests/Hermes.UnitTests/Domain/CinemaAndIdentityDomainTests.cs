@@ -70,6 +70,25 @@ public class CinemaAndIdentityDomainTests
         user.PreferredSurfacePreset.Should().Be(ThemeSurfacePreset.OledBlack);
         user.PreferredAccentHex.Should().Be("#10B981");
 
+        user.AutoplayNextEpisode.Should().BeTrue();
+        user.NormalizeVolume.Should().BeFalse();
+        user.MatchTitleColors.Should().BeTrue();
+        user.SubtitleSize.Should().Be("medium");
+        user.SubtitleBackground.Should().Be("shadow");
+
+        user.UpdateAccountPreferences(false, true, false, "XL", "Box");
+        user.AutoplayNextEpisode.Should().BeFalse();
+        user.NormalizeVolume.Should().BeTrue();
+        user.MatchTitleColors.Should().BeFalse();
+        user.SubtitleSize.Should().Be("xl");
+        user.SubtitleBackground.Should().Be("box");
+
+        var badSubSize = () => user.UpdateAccountPreferences(true, false, true, "huge", "shadow");
+        badSubSize.Should().Throw<ArgumentException>();
+
+        var badSubBg = () => user.UpdateAccountPreferences(true, false, true, "large", "neon");
+        badSubBg.Should().Throw<ArgumentException>();
+
         user.ChangePassword("hash2", now.AddMinutes(5));
         user.OneTimeResetCodeHash.Should().BeNull();
         refresh.IsActive(now.AddMinutes(6)).Should().BeFalse();

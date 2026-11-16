@@ -44,6 +44,11 @@ public sealed class HermesDbContext(DbContextOptions<HermesDbContext> options) :
             b.Property(u => u.Username).HasMaxLength(64).IsRequired();
             b.Property(u => u.PasswordHash).HasMaxLength(512).IsRequired();
             b.Property(u => u.PreferredAccentHex).HasMaxLength(16).IsRequired();
+            b.Property(u => u.AutoplayNextEpisode).HasDefaultValue(true);
+            b.Property(u => u.NormalizeVolume).HasDefaultValue(false);
+            b.Property(u => u.MatchTitleColors).HasDefaultValue(true);
+            b.Property(u => u.SubtitleSize).HasMaxLength(16).HasDefaultValue("medium").IsRequired();
+            b.Property(u => u.SubtitleBackground).HasMaxLength(16).HasDefaultValue("shadow").IsRequired();
             b.HasIndex(u => u.Username).IsUnique();
             b.HasMany(u => u.RefreshTokens)
                 .WithOne(t => t.User)

@@ -22,3 +22,17 @@ public sealed record ResetPasswordRequest(string Username, string ResetCode, str
 public sealed record CreateStreamTicketRequest(Guid MediaSourceId);
 
 public sealed record StreamTicketResponse(string Ticket, DateTimeOffset ExpiresAtUtc);
+
+public sealed record AccountPreferencesDto(
+    bool AutoplayNextEpisode,
+    bool NormalizeVolume,
+    bool MatchTitleColors,
+    string SubtitleSize,
+    string SubtitleBackground);
+
+public sealed record UpdateAccountPreferencesRequest(
+    bool AutoplayNextEpisode,
+    bool NormalizeVolume,
+    bool MatchTitleColors,
+    string SubtitleSize,
+    string SubtitleBackground);

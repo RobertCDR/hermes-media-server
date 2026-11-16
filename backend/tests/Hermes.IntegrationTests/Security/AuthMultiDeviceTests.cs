@@ -136,6 +136,47 @@ public class AuthMultiDeviceTests
         newSession.Username.Should().Be("bob");
     }
 
+    [Fact]
+    public async Task AccountPreferences_GetAndUpdate_SyncsAndValidatesInputs()
+    {
+        await using var factory = new PostgresWebApplicationFactory();
+        await factory.InitializeAsync();
+
+        using var client = factory.CreateClient();
+        await client.PostAsJsonAsync("/api/v1/setup", new SetupRequest("admin", "AdminPass!123", "Hermes Home"));
+        var login = await LoginAsync(client, "admin", "AdminPass!123", "admin-pc", "Admin Workstation");
+
+        using var authed = factory.CreateClient();
+        authed.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", login.AccessToken);
+
+        var initial = await authed.GetFromJsonAsync<AccountPreferencesDto>("/api/v1/auth/me/preferences");
+        initial.Should().NotBeNull();
+        initial!.AutoplayNextEpisode.Should().BeTrue();
+        initial.NormalizeVolume.Should().BeFalse();
+        initial.MatchTitleColors.Should().BeTrue();
+        initial.SubtitleSize.Should().Be("medium");
+        initial.SubtitleBackground.Should().Be("shadow");
+
+        var updateResponse = await authed.PutAsJsonAsync(
+            "/api/v1/auth/me/preferences",
+            new UpdateAccountPreferencesRequest(false, true, false, "large", "box"));
+        updateResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var updated = await updateResponse.Content.ReadFromJsonAsync<AccountPreferencesDto>();
+        updated!.AutoplayNextEpisode.Should().BeFalse();
+        updated.NormalizeVolume.Should().BeTrue();
+        updated.MatchTitleColors.Should().BeFalse();
+        updated.SubtitleSize.Should().Be("large");
+        updated.SubtitleBackground.Should().Be("box");
+
+        var fetchedAgain = await authed.GetFromJsonAsync<AccountPreferencesDto>("/api/v1/auth/me/preferences");
+        fetchedAgain.Should().Be(updated);
+
+        var badResponse = await authed.PutAsJsonAsync(
+            "/api/v1/auth/me/preferences",
+            new UpdateAccountPreferencesRequest(true, false, true, "invalid", "shadow"));
+        badResponse.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
     private static async Task<AuthTokenResponse> LoginAsync(
         HttpClient client,
         string username,
