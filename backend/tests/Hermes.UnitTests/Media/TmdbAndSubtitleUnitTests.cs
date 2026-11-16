@@ -34,7 +34,16 @@ public class TmdbAndSubtitleUnitTests
 
             if (url.Contains("/3/search/tv", StringComparison.Ordinal))
             {
+                if (url.Contains("DARK", StringComparison.OrdinalIgnoreCase))
+                {
+                    return JsonOk("""{"results":[{"id":2883,"name":"Dark Shadows","original_name":"Dark Shadows","first_air_date":"1966-06-27","vote_count":98,"popularity":107.79},{"id":70523,"name":"Dark","original_name":"Dark","first_air_date":"2017-12-01","overview":"Time travel","vote_count":8005,"popularity":41.84}]}""");
+                }
                 return JsonOk("""{"results":[{"id":95396,"name":"Severance","first_air_date":"bad","overview":"Macrodata","poster_path":"/tv.jpg","backdrop_path":"/tvbg.jpg"}]}""");
+            }
+
+            if (url.Contains("/3/tv/70523/season/1", StringComparison.Ordinal))
+            {
+                return JsonOk("""{"episodes":[{"episode_number":1,"name":"Secrets","overview":"First episode","still_path":"/ep1.jpg"}]}""");
             }
 
             if (url.Contains("/3/movie/693134", StringComparison.Ordinal))
@@ -72,6 +81,13 @@ public class TmdbAndSubtitleUnitTests
 
         var tvHits = await client.SearchAsync(LibraryMediaType.Series, "Severance", 2022, CancellationToken.None);
         tvHits.Should().ContainSingle(c => c.TmdbId == 95396 && c.Title == "Severance" && c.Year == null);
+
+        var darkHits = await client.SearchAsync(LibraryMediaType.Series, "DARK", null, CancellationToken.None);
+        darkHits.First().TmdbId.Should().Be(70523);
+        darkHits.First().Title.Should().Be("Dark");
+
+        var seasonEpisodes = await client.GetSeasonEpisodesAsync(70523, 1, CancellationToken.None);
+        seasonEpisodes.Should().ContainSingle(e => e.EpisodeNumber == 1 && e.Title == "Secrets");
 
         var movieDetail = await client.GetDetailsAsync(LibraryMediaType.Movies, 693134, CancellationToken.None);
         movieDetail.Should().NotBeNull();

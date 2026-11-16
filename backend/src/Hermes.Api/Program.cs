@@ -181,12 +181,18 @@ try
             {
                 db.MediaLibraryRoots.AddRange(seeded);
                 await db.SaveChangesAsync();
+            }
+        }
 
-                var scanChannel = migrationScope.ServiceProvider.GetRequiredService<LibraryScanChannel>();
-                foreach (var root in seeded)
-                {
-                    await scanChannel.EnqueueScanAsync(root.Id, CancellationToken.None);
-                }
+        var existingRootIds = await db.MediaLibraryRoots
+            .Select(r => r.Id)
+            .ToListAsync();
+        if (existingRootIds.Count > 0)
+        {
+            var scanChannel = migrationScope.ServiceProvider.GetRequiredService<LibraryScanChannel>();
+            foreach (var rootId in existingRootIds)
+            {
+                await scanChannel.EnqueueScanAsync(rootId, CancellationToken.None);
             }
         }
     }
