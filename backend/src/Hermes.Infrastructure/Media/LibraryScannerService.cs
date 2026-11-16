@@ -391,7 +391,9 @@ public sealed partial class LibraryScannerService(
         try
         {
             var candidates = await tmdbClient.SearchAsync(mediaType, parsedTitle, parsedYear, cancellationToken);
-            var match = candidates.FirstOrDefault();
+            var match = candidates.FirstOrDefault(
+                    c => string.Equals(c.Title.Trim(), parsedTitle.Trim(), StringComparison.OrdinalIgnoreCase))
+                ?? candidates.FirstOrDefault();
             if (match is null)
             {
                 return null;

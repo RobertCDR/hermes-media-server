@@ -330,3 +330,96 @@ class PlaybackSessionState {
     );
   }
 }
+
+class UnifiedSearchMovieHit {
+  const UnifiedSearchMovieHit({
+    required this.id,
+    required this.title,
+    this.year,
+    this.artworkHash,
+  });
+
+  final String id;
+  final String title;
+  final int? year;
+  final String? artworkHash;
+
+  factory UnifiedSearchMovieHit.fromJson(Map<String, dynamic> json) {
+    return UnifiedSearchMovieHit(
+      id: json['id'] as String,
+      title: json['title'] as String? ?? '',
+      year: json['year'] as int?,
+      artworkHash: json['artworkHash'] as String?,
+    );
+  }
+}
+
+class UnifiedSearchSeriesHit {
+  const UnifiedSearchSeriesHit({
+    required this.id,
+    required this.title,
+    this.year,
+    this.artworkHash,
+  });
+
+  final String id;
+  final String title;
+  final int? year;
+  final String? artworkHash;
+
+  factory UnifiedSearchSeriesHit.fromJson(Map<String, dynamic> json) {
+    return UnifiedSearchSeriesHit(
+      id: json['id'] as String,
+      title: json['title'] as String? ?? '',
+      year: json['year'] as int?,
+      artworkHash: json['artworkHash'] as String?,
+    );
+  }
+}
+
+class UnifiedSearchResult {
+  const UnifiedSearchResult({
+    required this.query,
+    required this.movies,
+    required this.series,
+    required this.artists,
+    required this.albums,
+    required this.songs,
+  });
+
+  final String query;
+  final List<UnifiedSearchMovieHit> movies;
+  final List<UnifiedSearchSeriesHit> series;
+  final List<ArtistSummaryModel> artists;
+  final List<AlbumSummaryModel> albums;
+  final List<SongModel> songs;
+
+  bool get isEmpty =>
+      movies.isEmpty && series.isEmpty && artists.isEmpty && albums.isEmpty && songs.isEmpty;
+
+  factory UnifiedSearchResult.fromJson(Map<String, dynamic> json) {
+    final rawMovies = json['movies'] as List<dynamic>? ?? const [];
+    final rawSeries = json['series'] as List<dynamic>? ?? const [];
+    final rawArtists = json['artists'] as List<dynamic>? ?? const [];
+    final rawAlbums = json['albums'] as List<dynamic>? ?? const [];
+    final rawSongs = json['songs'] as List<dynamic>? ?? const [];
+    return UnifiedSearchResult(
+      query: json['query'] as String? ?? '',
+      movies: rawMovies
+          .map((e) => UnifiedSearchMovieHit.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      series: rawSeries
+          .map((e) => UnifiedSearchSeriesHit.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      artists: rawArtists
+          .map((e) => ArtistSummaryModel.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      albums: rawAlbums
+          .map((e) => AlbumSummaryModel.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      songs: rawSongs
+          .map((e) => SongModel.fromJson(e as Map<String, dynamic>))
+          .toList(),
+    );
+  }
+}
