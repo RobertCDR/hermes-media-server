@@ -51,7 +51,8 @@ public sealed record ProbedAudioTrackMetadata(
     long BitrateBps,
     int SampleRateHz,
     int BitDepth,
-    byte[]? EmbeddedArtworkBytes);
+    byte[]? EmbeddedArtworkBytes,
+    IReadOnlyList<string>? ArtistCredits = null);
 
 public interface IAudioMetadataReader
 {

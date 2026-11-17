@@ -575,3 +575,89 @@ public sealed class WatchlistItem
     public static WatchlistItem ForSeries(Guid userId, Guid tvSeriesId, DateTimeOffset utcNow) =>
         new(Guid.NewGuid(), userId, null, tvSeriesId, utcNow);
 }
+
+public sealed class CustomList
+{
+    private CustomList()
+    {
+        Name = string.Empty;
+    }
+
+    public CustomList(Guid ownerUserId, string name, string? description, DateTimeOffset utcNow)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+
+        Id = Guid.NewGuid();
+        OwnerUserId = ownerUserId;
+        Name = name.Trim();
+        Description = string.IsNullOrWhiteSpace(description) ? null : description.Trim();
+        CreatedAtUtc = utcNow;
+        UpdatedAtUtc = utcNow;
+    }
+
+    public Guid Id { get; private set; }
+    public Guid OwnerUserId { get; private set; }
+    public string Name { get; private set; }
+    public string? Description { get; private set; }
+    public DateTimeOffset CreatedAtUtc { get; private set; }
+    public DateTimeOffset UpdatedAtUtc { get; private set; }
+
+    public ICollection<CustomListItem> Items { get; } = [];
+
+    public void UpdateDetails(string name, string? description, DateTimeOffset utcNow)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        Name = name.Trim();
+        Description = string.IsNullOrWhiteSpace(description) ? null : description.Trim();
+        UpdatedAtUtc = utcNow;
+    }
+
+    public void Touch(DateTimeOffset utcNow) => UpdatedAtUtc = utcNow;
+}
+
+public sealed class CustomListItem
+{
+    private CustomListItem()
+    {
+    }
+
+    private CustomListItem(
+        Guid id,
+        Guid customListId,
+        Guid? movieId,
+        Guid? tvSeriesId,
+        int position,
+        DateTimeOffset addedAtUtc)
+    {
+        if ((movieId is null) == (tvSeriesId is null))
+        {
+            throw new ArgumentException("CustomListItem must reference either a Movie or a TvSeries.");
+        }
+
+        Id = id;
+        CustomListId = customListId;
+        MovieId = movieId;
+        TvSeriesId = tvSeriesId;
+        Position = Math.Max(0, position);
+        AddedAtUtc = addedAtUtc;
+    }
+
+    public Guid Id { get; private set; }
+    public Guid CustomListId { get; private set; }
+    public Guid? MovieId { get; private set; }
+    public Guid? TvSeriesId { get; private set; }
+    public int Position { get; private set; }
+    public DateTimeOffset AddedAtUtc { get; private set; }
+
+    public CustomList CustomList { get; private set; } = null!;
+    public Movie? Movie { get; private set; }
+    public TvSeries? TvSeries { get; private set; }
+
+    public static CustomListItem ForMovie(Guid customListId, Guid movieId, int position, DateTimeOffset utcNow) =>
+        new(Guid.NewGuid(), customListId, movieId, null, position, utcNow);
+
+    public static CustomListItem ForSeries(Guid customListId, Guid tvSeriesId, int position, DateTimeOffset utcNow) =>
+        new(Guid.NewGuid(), customListId, null, tvSeriesId, position, utcNow);
+
+    public void SetPosition(int position) => Position = Math.Max(0, position);
+}

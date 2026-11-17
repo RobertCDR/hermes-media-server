@@ -86,6 +86,75 @@ namespace Hermes.Infrastructure.Persistence.Migrations
                     b.ToTable("Artists");
                 });
 
+            modelBuilder.Entity("Hermes.Domain.Entities.CustomList", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<Guid>("OwnerUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OwnerUserId");
+
+                    b.ToTable("CustomLists");
+                });
+
+            modelBuilder.Entity("Hermes.Domain.Entities.CustomListItem", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("AddedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CustomListId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("MovieId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("TvSeriesId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MovieId");
+
+                    b.HasIndex("TvSeriesId");
+
+                    b.HasIndex("CustomListId", "MovieId")
+                        .IsUnique()
+                        .HasFilter("\"MovieId\" IS NOT NULL");
+
+                    b.HasIndex("CustomListId", "TvSeriesId")
+                        .IsUnique()
+                        .HasFilter("\"TvSeriesId\" IS NOT NULL");
+
+                    b.ToTable("CustomListItems");
+                });
+
             modelBuilder.Entity("Hermes.Domain.Entities.Episode", b =>
                 {
                     b.Property<Guid>("Id")
@@ -172,6 +241,46 @@ namespace Hermes.Infrastructure.Persistence.Migrations
                     b.HasKey("UserId", "SongId");
 
                     b.ToTable("LikedSongs");
+                });
+
+            modelBuilder.Entity("Hermes.Domain.Entities.ListeningHistoryEntry", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ContextLabel")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("DeviceId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<long>("DurationMs")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTimeOffset>("ListenedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("PositionMs")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("SongId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SongId");
+
+                    b.HasIndex("UserId", "ListenedAtUtc");
+
+                    b.HasIndex("UserId", "SongId", "ListenedAtUtc");
+
+                    b.ToTable("ListeningHistoryEntries");
                 });
 
             modelBuilder.Entity("Hermes.Domain.Entities.MediaLibraryRoot", b =>
@@ -660,6 +769,24 @@ namespace Hermes.Infrastructure.Persistence.Migrations
                     b.ToTable("Songs");
                 });
 
+            modelBuilder.Entity("Hermes.Domain.Entities.SongArtist", b =>
+                {
+                    b.Property<Guid>("SongId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ArtistId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("integer");
+
+                    b.HasKey("SongId", "ArtistId");
+
+                    b.HasIndex("ArtistId");
+
+                    b.ToTable("SongArtists");
+                });
+
             modelBuilder.Entity("Hermes.Domain.Entities.TvSeason", b =>
                 {
                     b.Property<Guid>("Id")
@@ -916,6 +1043,31 @@ namespace Hermes.Infrastructure.Persistence.Migrations
                     b.Navigation("Artist");
                 });
 
+            modelBuilder.Entity("Hermes.Domain.Entities.CustomListItem", b =>
+                {
+                    b.HasOne("Hermes.Domain.Entities.CustomList", "CustomList")
+                        .WithMany("Items")
+                        .HasForeignKey("CustomListId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Hermes.Domain.Entities.Movie", "Movie")
+                        .WithMany()
+                        .HasForeignKey("MovieId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.HasOne("Hermes.Domain.Entities.TvSeries", "TvSeries")
+                        .WithMany()
+                        .HasForeignKey("TvSeriesId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.Navigation("CustomList");
+
+                    b.Navigation("Movie");
+
+                    b.Navigation("TvSeries");
+                });
+
             modelBuilder.Entity("Hermes.Domain.Entities.Episode", b =>
                 {
                     b.HasOne("Hermes.Domain.Entities.TvSeason", "TvSeason")
@@ -925,6 +1077,17 @@ namespace Hermes.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("TvSeason");
+                });
+
+            modelBuilder.Entity("Hermes.Domain.Entities.ListeningHistoryEntry", b =>
+                {
+                    b.HasOne("Hermes.Domain.Entities.Song", "Song")
+                        .WithMany()
+                        .HasForeignKey("SongId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Song");
                 });
 
             modelBuilder.Entity("Hermes.Domain.Entities.MediaSource", b =>
@@ -1004,6 +1167,25 @@ namespace Hermes.Infrastructure.Persistence.Migrations
                     b.Navigation("Artist");
                 });
 
+            modelBuilder.Entity("Hermes.Domain.Entities.SongArtist", b =>
+                {
+                    b.HasOne("Hermes.Domain.Entities.Artist", "Artist")
+                        .WithMany("SongArtists")
+                        .HasForeignKey("ArtistId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Hermes.Domain.Entities.Song", "Song")
+                        .WithMany("SongArtists")
+                        .HasForeignKey("SongId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Artist");
+
+                    b.Navigation("Song");
+                });
+
             modelBuilder.Entity("Hermes.Domain.Entities.TvSeason", b =>
                 {
                     b.HasOne("Hermes.Domain.Entities.TvSeries", "TvSeries")
@@ -1024,7 +1206,14 @@ namespace Hermes.Infrastructure.Persistence.Migrations
                 {
                     b.Navigation("Albums");
 
+                    b.Navigation("SongArtists");
+
                     b.Navigation("Songs");
+                });
+
+            modelBuilder.Entity("Hermes.Domain.Entities.CustomList", b =>
+                {
+                    b.Navigation("Items");
                 });
 
             modelBuilder.Entity("Hermes.Domain.Entities.Episode", b =>
@@ -1045,6 +1234,11 @@ namespace Hermes.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("Hermes.Domain.Entities.Playlist", b =>
                 {
                     b.Navigation("Tracks");
+                });
+
+            modelBuilder.Entity("Hermes.Domain.Entities.Song", b =>
+                {
+                    b.Navigation("SongArtists");
                 });
 
             modelBuilder.Entity("Hermes.Domain.Entities.TvSeason", b =>
