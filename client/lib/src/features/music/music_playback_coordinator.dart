@@ -64,6 +64,9 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
       _songsById.addAll(catalogSongs);
     }
     mediaBridge.setCommandHandler(_handleMediaButton);
+    if (mediaBridge case final SeekCapableMediaBridge seeker) {
+      seeker.setSeekHandler(seekTo);
+    }
     if (audioEngine case final ControllableAudioEngine controllable) {
       _positionSub = controllable.positionMsStream.listen(_onEnginePositionMs);
       _completedSub = controllable.trackCompletedStream.listen((_) {
@@ -367,6 +370,7 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
           isPlaying: true,
           positionMs: _livePositionMs,
           durationMs: track.durationMs,
+          artUri: musicService.buildArtworkUri(track.artworkHash),
         ),
       );
     } else if (incoming.state == PlaybackState.paused && track != null) {
@@ -389,6 +393,7 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
           isPlaying: false,
           positionMs: _livePositionMs,
           durationMs: track.durationMs,
+          artUri: musicService.buildArtworkUri(track.artworkHash),
         ),
       );
     } else {

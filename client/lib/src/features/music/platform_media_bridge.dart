@@ -10,6 +10,7 @@ class MediaBridgeMetadata {
     required this.isPlaying,
     required this.positionMs,
     required this.durationMs,
+    this.artUri,
   });
 
   final String title;
@@ -18,17 +19,30 @@ class MediaBridgeMetadata {
   final bool isPlaying;
   final int positionMs;
   final int durationMs;
+  final Uri? artUri;
 }
 
 abstract interface class PlatformMediaBridge {
   Future<void> publishState(MediaBridgeMetadata metadata);
   Future<void> clearState();
-  void setCommandHandler(FutureOr<void> Function(MediaButtonAction action) handler);
+  void setCommandHandler(
+    FutureOr<void> Function(MediaButtonAction action) handler,
+  );
 }
 
-class InMemoryPlatformMediaBridge implements PlatformMediaBridge {
+abstract interface class SeekCapableMediaBridge implements PlatformMediaBridge {
+  void setSeekHandler(FutureOr<void> Function(int positionMs) handler);
+}
+
+abstract interface class DisposableMediaBridge implements PlatformMediaBridge {
+  Future<void> dispose();
+}
+
+class InMemoryPlatformMediaBridge
+    implements SeekCapableMediaBridge, DisposableMediaBridge {
   MediaBridgeMetadata? lastPublished;
   FutureOr<void> Function(MediaButtonAction action)? _handler;
+  FutureOr<void> Function(int positionMs)? _seekHandler;
 
   @override
   Future<void> publishState(MediaBridgeMetadata metadata) async {
@@ -41,8 +55,15 @@ class InMemoryPlatformMediaBridge implements PlatformMediaBridge {
   }
 
   @override
-  void setCommandHandler(FutureOr<void> Function(MediaButtonAction action) handler) {
+  void setCommandHandler(
+    FutureOr<void> Function(MediaButtonAction action) handler,
+  ) {
     _handler = handler;
+  }
+
+  @override
+  void setSeekHandler(FutureOr<void> Function(int positionMs) handler) {
+    _seekHandler = handler;
   }
 
   Future<void> simulateMediaButton(MediaButtonAction action) async {
@@ -50,5 +71,18 @@ class InMemoryPlatformMediaBridge implements PlatformMediaBridge {
     if (handler != null) {
       await handler(action);
     }
+  }
+
+  Future<void> simulateSeek(int positionMs) async {
+    final handler = _seekHandler;
+    if (handler != null) {
+      await handler(positionMs);
+    }
+  }
+
+  @override
+  Future<void> dispose() async {
+    _handler = null;
+    _seekHandler = null;
   }
 }
