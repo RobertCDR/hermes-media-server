@@ -17,6 +17,9 @@ class DualWorldShell extends StatefulWidget {
     this.adminBuilder,
     this.settingsBuilder,
     this.miniPlayerBuilder,
+    this.sidePanelBuilder,
+    this.floatingOverlayBuilder,
+    this.worldNotifier,
     this.onOpenSearch,
     this.onOpenAdmin,
     this.onOpenSettings,
@@ -35,6 +38,9 @@ class DualWorldShell extends StatefulWidget {
   final WidgetBuilder? adminBuilder;
   final WidgetBuilder? settingsBuilder;
   final WidgetBuilder? miniPlayerBuilder;
+  final WidgetBuilder? sidePanelBuilder;
+  final WidgetBuilder? floatingOverlayBuilder;
+  final ValueNotifier<HermesWorld>? worldNotifier;
   final VoidCallback? onOpenSearch;
   final VoidCallback? onOpenAdmin;
   final VoidCallback? onOpenSettings;
@@ -54,7 +60,36 @@ class _DualWorldShellState extends State<DualWorldShell> {
   @override
   void initState() {
     super.initState();
-    _world = widget.initialWorld;
+    _world = widget.worldNotifier?.value ?? widget.initialWorld;
+    widget.worldNotifier?.addListener(_syncWorldFromNotifier);
+  }
+
+  @override
+  void didUpdateWidget(covariant DualWorldShell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.worldNotifier != widget.worldNotifier) {
+      oldWidget.worldNotifier?.removeListener(_syncWorldFromNotifier);
+      widget.worldNotifier?.addListener(_syncWorldFromNotifier);
+      if (widget.worldNotifier != null) {
+        _world = widget.worldNotifier!.value;
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.worldNotifier?.removeListener(_syncWorldFromNotifier);
+    super.dispose();
+  }
+
+  void _syncWorldFromNotifier() {
+    final target = widget.worldNotifier?.value;
+    if (target != null && target != _world && mounted) {
+      setState(() {
+        _popoverOpen = false;
+        _world = target;
+      });
+    }
   }
 
   void _selectWorld(HermesWorld world) {
@@ -69,6 +104,7 @@ class _DualWorldShellState extends State<DualWorldShell> {
         return;
       }
       _world = world;
+      widget.worldNotifier?.value = world;
     });
   }
 
@@ -109,6 +145,8 @@ class _DualWorldShellState extends State<DualWorldShell> {
   Widget build(BuildContext context) {
     final tokens = HermesThemeTokens.of(context);
     final miniPlayer = widget.miniPlayerBuilder?.call(context);
+    final sidePanel = widget.sidePanelBuilder?.call(context);
+    final floatingOverlay = widget.floatingOverlayBuilder?.call(context);
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -141,12 +179,14 @@ class _DualWorldShellState extends State<DualWorldShell> {
                               child: _buildActiveWorld(context),
                             ),
                           ),
+                          ?sidePanel,
                         ],
                       ),
                     ),
                     ?miniPlayer,
                   ],
                 ),
+                ?floatingOverlay,
                 if (_popoverOpen) ...[
                   Positioned.fill(
                     child: GestureDetector(

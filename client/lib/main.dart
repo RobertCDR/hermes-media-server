@@ -21,6 +21,7 @@ import 'src/features/music/music_models.dart';
 import 'src/features/music/music_playback_coordinator.dart';
 import 'src/features/music/music_service.dart';
 import 'src/features/music/music_world_screen.dart';
+import 'src/features/music/now_playing_panel.dart';
 import 'src/features/music/platform_media_bridge.dart';
 import 'src/features/settings/player_and_theme_settings_screen.dart';
 import 'src/features/shell/dual_world_shell.dart';
@@ -58,12 +59,101 @@ class _HermesAppState extends State<HermesApp> {
   ResolvedEndpoint? _endpoint;
   MusicPlaybackCoordinator? _musicCoordinator;
   MusicService? _musicService;
+  final ValueNotifier<HermesWorld> _worldNotifier = ValueNotifier<HermesWorld>(
+    HermesWorld.cinema,
+  );
+  final MusicNavigationController _musicNav = MusicNavigationController();
+  bool _connectPopoverOpen = false;
+  List<OnlineDeviceModel> _connectDevices = const [];
 
   @override
   void dispose() {
+    _worldNotifier.dispose();
     _musicCoordinator?.dispose();
     _httpClient.close();
     super.dispose();
+  }
+
+  void _openMusicRoute(MusicPageRoute route) {
+    _worldNotifier.value = HermesWorld.music;
+    _musicNav.navigate(route);
+  }
+
+  Future<void> _openDevicePicker(
+    BuildContext ctx,
+    MusicService musicService,
+    MusicPlaybackCoordinator coordinator,
+    HermesSession session,
+  ) async {
+    List<OnlineDeviceModel> devices = const [];
+    try {
+      devices = await musicService.getOnlineDevices();
+    } catch (_) {
+      devices = const [];
+    }
+    if (!ctx.mounted) return;
+
+    final isDesktop = MediaQuery.sizeOf(ctx).width >= 840;
+    if (isDesktop) {
+      setState(() {
+        _connectDevices = devices;
+        _connectPopoverOpen = !_connectPopoverOpen;
+      });
+      return;
+    }
+
+    await showModalBottomSheet<void>(
+      context: ctx,
+      backgroundColor: Colors.transparent,
+      builder: (sheetCtx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          child: DevicePickerSheet(
+            devices: devices,
+            activeRendererDeviceId:
+                coordinator.session?.activeRendererDeviceId,
+            localDeviceId: session.deviceId,
+            onSelectDevice: (id) {
+              Navigator.of(sheetCtx).pop();
+              unawaited(coordinator.transferOutputTo(id));
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openMobileNowPlaying(
+    BuildContext ctx,
+    MusicPlaybackCoordinator coordinator,
+    MusicService musicService,
+    HermesSession session,
+  ) async {
+    await showModalBottomSheet<void>(
+      context: ctx,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetCtx) => FractionallySizedBox(
+        heightFactor: 0.88,
+        child: NowPlayingPanel(
+          coordinator: coordinator,
+          musicService: musicService,
+          localDeviceId: session.deviceId,
+          isModal: true,
+          onClose: () => Navigator.of(sheetCtx).pop(),
+          onOpenDevices: () {
+            Navigator.of(sheetCtx).pop();
+            unawaited(
+              _openDevicePicker(ctx, musicService, coordinator, session),
+            );
+          },
+          onNavigate: (route) {
+            Navigator.of(sheetCtx).pop();
+            _openMusicRoute(route);
+          },
+        ),
+      ),
+    );
   }
 
   void _onAuthenticated(HermesSession nextSession, ResolvedEndpoint nextEndpoint) {
@@ -370,6 +460,7 @@ class _HermesAppState extends State<HermesApp> {
                 );
 
                 return DualWorldShell(
+                  worldNotifier: _worldNotifier,
                   username: session.username,
                   isAdmin: session.isAdmin,
                   serverName: endpoint.info.serverName,
@@ -428,7 +519,66 @@ class _HermesAppState extends State<HermesApp> {
                   musicBuilder: (_) => MusicWorldScreen(
                     musicService: musicService,
                     coordinator: musicCoordinator,
+                    navigationController: _musicNav,
+                    reduceMotion: _devicePrefs.reduceMotion,
                   ),
+                  sidePanelBuilder: (_) => AnimatedBuilder(
+                    animation: musicCoordinator,
+                    builder: (context, _) {
+                      if (!musicCoordinator.nowPlayingOpen ||
+                          musicCoordinator.currentSong == null) {
+                        return const SizedBox.shrink();
+                      }
+                      return NowPlayingPanel(
+                        coordinator: musicCoordinator,
+                        musicService: musicService,
+                        localDeviceId: session.deviceId,
+                        onClose: () => musicCoordinator.toggleNowPlaying(false),
+                        onOpenDevices: () => unawaited(
+                          _openDevicePicker(
+                            navContext,
+                            musicService,
+                            musicCoordinator,
+                            session,
+                          ),
+                        ),
+                        onNavigate: _openMusicRoute,
+                      );
+                    },
+                  ),
+                  floatingOverlayBuilder: (_) {
+                    if (!_connectPopoverOpen) {
+                      return const SizedBox.shrink();
+                    }
+                    return Stack(
+                      children: [
+                        Positioned.fill(
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.translucent,
+                            onTap: () =>
+                                setState(() => _connectPopoverOpen = false),
+                          ),
+                        ),
+                        Positioned(
+                          right: 16,
+                          bottom: 92,
+                          child: AnimatedBuilder(
+                            animation: musicCoordinator,
+                            builder: (context, _) => DevicePickerSheet(
+                              devices: _connectDevices,
+                              activeRendererDeviceId: musicCoordinator
+                                  .session?.activeRendererDeviceId,
+                              localDeviceId: session.deviceId,
+                              onSelectDevice: (id) {
+                                setState(() => _connectPopoverOpen = false);
+                                unawaited(musicCoordinator.transferOutputTo(id));
+                              },
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
                   miniPlayerBuilder: (ctx) => AnimatedBuilder(
                     animation: musicCoordinator,
                     builder: (context, _) => MiniPlayerBar(
@@ -438,27 +588,63 @@ class _HermesAppState extends State<HermesApp> {
                       artworkUri: musicService.buildArtworkUri(
                         musicCoordinator.currentSong?.artworkHash,
                       ),
-                      onTogglePlayPause: () => unawaited(musicCoordinator.togglePlayPause()),
-                      onSkipNext: () => unawaited(musicCoordinator.skipNext()),
-                      onSkipPrevious: () => unawaited(musicCoordinator.skipPrevious()),
-                      onOpenDevicePicker: () async {
-                        final devices = await musicService.getOnlineDevices();
-                        if (!ctx.mounted) {
-                          return;
+                      nowPlayingOpen: musicCoordinator.nowPlayingOpen,
+                      onTogglePlayPause: () =>
+                          unawaited(musicCoordinator.togglePlayPause()),
+                      onSkipNext: () =>
+                          unawaited(musicCoordinator.skipNext()),
+                      onSkipPrevious: () =>
+                          unawaited(musicCoordinator.skipPrevious()),
+                      onToggleShuffle: () =>
+                          unawaited(musicCoordinator.toggleShuffle()),
+                      onCycleRepeat: () =>
+                          unawaited(musicCoordinator.cycleRepeatMode()),
+                      onSeekMs: (ms) =>
+                          unawaited(musicCoordinator.seekTo(ms)),
+                      onVolumeChanged: (v) =>
+                          unawaited(musicCoordinator.setVolume(v)),
+                      onToggleMute: () =>
+                          unawaited(musicCoordinator.toggleMute()),
+                      onToggleLike: () {
+                        final song = musicCoordinator.currentSong;
+                        if (song != null) {
+                          unawaited(musicCoordinator.toggleLikeSong(song.id));
                         }
-                        await showModalBottomSheet<void>(
-                          context: ctx,
-                          builder: (sheetCtx) => DevicePickerSheet(
-                            devices: devices,
-                            activeRendererDeviceId: musicCoordinator.session?.activeRendererDeviceId,
-                            localDeviceId: session.deviceId,
-                            onSelectDevice: (id) {
-                              Navigator.of(sheetCtx).pop();
-                              unawaited(musicCoordinator.transferOutputTo(id));
-                            },
-                          ),
-                        );
                       },
+                      onToggleNowPlaying: () {
+                        if (MediaQuery.sizeOf(ctx).width >= 840) {
+                          musicCoordinator.toggleNowPlaying();
+                        } else {
+                          unawaited(
+                            _openMobileNowPlaying(
+                              ctx,
+                              musicCoordinator,
+                              musicService,
+                              session,
+                            ),
+                          );
+                        }
+                      },
+                      onTapTitle: () {
+                        final song = musicCoordinator.currentSong;
+                        if (song != null) {
+                          _openMusicRoute(MusicPageRoute.album(song.albumId));
+                        }
+                      },
+                      onTapArtist: () {
+                        final song = musicCoordinator.currentSong;
+                        if (song != null) {
+                          _openMusicRoute(MusicPageRoute.artist(song.artistId));
+                        }
+                      },
+                      onOpenDevicePicker: () => unawaited(
+                        _openDevicePicker(
+                          ctx,
+                          musicService,
+                          musicCoordinator,
+                          session,
+                        ),
+                      ),
                     ),
                   ),
                 );

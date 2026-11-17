@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'package:material_ui/material_ui.dart';
 import 'music_models.dart';
 import 'music_service.dart';
@@ -64,14 +65,23 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
   final Future<String> Function(String songId) _ticketIssuer;
 
   final Map<String, SongModel> _songsById = {};
+  final List<String> _upNextSongIds = [];
   NetworkTransportMode _networkMode = NetworkTransportMode.wifi;
   PlaybackSessionState? _session;
   int _lastAppliedVersion = 0;
+  String? _activeSourceLabel;
+  MusicPageRoute? _activeSourceRoute;
+  bool _nowPlayingOpen = false;
+  double _lastNonZeroVolume = 0.85;
+  final Random _random = Random();
 
   int get lastAppliedVersion => _lastAppliedVersion;
   PlaybackSessionState? get session => _session;
   NetworkTransportMode get networkMode => _networkMode;
   AudioQualityPreset get effectiveQuality => audioQualityPolicy.presetFor(_networkMode);
+  bool get nowPlayingOpen => _nowPlayingOpen;
+  String? get activeSourceLabel => _activeSourceLabel;
+  MusicPageRoute? get activeSourceRoute => _activeSourceRoute;
 
   bool get isLocalRenderer =>
       _session != null && _session!.activeRendererDeviceId == localDeviceId;
@@ -81,10 +91,89 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
     return songId == null ? null : _songsById[songId];
   }
 
+  SongModel? songById(String songId) => _songsById[songId];
+
+  List<SongModel> get upNext => _upNextSongIds
+      .map((id) => _songsById[id])
+      .whereType<SongModel>()
+      .toList();
+
+  List<SongModel> get upcomingFromSource {
+    final s = _session;
+    if (s == null || s.queueSongIds.isEmpty) {
+      return const [];
+    }
+    final start = (s.currentIndex + 1).clamp(0, s.queueSongIds.length);
+    return s.queueSongIds
+        .sublist(start)
+        .map((id) => _songsById[id])
+        .whereType<SongModel>()
+        .toList();
+  }
+
   void indexSongs(List<SongModel> songs) {
+    var changed = false;
     for (final song in songs) {
+      final existing = _songsById[song.id];
+      if (existing == null || existing.isLiked != song.isLiked || existing.title != song.title) {
+        changed = true;
+      }
       _songsById[song.id] = song;
     }
+    if (changed) {
+      notifyListeners();
+    }
+  }
+
+  void updateSongLikeState(String songId, bool liked) {
+    final existing = _songsById[songId];
+    if (existing == null || existing.isLiked == liked) {
+      return;
+    }
+    _songsById[songId] = existing.copyWith(isLiked: liked);
+    notifyListeners();
+  }
+
+  Future<bool> toggleLikeSong(String songId) async {
+    final nextLiked = await musicService.toggleLikeSong(songId);
+    updateSongLikeState(songId, nextLiked);
+    return nextLiked;
+  }
+
+  void toggleNowPlaying([bool? open]) {
+    final next = open ?? !_nowPlayingOpen;
+    if (_nowPlayingOpen == next) {
+      return;
+    }
+    _nowPlayingOpen = next;
+    notifyListeners();
+  }
+
+  void addToQueue(SongModel song) {
+    _songsById[song.id] = song;
+    _upNextSongIds.add(song.id);
+    notifyListeners();
+  }
+
+  void playNext(SongModel song) {
+    _songsById[song.id] = song;
+    _upNextSongIds.insert(0, song.id);
+    notifyListeners();
+  }
+
+  void removeFromUpNext(int index) {
+    if (index < 0 || index >= _upNextSongIds.length) {
+      return;
+    }
+    _upNextSongIds.removeAt(index);
+    notifyListeners();
+  }
+
+  void clearUpNext() {
+    if (_upNextSongIds.isEmpty) {
+      return;
+    }
+    _upNextSongIds.clear();
     notifyListeners();
   }
 
@@ -106,6 +195,9 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
 
     _lastAppliedVersion = incoming.version;
     _session = incoming;
+    if (incoming.volume > 0) {
+      _lastNonZeroVolume = incoming.volume;
+    }
     final rendererLocal = incoming.activeRendererDeviceId == localDeviceId;
 
     if (!rendererLocal) {
@@ -156,15 +248,29 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> startQueue(List<SongModel> songs, int startIndex) async {
+  Future<void> startQueue(
+    List<SongModel> songs,
+    int startIndex, {
+    String? sourceLabel,
+    MusicPageRoute? sourceRoute,
+  }) async {
+    if (songs.isEmpty) {
+      return;
+    }
+    final safeIndex = startIndex.clamp(0, songs.length - 1);
     indexSongs(songs);
+    _activeSourceLabel = sourceLabel ?? songs[safeIndex].albumTitle;
+    _activeSourceRoute = sourceRoute;
     final ids = songs.map((s) => s.id).toList();
     if (transport != null) {
-      final updated = await transport!.startPlayback(ids, startIndex);
+      final updated = await transport!.startPlayback(ids, safeIndex);
       await applyServerSession(updated);
       return;
     }
 
+    final currentRepeat = _session?.repeatMode ?? HermesRepeatMode.off;
+    final currentShuffle = _session?.shuffle ?? false;
+    final currentVol = _session?.volume ?? _lastNonZeroVolume;
     await applyServerSession(
       PlaybackSessionState(
         sessionId: 'local',
@@ -172,15 +278,24 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
         activeRendererDeviceId: localDeviceId,
         activeRendererDeviceName: 'This Device',
         state: PlaybackState.playing,
-        repeatMode: HermesRepeatMode.off,
-        shuffle: false,
-        volume: 1.0,
-        currentIndex: startIndex,
-        currentSongId: ids[startIndex],
+        repeatMode: currentRepeat,
+        shuffle: currentShuffle,
+        volume: currentVol,
+        currentIndex: safeIndex,
+        currentSongId: ids[safeIndex],
         positionMs: 0,
         queueSongIds: ids,
       ),
     );
+  }
+
+  Future<void> playAtIndex(int index) async {
+    final current = _session;
+    if (current == null || current.queueSongIds.isEmpty) {
+      return;
+    }
+    final safeIndex = index.clamp(0, current.queueSongIds.length - 1);
+    await _dispatchTransport(PlaybackState.playing, currentIndex: safeIndex, positionMs: 0);
   }
 
   Future<void> togglePlayPause() async {
@@ -201,7 +316,46 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
       return;
     }
 
-    final nextIndex = (current.currentIndex + 1) % current.queueSongIds.length;
+    if (_upNextSongIds.isNotEmpty) {
+      final nextId = _upNextSongIds.removeAt(0);
+      final updatedQueue = List<String>.from(current.queueSongIds);
+      final insertAt = (current.currentIndex + 1).clamp(0, updatedQueue.length);
+      updatedQueue.insert(insertAt, nextId);
+      if (transport != null) {
+        final updated = await transport!.startPlayback(updatedQueue, insertAt);
+        await applyServerSession(updated);
+        return;
+      }
+      await applyServerSession(
+        PlaybackSessionState(
+          sessionId: current.sessionId,
+          version: _lastAppliedVersion + 1,
+          activeRendererDeviceId: current.activeRendererDeviceId,
+          activeRendererDeviceName: current.activeRendererDeviceName,
+          state: PlaybackState.playing,
+          repeatMode: current.repeatMode,
+          shuffle: current.shuffle,
+          volume: current.volume,
+          currentIndex: insertAt,
+          currentSongId: nextId,
+          positionMs: 0,
+          queueSongIds: updatedQueue,
+        ),
+      );
+      return;
+    }
+
+    final length = current.queueSongIds.length;
+    var nextIndex = (current.currentIndex + 1) % length;
+    if (current.repeatMode == HermesRepeatMode.one) {
+      nextIndex = current.currentIndex;
+    } else if (current.shuffle && length > 1) {
+      var candidate = _random.nextInt(length);
+      if (candidate == current.currentIndex) {
+        candidate = (current.currentIndex + 1) % length;
+      }
+      nextIndex = candidate;
+    }
     await _dispatchTransport(PlaybackState.playing, currentIndex: nextIndex, positionMs: 0);
   }
 
@@ -211,8 +365,68 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
       return;
     }
 
+    if (current.positionMs > 4000) {
+      await seekTo(0);
+      return;
+    }
+
     final prevIndex = (current.currentIndex - 1 + current.queueSongIds.length) % current.queueSongIds.length;
     await _dispatchTransport(PlaybackState.playing, currentIndex: prevIndex, positionMs: 0);
+  }
+
+  Future<void> seekTo(int positionMs) async {
+    final current = _session;
+    if (current == null) {
+      return;
+    }
+    final duration = currentSong?.durationMs ?? positionMs;
+    final clamped = positionMs.clamp(0, duration > 0 ? duration : positionMs);
+    if (isLocalRenderer) {
+      await audioEngine.seek(clamped);
+    }
+    await _dispatchTransport(current.state, positionMs: clamped);
+  }
+
+  Future<void> toggleShuffle() async {
+    final current = _session;
+    if (current == null) {
+      return;
+    }
+    await _dispatchTransport(current.state, shuffle: !current.shuffle);
+  }
+
+  Future<void> cycleRepeatMode() async {
+    final current = _session;
+    if (current == null) {
+      return;
+    }
+    final nextMode = switch (current.repeatMode) {
+      HermesRepeatMode.off => HermesRepeatMode.all,
+      HermesRepeatMode.all => HermesRepeatMode.one,
+      HermesRepeatMode.one => HermesRepeatMode.off,
+    };
+    await _dispatchTransport(current.state, repeatMode: nextMode);
+  }
+
+  Future<void> setVolume(double volume) async {
+    final current = _session;
+    if (current == null) {
+      return;
+    }
+    final clamped = volume.clamp(0.0, 1.0);
+    if (clamped > 0.0) {
+      _lastNonZeroVolume = clamped;
+    }
+    await _dispatchTransport(current.state, volume: clamped);
+  }
+
+  Future<void> toggleMute() async {
+    final current = _session;
+    if (current == null) {
+      return;
+    }
+    final nextVol = current.volume > 0 ? 0.0 : (_lastNonZeroVolume > 0 ? _lastNonZeroVolume : 0.7);
+    await setVolume(nextVol);
   }
 
   Future<void> transferOutputTo(String targetDeviceId) async {
@@ -226,12 +440,18 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
     PlaybackState state, {
     int? currentIndex,
     int? positionMs,
+    HermesRepeatMode? repeatMode,
+    bool? shuffle,
+    double? volume,
   }) async {
     if (transport != null) {
       final updated = await transport!.sendTransport(
         state,
         currentIndex: currentIndex,
         positionMs: positionMs,
+        repeatMode: repeatMode,
+        shuffle: shuffle,
+        volume: volume,
       );
       await applyServerSession(updated);
       return;
@@ -253,9 +473,9 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
         activeRendererDeviceId: current.activeRendererDeviceId,
         activeRendererDeviceName: current.activeRendererDeviceName,
         state: state,
-        repeatMode: current.repeatMode,
-        shuffle: current.shuffle,
-        volume: current.volume,
+        repeatMode: repeatMode ?? current.repeatMode,
+        shuffle: shuffle ?? current.shuffle,
+        volume: volume ?? current.volume,
         currentIndex: nextIdx,
         currentSongId: nextSongId,
         positionMs: positionMs ?? current.positionMs,

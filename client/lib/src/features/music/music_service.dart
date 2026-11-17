@@ -46,6 +46,22 @@ class MusicService {
     return decoded.map((e) => AlbumSummaryModel.fromJson(e as Map<String, dynamic>)).toList();
   }
 
+  Future<AlbumDetailModel> getAlbum(String albumId) async {
+    final response = await httpClient.get(baseUri.resolve('/api/v1/music/albums/$albumId'), headers: _headers);
+    if (response.statusCode != 200) {
+      throw MusicApiException('Failed to load album', statusCode: response.statusCode);
+    }
+    return AlbumDetailModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<ArtistDetailModel> getArtist(String artistId) async {
+    final response = await httpClient.get(baseUri.resolve('/api/v1/music/artists/$artistId'), headers: _headers);
+    if (response.statusCode != 200) {
+      throw MusicApiException('Failed to load artist', statusCode: response.statusCode);
+    }
+    return ArtistDetailModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
   Future<List<SongModel>> listSongs() async {
     final response = await httpClient.get(baseUri.resolve('/api/v1/music/songs'), headers: _headers);
     if (response.statusCode != 200) {
@@ -92,6 +108,83 @@ class MusicService {
       throw MusicApiException('Failed to create playlist', statusCode: response.statusCode);
     }
     return PlaylistDetailModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<PlaylistDetailModel> getPlaylist(String playlistId) async {
+    final response = await httpClient.get(
+      baseUri.resolve('/api/v1/music/playlists/$playlistId'),
+      headers: _headers,
+    );
+    if (response.statusCode != 200) {
+      throw MusicApiException('Failed to load playlist', statusCode: response.statusCode);
+    }
+    return PlaylistDetailModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<PlaylistDetailModel> renamePlaylist({
+    required String playlistId,
+    required String name,
+    String? description,
+  }) async {
+    final response = await httpClient.put(
+      baseUri.resolve('/api/v1/music/playlists/$playlistId'),
+      headers: _headers,
+      body: jsonEncode({'name': name, 'description': ?description}),
+    );
+    if (response.statusCode != 200) {
+      throw MusicApiException('Failed to rename playlist', statusCode: response.statusCode);
+    }
+    return PlaylistDetailModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<void> deletePlaylist(String playlistId) async {
+    final response = await httpClient.delete(
+      baseUri.resolve('/api/v1/music/playlists/$playlistId'),
+      headers: _headers,
+    );
+    if (response.statusCode != 204 && response.statusCode != 200) {
+      throw MusicApiException('Failed to delete playlist', statusCode: response.statusCode);
+    }
+  }
+
+  Future<PlaylistDetailModel> addTrackToPlaylist({
+    required String playlistId,
+    required String songId,
+  }) async {
+    final response = await httpClient.post(
+      baseUri.resolve('/api/v1/music/playlists/$playlistId/tracks'),
+      headers: _headers,
+      body: jsonEncode({'songId': songId}),
+    );
+    if (response.statusCode != 200) {
+      throw MusicApiException('Failed to add track to playlist', statusCode: response.statusCode);
+    }
+    return PlaylistDetailModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<PlaylistDetailModel> removePlaylistTrack({
+    required String playlistId,
+    required int position,
+  }) async {
+    final response = await httpClient.delete(
+      baseUri.resolve('/api/v1/music/playlists/$playlistId/tracks/$position'),
+      headers: _headers,
+    );
+    if (response.statusCode != 200) {
+      throw MusicApiException('Failed to remove playlist track', statusCode: response.statusCode);
+    }
+    return PlaylistDetailModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<SongLyricsModel> getSongLyrics(String songId) async {
+    final response = await httpClient.get(
+      baseUri.resolve('/api/v1/music/songs/$songId/lyrics'),
+      headers: _headers,
+    );
+    if (response.statusCode != 200) {
+      throw MusicApiException('Failed to load song lyrics', statusCode: response.statusCode);
+    }
+    return SongLyricsModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
   Future<String> issueAudioTicket(String songId) async {
