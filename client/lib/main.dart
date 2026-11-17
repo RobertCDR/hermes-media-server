@@ -99,6 +99,7 @@ class _HermesAppState extends State<HermesApp> {
   SettingsTabKind _settingsInitialTab = SettingsTabKind.device;
   HermesSession? _session;
   ResolvedEndpoint? _endpoint;
+  String? _serverNameOverride;
   MusicPlaybackCoordinator? _musicCoordinator;
   MusicService? _musicService;
   final ValueNotifier<HermesWorld> _worldNotifier = ValueNotifier<HermesWorld>(
@@ -453,6 +454,7 @@ class _HermesAppState extends State<HermesApp> {
       _bootstrapping = false;
       _session = nextSession;
       _endpoint = nextEndpoint;
+      _serverNameOverride = null;
       _initialPrimaryUrl = nextSession.serverPrimaryUrl;
       _initialLanUrl = nextSession.serverLanFallbackUrl ?? '';
       _switchingServer = false;
@@ -530,6 +532,7 @@ class _HermesAppState extends State<HermesApp> {
     if (!mounted) return;
     setState(() {
       _session = null;
+      _serverNameOverride = null;
       _switchingServer = false;
       _connectPopoverOpen = false;
       _connectDevices = const [];
@@ -645,7 +648,7 @@ class _HermesAppState extends State<HermesApp> {
                       worldNotifier: _worldNotifier,
                       username: session.username,
                       isAdmin: session.isAdmin,
-                      serverName: endpoint.info.serverName,
+                      serverName: _serverNameOverride ?? endpoint.info.serverName,
                       endpointLabel: endpoint.usedFallback ? 'LAN fallback' : 'Tailscale',
                       onOpenSearch: () => unawaited(
                         _openLibrarySearchDialog(navContext, musicService, musicCoordinator),
@@ -658,7 +661,11 @@ class _HermesAppState extends State<HermesApp> {
                       ),
                       onSwitchServer: () => setState(() => _switchingServer = true),
                       onSignOut: () => unawaited(_signOut()),
-                      adminBuilder: (_) => AdminDashboardScreen(adminService: adminService),
+                      adminBuilder: (_) => AdminDashboardScreen(
+                        adminService: adminService,
+                        onServerNameChanged: (name) =>
+                            setState(() => _serverNameOverride = name),
+                      ),
                       settingsBuilder: (_) => PlayerAndThemeSettingsScreen(
                         tokens: _tokens,
                         rendererBackend: _rendererBackend,

@@ -14,12 +14,14 @@ class AddLibraryResult {
     required this.mediaType,
     required this.rootPath,
     required this.watchEnabled,
+    this.fetchMetadata = true,
   });
 
   final String name;
   final int mediaType;
   final String rootPath;
   final bool watchEnabled;
+  final bool fetchMetadata;
 }
 
 class CreateInviteOptions {
@@ -32,19 +34,38 @@ class CreateInviteOptions {
   final int expiresInHours;
 }
 
-/// Figma v4 flat `.modal` for adding a media library root without ChoiceChip pills.
+/// Figma v4 flat `.modal` for adding or editing a media library root without ChoiceChip pills.
 class AddLibraryDialog extends StatefulWidget {
-  const AddLibraryDialog({super.key});
+  const AddLibraryDialog({
+    super.key,
+    this.initialLibrary,
+  });
+
+  final LibraryRootModel? initialLibrary;
 
   @override
   State<AddLibraryDialog> createState() => _AddLibraryDialogState();
 }
 
 class _AddLibraryDialogState extends State<AddLibraryDialog> {
-  final TextEditingController _nameController = TextEditingController(text: 'Movies');
-  final TextEditingController _pathController = TextEditingController(text: '/media/Movies');
-  int _mediaType = 0;
-  bool _watchEnabled = true;
+  late final TextEditingController _nameController;
+  late final TextEditingController _pathController;
+  late int _mediaType;
+  late bool _watchEnabled;
+  late bool _fetchMetadata;
+
+  bool get _isEditing => widget.initialLibrary != null;
+
+  @override
+  void initState() {
+    super.initState();
+    final initial = widget.initialLibrary;
+    _nameController = TextEditingController(text: initial?.name ?? 'Movies');
+    _pathController = TextEditingController(text: initial?.rootPath ?? '/media/Movies');
+    _mediaType = initial?.mediaType ?? 0;
+    _watchEnabled = initial?.watchEnabled ?? true;
+    _fetchMetadata = initial?.fetchMetadata ?? true;
+  }
 
   @override
   void dispose() {
@@ -72,10 +93,11 @@ class _AddLibraryDialogState extends State<AddLibraryDialog> {
 
     setState(() {
       _mediaType = nextType;
-      if (_nameController.text.trim() == defaultName || _nameController.text.trim().isEmpty) {
+      if (!_isEditing &&
+          (_nameController.text.trim() == defaultName || _nameController.text.trim().isEmpty)) {
         _nameController.text = nextName;
       }
-      if (_pathController.text.trim().startsWith('/media/')) {
+      if (!_isEditing && _pathController.text.trim().startsWith('/media/')) {
         _pathController.text = nextPath;
       }
     });
@@ -84,6 +106,11 @@ class _AddLibraryDialogState extends State<AddLibraryDialog> {
   @override
   Widget build(BuildContext context) {
     final tokens = HermesThemeTokens.of(context);
+    final mediaTypeLabel = switch (_mediaType) {
+      0 => 'Movies',
+      1 => 'TV Shows',
+      _ => 'Music',
+    };
 
     return AlertDialog(
       backgroundColor: tokens.surface2,
@@ -93,7 +120,7 @@ class _AddLibraryDialogState extends State<AddLibraryDialog> {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(
-            'Add library',
+            _isEditing ? 'Edit library' : 'Add library',
             style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: tokens.text),
           ),
           IconButton(
@@ -111,24 +138,28 @@ class _AddLibraryDialogState extends State<AddLibraryDialog> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Point Hermes to a media folder mounted on the server.',
+                _isEditing
+                    ? 'Update the name, server path, or automation options for this $mediaTypeLabel library.'
+                    : 'Point Hermes to a media folder mounted on the server.',
                 style: TextStyle(fontSize: 13, color: tokens.text2),
               ),
-              const SizedBox(height: 16),
-              Text(
-                'Media type',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: tokens.text),
-              ),
-              const SizedBox(height: 8),
-              HermesSegmentedControl<int>(
-                options: const [
-                  HermesSegmentOption(value: 0, label: 'Movies'),
-                  HermesSegmentOption(value: 1, label: 'TV Shows'),
-                  HermesSegmentOption(value: 2, label: 'Music'),
-                ],
-                selected: _mediaType,
-                onChanged: _selectType,
-              ),
+              if (!_isEditing) ...[
+                const SizedBox(height: 16),
+                Text(
+                  'Media type',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: tokens.text),
+                ),
+                const SizedBox(height: 8),
+                HermesSegmentedControl<int>(
+                  options: const [
+                    HermesSegmentOption(value: 0, label: 'Movies'),
+                    HermesSegmentOption(value: 1, label: 'TV Shows'),
+                    HermesSegmentOption(value: 2, label: 'Music'),
+                  ],
+                  selected: _mediaType,
+                  onChanged: _selectType,
+                ),
+              ],
               const SizedBox(height: 16),
               _DialogInputField(
                 label: 'Library name',
@@ -167,6 +198,33 @@ class _AddLibraryDialogState extends State<AddLibraryDialog> {
                   ),
                 ],
               ),
+              if (_mediaType != 2) ...[
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Fetch online metadata',
+                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: tokens.text),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'Look up TMDb posters, descriptions, and episode details.',
+                            style: TextStyle(fontSize: 12, color: tokens.text2),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Switch(
+                      value: _fetchMetadata,
+                      onChanged: (v) => setState(() => _fetchMetadata = v),
+                    ),
+                  ],
+                ),
+              ],
             ],
           ),
         ),
@@ -187,10 +245,55 @@ class _AddLibraryDialogState extends State<AddLibraryDialog> {
                 mediaType: _mediaType,
                 rootPath: rootPath,
                 watchEnabled: _watchEnabled,
+                fetchMetadata: _fetchMetadata,
               ),
             );
           },
-          child: const Text('Add & scan library'),
+          child: Text(_isEditing ? 'Save changes' : 'Add & scan library'),
+        ),
+      ],
+    );
+  }
+}
+
+class ConfirmDeleteLibraryDialog extends StatelessWidget {
+  const ConfirmDeleteLibraryDialog({
+    super.key,
+    required this.library,
+  });
+
+  final LibraryRootModel library;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = HermesThemeTokens.of(context);
+    return AlertDialog(
+      backgroundColor: tokens.surface2,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      title: Text(
+        'Delete "${library.name}"?',
+        style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: tokens.text),
+      ),
+      content: SizedBox(
+        width: 400,
+        child: Text(
+          'This removes the library root and its catalog entries from Hermes. Your media files at ${library.rootPath} will not be deleted.',
+          style: TextStyle(fontSize: 13, height: 1.45, color: tokens.text2),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: Text('Cancel', style: TextStyle(color: tokens.text2)),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(
+            backgroundColor: const Color(0xFFE05252),
+            foregroundColor: Colors.white,
+          ),
+          onPressed: () => Navigator.of(context).pop(true),
+          child: const Text('Delete library'),
         ),
       ],
     );

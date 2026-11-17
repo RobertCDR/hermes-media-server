@@ -93,6 +93,7 @@ class AdminService {
     required int mediaType,
     required String rootPath,
     bool watchEnabled = true,
+    bool fetchMetadata = true,
   }) async {
     final response = await httpClient.post(
       baseUri.resolve('/api/v1/admin/libraries'),
@@ -102,6 +103,7 @@ class AdminService {
         'mediaType': mediaType,
         'rootPath': rootPath,
         'watchEnabled': watchEnabled,
+        'fetchMetadata': fetchMetadata,
       }),
     );
     if (response.statusCode != 201 && response.statusCode != 200) {
@@ -109,6 +111,69 @@ class AdminService {
     }
 
     return LibraryRootModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<LibraryRootModel> updateLibrary({
+    required String id,
+    required String name,
+    required String rootPath,
+    bool watchEnabled = true,
+    bool fetchMetadata = true,
+  }) async {
+    final response = await httpClient.put(
+      baseUri.resolve('/api/v1/admin/libraries/$id'),
+      headers: _headers,
+      body: jsonEncode({
+        'name': name,
+        'rootPath': rootPath,
+        'watchEnabled': watchEnabled,
+        'fetchMetadata': fetchMetadata,
+      }),
+    );
+    if (response.statusCode != 200) {
+      throw AdminApiException('Failed to update library', statusCode: response.statusCode);
+    }
+
+    return LibraryRootModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<void> deleteLibrary(String libraryId) async {
+    final response = await httpClient.delete(
+      baseUri.resolve('/api/v1/admin/libraries/$libraryId'),
+      headers: _headers,
+    );
+    if (response.statusCode != 204 && response.statusCode != 200) {
+      throw AdminApiException('Failed to delete library', statusCode: response.statusCode);
+    }
+  }
+
+  Future<ServerSettingsModel> getServerSettings() async {
+    final response = await httpClient.get(
+      baseUri.resolve('/api/v1/admin/settings'),
+      headers: _headers,
+    );
+    if (response.statusCode != 200) {
+      throw AdminApiException('Failed to load server settings', statusCode: response.statusCode);
+    }
+
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw const AdminApiException('Unexpected server settings payload');
+    }
+    return ServerSettingsModel.fromJson(decoded);
+  }
+
+  Future<ServerSettingsModel> updateServerSettings(UpdateServerSettingsInput input) async {
+    final response = await httpClient.put(
+      baseUri.resolve('/api/v1/admin/settings'),
+      headers: _headers,
+      body: jsonEncode(input.toJson()),
+    );
+    if (response.statusCode != 200) {
+      throw AdminApiException('Failed to update server settings', statusCode: response.statusCode);
+    }
+
+    return ServerSettingsModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
   Future<LibraryScanSummaryModel> scanLibrary(String libraryId) async {

@@ -1,3 +1,136 @@
+String formatStorageBytes(int bytes, {bool treatZeroAsDash = false}) {
+  if (bytes < 0 || (treatZeroAsDash && bytes == 0)) return '—';
+  if (bytes < 1000) return '$bytes B';
+  if (bytes >= 1000000000000) {
+    return '${(bytes / 1000000000000).toStringAsFixed(1)} TB';
+  }
+  if (bytes >= 1000000000) {
+    return '${(bytes / 1000000000).toStringAsFixed(1)} GB';
+  }
+  if (bytes >= 1000000) {
+    return '${(bytes / 1000000).toStringAsFixed(0)} MB';
+  }
+  return '${(bytes / 1000).round()} KB';
+}
+
+enum HardwareAccelerationMode {
+  none(0, 'None (Software x264)'),
+  auto(1, 'Auto'),
+  nvenc(2, 'NVIDIA NVENC'),
+  vaapi(3, 'VA-API (Linux GPU)'),
+  qsv(4, 'Intel Quick Sync'),
+  videoToolbox(5, 'Apple VideoToolbox');
+
+  const HardwareAccelerationMode(this.wireValue, this.label);
+
+  final int wireValue;
+  final String label;
+
+  static HardwareAccelerationMode fromJson(Object? raw) {
+    if (raw is num) {
+      final intVal = raw.toInt();
+      for (final mode in values) {
+        if (mode.wireValue == intVal) return mode;
+      }
+    }
+    if (raw is String) {
+      final normalized = raw.trim().toLowerCase();
+      return switch (normalized) {
+        'auto' || '1' => HardwareAccelerationMode.auto,
+        'nvenc' || 'cuda' || '2' => HardwareAccelerationMode.nvenc,
+        'vaapi' || '3' => HardwareAccelerationMode.vaapi,
+        'qsv' || '4' => HardwareAccelerationMode.qsv,
+        'videotoolbox' || '5' => HardwareAccelerationMode.videoToolbox,
+        _ => HardwareAccelerationMode.none,
+      };
+    }
+    return HardwareAccelerationMode.none;
+  }
+}
+
+class ServerSettingsModel {
+  const ServerSettingsModel({
+    required this.serverId,
+    required this.serverName,
+    required this.transcodingEnabled,
+    required this.maxConcurrentVideoTranscodes,
+    required this.maxConcurrentAudioTranscodes,
+    this.maxRemoteVideoBitrateBps,
+    required this.hardwareAccelerationMode,
+    required this.updatedAtUtc,
+    this.totalMediaSizeBytes = 0,
+    this.libraryCount = 0,
+    this.totalMovies = 0,
+    this.totalSeries = 0,
+    this.totalEpisodes = 0,
+    this.totalSongs = 0,
+  });
+
+  final String serverId;
+  final String serverName;
+  final bool transcodingEnabled;
+  final int maxConcurrentVideoTranscodes;
+  final int maxConcurrentAudioTranscodes;
+  final int? maxRemoteVideoBitrateBps;
+  final HardwareAccelerationMode hardwareAccelerationMode;
+  final DateTime updatedAtUtc;
+  final int totalMediaSizeBytes;
+  final int libraryCount;
+  final int totalMovies;
+  final int totalSeries;
+  final int totalEpisodes;
+  final int totalSongs;
+
+  String get formattedTotalMediaSize => formatStorageBytes(totalMediaSizeBytes);
+
+  factory ServerSettingsModel.fromJson(Map<String, dynamic> json) {
+    final updatedRaw = json['updatedAtUtc'] as String?;
+    return ServerSettingsModel(
+      serverId: json['serverId'] as String? ?? '',
+      serverName: json['serverName'] as String? ?? 'Hermes Media Server',
+      transcodingEnabled: json['transcodingEnabled'] as bool? ?? true,
+      maxConcurrentVideoTranscodes: (json['maxConcurrentVideoTranscodes'] as num?)?.toInt() ?? 2,
+      maxConcurrentAudioTranscodes: (json['maxConcurrentAudioTranscodes'] as num?)?.toInt() ?? 4,
+      maxRemoteVideoBitrateBps: (json['maxRemoteVideoBitrateBps'] as num?)?.toInt(),
+      hardwareAccelerationMode: HardwareAccelerationMode.fromJson(json['hardwareAccelerationMode']),
+      updatedAtUtc: updatedRaw == null ? DateTime.now().toUtc() : DateTime.parse(updatedRaw),
+      totalMediaSizeBytes: (json['totalMediaSizeBytes'] as num?)?.toInt() ?? 0,
+      libraryCount: (json['libraryCount'] as num?)?.toInt() ?? 0,
+      totalMovies: (json['totalMovies'] as num?)?.toInt() ?? 0,
+      totalSeries: (json['totalSeries'] as num?)?.toInt() ?? 0,
+      totalEpisodes: (json['totalEpisodes'] as num?)?.toInt() ?? 0,
+      totalSongs: (json['totalSongs'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
+class UpdateServerSettingsInput {
+  const UpdateServerSettingsInput({
+    required this.serverName,
+    required this.transcodingEnabled,
+    required this.maxConcurrentVideoTranscodes,
+    required this.maxConcurrentAudioTranscodes,
+    this.maxRemoteVideoBitrateBps,
+    required this.hardwareAccelerationMode,
+  });
+
+  final String serverName;
+  final bool transcodingEnabled;
+  final int maxConcurrentVideoTranscodes;
+  final int maxConcurrentAudioTranscodes;
+  final int? maxRemoteVideoBitrateBps;
+  final HardwareAccelerationMode hardwareAccelerationMode;
+
+  Map<String, dynamic> toJson() => {
+        'serverName': serverName,
+        'transcodingEnabled': transcodingEnabled,
+        'maxConcurrentVideoTranscodes': maxConcurrentVideoTranscodes,
+        'maxConcurrentAudioTranscodes': maxConcurrentAudioTranscodes,
+        'maxRemoteVideoBitrateBps': maxRemoteVideoBitrateBps,
+        'hardwareAccelerationMode': hardwareAccelerationMode.wireValue,
+      };
+}
+
 class LibraryRootModel {
   const LibraryRootModel({
     required this.id,
@@ -5,6 +138,7 @@ class LibraryRootModel {
     required this.mediaType,
     required this.rootPath,
     required this.watchEnabled,
+    this.fetchMetadata = true,
     required this.createdAtUtc,
     this.lastScanCompletedAtUtc,
     this.itemCount = 0,
@@ -20,6 +154,7 @@ class LibraryRootModel {
   final int mediaType;
   final String rootPath;
   final bool watchEnabled;
+  final bool fetchMetadata;
   final DateTime createdAtUtc;
   final DateTime? lastScanCompletedAtUtc;
   final int itemCount;
@@ -35,6 +170,7 @@ class LibraryRootModel {
     int? mediaType,
     String? rootPath,
     bool? watchEnabled,
+    bool? fetchMetadata,
     DateTime? createdAtUtc,
     DateTime? lastScanCompletedAtUtc,
     int? itemCount,
@@ -50,6 +186,7 @@ class LibraryRootModel {
       mediaType: mediaType ?? this.mediaType,
       rootPath: rootPath ?? this.rootPath,
       watchEnabled: watchEnabled ?? this.watchEnabled,
+      fetchMetadata: fetchMetadata ?? this.fetchMetadata,
       createdAtUtc: createdAtUtc ?? this.createdAtUtc,
       lastScanCompletedAtUtc: lastScanCompletedAtUtc ?? this.lastScanCompletedAtUtc,
       itemCount: itemCount ?? this.itemCount,
@@ -80,16 +217,7 @@ class LibraryRootModel {
 
   String get formattedSize {
     if (totalSizeBytes <= 0) return '—';
-    if (totalSizeBytes >= 1000000000000) {
-      return '${(totalSizeBytes / 1000000000000).toStringAsFixed(1)} TB';
-    }
-    if (totalSizeBytes >= 1000000000) {
-      return '${(totalSizeBytes / 1000000000).toStringAsFixed(1)} GB';
-    }
-    if (totalSizeBytes >= 1000000) {
-      return '${(totalSizeBytes / 1000000).toStringAsFixed(0)} MB';
-    }
-    return '${(totalSizeBytes / 1000).round()} KB';
+    return formatStorageBytes(totalSizeBytes);
   }
 
   static int _parseMediaType(Object? raw) {
@@ -115,6 +243,7 @@ class LibraryRootModel {
       mediaType: _parseMediaType(json['mediaType']),
       rootPath: json['rootPath'] as String? ?? '',
       watchEnabled: json['watchEnabled'] as bool? ?? true,
+      fetchMetadata: json['fetchMetadata'] as bool? ?? true,
       createdAtUtc: DateTime.parse(json['createdAtUtc'] as String),
       lastScanCompletedAtUtc: lastScan == null ? null : DateTime.parse(lastScan),
       itemCount: hasCount ? rawItemCount.toInt() : 0,
