@@ -62,6 +62,17 @@ public sealed record TmdbSearchCandidate(int TmdbId, string Title, int? Year, st
 
 public sealed record TmdbEpisodeCandidate(int EpisodeNumber, string Title, string? Overview, string? StillPath);
 
+public sealed record TmdbCastCandidate(string Name, string Role, string? ProfilePath);
+
+public sealed record TmdbSeasonCountCandidate(int SeasonNumber, int EpisodeCount);
+
+public sealed record TmdbRichDetails(
+    double? Rating,
+    int? RuntimeMinutes,
+    IReadOnlyList<string> Genres,
+    IReadOnlyList<TmdbCastCandidate> Cast,
+    IReadOnlyList<TmdbSeasonCountCandidate> Seasons);
+
 public interface ITmdbClient
 {
     Task<IReadOnlyList<TmdbSearchCandidate>> SearchAsync(LibraryMediaType mediaType, string query, int? year, CancellationToken cancellationToken);
@@ -72,6 +83,12 @@ public interface ITmdbClient
         int seasonNumber,
         CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<TmdbEpisodeCandidate>>([]);
+
+    Task<TmdbRichDetails?> GetRichDetailsAsync(
+        LibraryMediaType mediaType,
+        int tmdbId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<TmdbRichDetails?>(null);
 }
 
 public interface IArtworkStore

@@ -17,6 +17,7 @@ public sealed class HermesDbContext(DbContextOptions<HermesDbContext> options) :
     public DbSet<MediaSource> MediaSources => Set<MediaSource>();
     public DbSet<MediaStream> MediaStreams => Set<MediaStream>();
     public DbSet<WatchProgress> WatchProgresses => Set<WatchProgress>();
+    public DbSet<WatchlistItem> WatchlistItems => Set<WatchlistItem>();
     public DbSet<Artist> Artists => Set<Artist>();
     public DbSet<Album> Albums => Set<Album>();
     public DbSet<Song> Songs => Set<Song>();
@@ -96,6 +97,8 @@ public sealed class HermesDbContext(DbContextOptions<HermesDbContext> options) :
             b.Property(m => m.Title).HasMaxLength(512).IsRequired();
             b.Property(m => m.ArtworkHash).HasMaxLength(128);
             b.Property(m => m.BackdropHash).HasMaxLength(128);
+            b.Property(m => m.GenresCsv).HasMaxLength(512);
+            b.Property(m => m.CastJson).HasMaxLength(4000);
             b.HasIndex(m => m.LibraryRootId);
             b.HasIndex(m => m.TmdbId);
             b.HasIndex(m => m.Title)
@@ -114,6 +117,8 @@ public sealed class HermesDbContext(DbContextOptions<HermesDbContext> options) :
             b.Property(s => s.Title).HasMaxLength(512).IsRequired();
             b.Property(s => s.ArtworkHash).HasMaxLength(128);
             b.Property(s => s.BackdropHash).HasMaxLength(128);
+            b.Property(s => s.GenresCsv).HasMaxLength(512);
+            b.Property(s => s.CastJson).HasMaxLength(4000);
             b.HasIndex(s => s.LibraryRootId);
             b.HasIndex(s => s.TmdbId);
             b.HasIndex(s => s.Title)
@@ -183,6 +188,17 @@ public sealed class HermesDbContext(DbContextOptions<HermesDbContext> options) :
             b.HasIndex(w => new { w.UserId, w.EpisodeId })
                 .IsUnique()
                 .HasFilter("\"EpisodeId\" IS NOT NULL");
+        });
+
+        modelBuilder.Entity<WatchlistItem>(b =>
+        {
+            b.HasKey(w => w.Id);
+            b.HasIndex(w => new { w.UserId, w.MovieId })
+                .IsUnique()
+                .HasFilter("\"MovieId\" IS NOT NULL");
+            b.HasIndex(w => new { w.UserId, w.TvSeriesId })
+                .IsUnique()
+                .HasFilter("\"TvSeriesId\" IS NOT NULL");
         });
     }
 

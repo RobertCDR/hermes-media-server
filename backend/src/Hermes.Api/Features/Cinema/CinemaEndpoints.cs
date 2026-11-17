@@ -1,7 +1,10 @@
 using System.Security.Claims;
 using Hermes.Api.Features.System;
+using Hermes.Api.Hubs;
 using Hermes.Domain.Entities;
+using Hermes.Infrastructure.Media;
 using Hermes.Infrastructure.Persistence;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 
 namespace Hermes.Api.Features.Cinema;
@@ -16,6 +19,8 @@ public static class CinemaEndpoints
         group.MapGet("/movies", ListMoviesAsync).WithName("ListMovies");
         group.MapGet("/movies/{id:guid}", GetMovieAsync).WithName("GetMovie");
         group.MapGet("/series", ListSeriesAsync).WithName("ListSeries");
+        group.MapPut("/watchlist", UpdateWatchlistAsync).WithName("UpdateWatchlist");
+        group.MapPut("/series/{id:guid}/watched", MarkSeriesWatchedAsync).WithName("MarkSeriesWatched");
 
         return endpoints;
     }
@@ -42,8 +47,15 @@ public static class CinemaEndpoints
             .Where(p => p.UserId == userId && p.MovieId != null)
             .ToDictionaryAsync(p => p.MovieId!.Value, cancellationToken);
 
+        var watchlistIds = (await db.WatchlistItems
+            .AsNoTracking()
+            .Where(w => w.UserId == userId && w.MovieId != null)
+            .Select(w => w.MovieId!.Value)
+            .ToListAsync(cancellationToken))
+            .ToHashSet();
+
         var result = movies
-            .Select(m => MapMovie(m, progresses.GetValueOrDefault(m.Id)))
+            .Select(m => MapMovie(m, progresses.GetValueOrDefault(m.Id), watchlistIds.Contains(m.Id)))
             .ToList();
 
         return Results.Ok(result);
@@ -75,7 +87,11 @@ public static class CinemaEndpoints
             .AsNoTracking()
             .SingleOrDefaultAsync(p => p.UserId == userId && p.MovieId == id, cancellationToken);
 
-        return Results.Ok(MapMovie(movie, progress));
+        var inWatchlist = await db.WatchlistItems
+            .AsNoTracking()
+            .AnyAsync(w => w.UserId == userId && w.MovieId == id, cancellationToken);
+
+        return Results.Ok(MapMovie(movie, progress, inWatchlist));
     }
 
     private static async Task<IResult> ListSeriesAsync(
@@ -101,6 +117,13 @@ public static class CinemaEndpoints
             .AsNoTracking()
             .Where(p => p.UserId == userId && p.EpisodeId != null)
             .ToDictionaryAsync(p => p.EpisodeId!.Value, cancellationToken);
+
+        var watchlistIds = (await db.WatchlistItems
+            .AsNoTracking()
+            .Where(w => w.UserId == userId && w.TvSeriesId != null)
+            .Select(w => w.TvSeriesId!.Value)
+            .ToListAsync(cancellationToken))
+            .ToHashSet();
 
         var result = seriesList
             .Select(s => new TvSeriesSummaryDto(
@@ -128,14 +151,173 @@ public static class CinemaEndpoints
                                 ep.StillArtworkHash,
                                 MapProgress(episodeProgresses.GetValueOrDefault(ep.Id)),
                                 MapSources(ep.Sources)))
-                            .ToList()))
+                            .ToList(),
+                        sn.ExpectedEpisodeCount))
+                    .ToList(),
+                s.AddedAtUtc,
+                s.Rating,
+                CinemaMetadataEnricher.ParseGenresCsv(s.GenresCsv),
+                watchlistIds.Contains(s.Id),
+                CinemaMetadataEnricher.DeserializeCastJson(s.CastJson)
+                    .Select(c => new CastMemberDto(c.Name, c.Role, c.ArtworkHash))
                     .ToList()))
             .ToList();
 
         return Results.Ok(result);
     }
 
-    internal static MovieSummaryDto MapMovie(Movie movie, WatchProgress? progress) =>
+    private static async Task<IResult> UpdateWatchlistAsync(
+        UpdateWatchlistRequest request,
+        ClaimsPrincipal principal,
+        HermesDbContext db,
+        TimeProvider timeProvider,
+        CancellationToken cancellationToken)
+    {
+        if (!principal.TryGetUserId(out var userId))
+        {
+            return Results.Unauthorized();
+        }
+
+        if ((request.MovieId is null) == (request.TvSeriesId is null))
+        {
+            return Results.BadRequest(new { error = "specify_movie_or_series" });
+        }
+
+        var utcNow = timeProvider.GetUtcNow();
+        if (request.MovieId is { } movieId)
+        {
+            if (!await db.Movies.AnyAsync(m => m.Id == movieId, cancellationToken))
+            {
+                return Results.NotFound(new { error = "movie_not_found" });
+            }
+
+            var existing = await db.WatchlistItems.SingleOrDefaultAsync(
+                w => w.UserId == userId && w.MovieId == movieId,
+                cancellationToken);
+
+            if (request.InWatchlist && existing is null)
+            {
+                db.WatchlistItems.Add(WatchlistItem.ForMovie(userId, movieId, utcNow));
+                await db.SaveChangesAsync(cancellationToken);
+            }
+            else if (!request.InWatchlist && existing is not null)
+            {
+                db.WatchlistItems.Remove(existing);
+                await db.SaveChangesAsync(cancellationToken);
+            }
+
+            return Results.Ok(new WatchlistResponse(request.InWatchlist));
+        }
+
+        var seriesId = request.TvSeriesId!.Value;
+        if (!await db.TvSeries.AnyAsync(s => s.Id == seriesId, cancellationToken))
+        {
+            return Results.NotFound(new { error = "series_not_found" });
+        }
+
+        var existingSeries = await db.WatchlistItems.SingleOrDefaultAsync(
+            w => w.UserId == userId && w.TvSeriesId == seriesId,
+            cancellationToken);
+
+        if (request.InWatchlist && existingSeries is null)
+        {
+            db.WatchlistItems.Add(WatchlistItem.ForSeries(userId, seriesId, utcNow));
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        else if (!request.InWatchlist && existingSeries is not null)
+        {
+            db.WatchlistItems.Remove(existingSeries);
+            await db.SaveChangesAsync(cancellationToken);
+        }
+
+        return Results.Ok(new WatchlistResponse(request.InWatchlist));
+    }
+
+    private static async Task<IResult> MarkSeriesWatchedAsync(
+        Guid id,
+        MarkSeriesWatchedRequest request,
+        ClaimsPrincipal principal,
+        HermesDbContext db,
+        IHubContext<PlaybackSyncHub> hubContext,
+        TimeProvider timeProvider,
+        CancellationToken cancellationToken)
+    {
+        if (!principal.TryGetUserId(out var userId))
+        {
+            return Results.Unauthorized();
+        }
+
+        var series = await db.TvSeries
+            .AsNoTracking()
+            .Include(s => s.Seasons)
+            .ThenInclude(sn => sn.Episodes)
+            .ThenInclude(ep => ep.Sources)
+            .SingleOrDefaultAsync(s => s.Id == id, cancellationToken);
+
+        if (series is null)
+        {
+            return Results.NotFound(new { error = "series_not_found" });
+        }
+
+        var episodes = series.Seasons
+            .SelectMany(sn => sn.Episodes)
+            .ToList();
+        var episodeIds = episodes.Select(e => e.Id).ToList();
+
+        var existingProgress = await db.WatchProgresses
+            .Where(p => p.UserId == userId && p.EpisodeId != null && episodeIds.Contains(p.EpisodeId.Value))
+            .ToDictionaryAsync(p => p.EpisodeId!.Value, cancellationToken);
+
+        var utcNow = timeProvider.GetUtcNow();
+        var updatedEvents = new List<WatchProgressUpdatedEvent>(episodes.Count);
+
+        foreach (var episode in episodes)
+        {
+            var durationMs = episode.Sources.MaxBy(s => s.Height)?.DurationMs ?? 0;
+            if (!existingProgress.TryGetValue(episode.Id, out var progress))
+            {
+                if (!request.Watched)
+                {
+                    continue;
+                }
+
+                progress = WatchProgress.ForEpisode(userId, episode.Id);
+                db.WatchProgresses.Add(progress);
+            }
+
+            if (request.Watched)
+            {
+                progress.UpdatePosition(durationMs, durationMs, utcNow);
+                progress.SetWatched(true, utcNow);
+            }
+            else
+            {
+                progress.UpdatePosition(0, durationMs, utcNow);
+                progress.SetWatched(false, utcNow);
+            }
+
+            updatedEvents.Add(new WatchProgressUpdatedEvent(
+                null,
+                episode.Id,
+                progress.PositionMs,
+                progress.DurationMs,
+                progress.IsWatched,
+                progress.UpdatedAtUtc));
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+
+        foreach (var evt in updatedEvents)
+        {
+            await hubContext.Clients
+                .Group(PlaybackSyncHub.UserGroupName(userId))
+                .SendAsync("WatchProgressUpdated", evt, cancellationToken);
+        }
+
+        return Results.Ok(new SeriesWatchedResponse(id, request.Watched, updatedEvents.Count));
+    }
+
+    internal static MovieSummaryDto MapMovie(Movie movie, WatchProgress? progress, bool isInWatchlist = false) =>
         new(
             movie.Id,
             movie.Title,
@@ -145,7 +327,15 @@ public static class CinemaEndpoints
             movie.ArtworkHash,
             movie.BackdropHash,
             MapProgress(progress),
-            MapSources(movie.Sources));
+            MapSources(movie.Sources),
+            movie.AddedAtUtc,
+            movie.Rating,
+            CinemaMetadataEnricher.ParseGenresCsv(movie.GenresCsv),
+            movie.RuntimeMinutes,
+            isInWatchlist,
+            CinemaMetadataEnricher.DeserializeCastJson(movie.CastJson)
+                .Select(c => new CastMemberDto(c.Name, c.Role, c.ArtworkHash))
+                .ToList());
 
     internal static WatchProgressDto? MapProgress(WatchProgress? progress) =>
         progress is null

@@ -152,6 +152,47 @@ public class ExtendedApiCoverageTests
                 new UpdateWatchProgressRequest(null, episodeId, 950, 1000, MarkWatched: true));
             epProgressResp.StatusCode.Should().Be(HttpStatusCode.OK);
 
+            // Watchlist toggle per user (movies & series)
+            (await bobClient.PutAsJsonAsync("/api/v1/cinema/watchlist", new UpdateWatchlistRequest(null, null, true)))
+                .StatusCode.Should().Be(HttpStatusCode.BadRequest);
+            (await bobClient.PutAsJsonAsync("/api/v1/cinema/watchlist", new UpdateWatchlistRequest(Guid.NewGuid(), null, true)))
+                .StatusCode.Should().Be(HttpStatusCode.NotFound);
+            (await bobClient.PutAsJsonAsync("/api/v1/cinema/watchlist", new UpdateWatchlistRequest(movieId, null, true)))
+                .StatusCode.Should().Be(HttpStatusCode.OK);
+            (await bobClient.PutAsJsonAsync("/api/v1/cinema/watchlist", new UpdateWatchlistRequest(null, series.Id, true)))
+                .StatusCode.Should().Be(HttpStatusCode.OK);
+
+            var bobMovieAfterList = await bobClient.GetFromJsonAsync<MovieSummaryDto>($"/api/v1/cinema/movies/{movieId}");
+            bobMovieAfterList!.IsInWatchlist.Should().BeTrue();
+            var adminMovies = await adminClient.GetFromJsonAsync<List<MovieSummaryDto>>("/api/v1/cinema/movies");
+            adminMovies!.Single(m => m.Id == movieId).IsInWatchlist.Should().BeFalse();
+
+            var bobSeriesAfterList = await bobClient.GetFromJsonAsync<List<TvSeriesSummaryDto>>("/api/v1/cinema/series");
+            bobSeriesAfterList!.Single(s => s.Id == series.Id).IsInWatchlist.Should().BeTrue();
+
+            (await bobClient.PutAsJsonAsync("/api/v1/cinema/watchlist", new UpdateWatchlistRequest(movieId, null, false)))
+                .StatusCode.Should().Be(HttpStatusCode.OK);
+            (await bobClient.GetFromJsonAsync<MovieSummaryDto>($"/api/v1/cinema/movies/{movieId}"))!
+                .IsInWatchlist.Should().BeFalse();
+
+            // Mark entire series watched/unwatched
+            (await bobClient.PutAsJsonAsync($"/api/v1/cinema/series/{Guid.NewGuid()}/watched", new MarkSeriesWatchedRequest(true)))
+                .StatusCode.Should().Be(HttpStatusCode.NotFound);
+            var seriesWatchedResp = await bobClient.PutAsJsonAsync(
+                $"/api/v1/cinema/series/{series.Id}/watched",
+                new MarkSeriesWatchedRequest(true));
+            seriesWatchedResp.StatusCode.Should().Be(HttpStatusCode.OK);
+            var markedSeries = await seriesWatchedResp.Content.ReadFromJsonAsync<SeriesWatchedResponse>();
+            markedSeries!.Watched.Should().BeTrue();
+            markedSeries.EpisodesUpdated.Should().Be(1);
+
+            var seriesUnwatchedResp = await bobClient.PutAsJsonAsync(
+                $"/api/v1/cinema/series/{series.Id}/watched",
+                new MarkSeriesWatchedRequest(false));
+            seriesUnwatchedResp.StatusCode.Should().Be(HttpStatusCode.OK);
+            var afterUnwatch = await bobClient.GetFromJsonAsync<List<TvSeriesSummaryDto>>("/api/v1/cinema/series");
+            afterUnwatch!.Single(s => s.Id == series.Id).Seasons.Single().Episodes.Single().WatchProgress!.IsWatched.Should().BeFalse();
+
             // Manual Identify for Movie, Series, invalid, and 404
             (await adminClient.PostAsJsonAsync($"/api/v1/admin/media/{movieId}/identify", new IdentifyMediaRequest(0, "", null, null)))
                 .StatusCode.Should().Be(HttpStatusCode.BadRequest);

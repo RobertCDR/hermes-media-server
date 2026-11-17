@@ -25,9 +25,34 @@ public class CinemaAndIdentityDomainTests
         series.LockManualMatch(95396, "Severance (Locked)", 2022, "Locked Overview", "art2", "bg2");
         series.IsMetadataLocked.Should().BeTrue();
         series.ApplyScannedMetadata("Wrong", 1999, "Overwritten", 1, "bad", "bad");
+        series.ApplyRichMetadata(9.9, ["Ignored"], """[{"name":"Bad"}]""");
         series.Title.Should().Be("Severance (Locked)");
+        series.GenresCsv.Should().BeNull();
+
+        series.ApplyRichMetadata(8.74, ["Drama", "Sci-Fi", "Drama"], """[{"name":"Adam Scott","role":"Mark Scout"}]""", bypassLock: true);
+        series.Rating.Should().Be(8.7);
+        series.GenresCsv.Should().Be("Drama, Sci-Fi");
+        series.CastJson.Should().Contain("Adam Scott");
 
         var season = new TvSeason(series.Id, 1, "Season 1", "s1art");
+        season.SetExpectedEpisodeCount(9);
+        season.ExpectedEpisodeCount.Should().Be(9);
+        season.SetExpectedEpisodeCount(0);
+        season.ExpectedEpisodeCount.Should().BeNull();
+
+        var movie = new Movie(root.Id, "Dark City", 1998);
+        movie.ApplyRichMetadata(7.6, ["Mystery", "Sci-Fi"], 100, """[{"name":"Rufus Sewell","role":"John Murdoch"}]""");
+        movie.Rating.Should().Be(7.6);
+        movie.GenresCsv.Should().Be("Mystery, Sci-Fi");
+        movie.RuntimeMinutes.Should().Be(100);
+
+        var watchlistMovie = WatchlistItem.ForMovie(Guid.NewGuid(), movie.Id, now);
+        watchlistMovie.MovieId.Should().Be(movie.Id);
+        watchlistMovie.TvSeriesId.Should().BeNull();
+
+        var watchlistSeries = WatchlistItem.ForSeries(watchlistMovie.UserId, series.Id, now);
+        watchlistSeries.TvSeriesId.Should().Be(series.Id);
+        watchlistSeries.MovieId.Should().BeNull();
         var episode = new Episode(season.Id, 1, "Good News About Hell", "Pilot", "ep1still");
         season.Episodes.Add(episode);
         series.Seasons.Add(season);

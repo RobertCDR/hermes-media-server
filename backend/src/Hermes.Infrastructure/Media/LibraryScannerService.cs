@@ -131,6 +131,14 @@ public sealed partial class LibraryScannerService(
             upserted++;
         }
 
+        foreach (var movie in moviesByKey.Values)
+        {
+            if (movie.TmdbId is not null && movie.GenresCsv is null && movie.Rating is null)
+            {
+                await CinemaMetadataEnricher.EnrichMovieAsync(tmdbClient, artworkStore, movie, cancellationToken);
+            }
+        }
+
         var utcNow = timeProvider.GetUtcNow();
         var markedMissing = 0;
         foreach (var existingSource in existingSourcesByPath.Values)
@@ -176,7 +184,7 @@ public sealed partial class LibraryScannerService(
             }
 
             var (seriesTitle, year, seasonNumber, episodeNumber, suffixLabel) =
-                ParseEpisodeFilename(Path.GetFileNameWithoutExtension(filePath));
+                ParseEpisodeWithFolderContext(root.RootPath, filePath);
             var seriesKey = (NormalizeKey(seriesTitle), year);
 
             if (!seriesByKey.TryGetValue(seriesKey, out var series))
@@ -240,6 +248,11 @@ public sealed partial class LibraryScannerService(
             await TryEnrichSeriesFromTmdbAsync(series, series.Title, series.Year, cancellationToken);
             if (series.TmdbId is int seriesTmdbId)
             {
+                if ((series.GenresCsv is null && series.Rating is null) ||
+                    series.Seasons.Any(sn => sn.ExpectedEpisodeCount is null))
+                {
+                    await CinemaMetadataEnricher.EnrichSeriesAsync(tmdbClient, artworkStore, series, cancellationToken);
+                }
                 await TryEnrichSeriesEpisodesFromTmdbAsync(series, seriesTmdbId, cancellationToken);
             }
         }
@@ -369,6 +382,7 @@ public sealed partial class LibraryScannerService(
         {
             var (match, posterHash, backdropHash) = enriched.Value;
             movie.ApplyScannedMetadata(match.Title, match.Year ?? parsedYear, match.Overview, match.TmdbId, posterHash, backdropHash);
+            await CinemaMetadataEnricher.EnrichMovieAsync(tmdbClient, artworkStore, movie, cancellationToken);
         }
     }
 
@@ -388,6 +402,7 @@ public sealed partial class LibraryScannerService(
         {
             var (match, posterHash, backdropHash) = enriched.Value;
             series.ApplyScannedMetadata(match.Title, match.Year ?? parsedYear, match.Overview, match.TmdbId, posterHash, backdropHash);
+            await CinemaMetadataEnricher.EnrichSeriesAsync(tmdbClient, artworkStore, series, cancellationToken);
         }
     }
 
@@ -559,6 +574,41 @@ public sealed partial class LibraryScannerService(
         return (working.Replace('.', ' ').Replace('_', ' ').Trim(), null, suffixLabel);
     }
 
+    private static (string SeriesTitle, int? Year, int SeasonNumber, int EpisodeNumber, string? SuffixLabel) ParseEpisodeWithFolderContext(
+        string rootPath,
+        string filePath)
+    {
+        var (parsedSeries, parsedYear, season, episode, suffixLabel) =
+            ParseEpisodeFilename(Path.GetFileNameWithoutExtension(filePath));
+
+        var relative = Path.GetRelativePath(rootPath, filePath);
+        var parts = relative.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length <= 1)
+        {
+            return (parsedSeries, parsedYear, season, episode, suffixLabel);
+        }
+
+        // Inspect parent directories bottom-up (skipping Season XX / Specials folders)
+        for (var i = parts.Length - 2; i >= 0; i--)
+        {
+            var folderName = parts[i].Trim();
+            if (SeasonFolderRegex().IsMatch(folderName))
+            {
+                continue;
+            }
+
+            var (folderTitle, folderYear, _) = ParseMovieFilename(folderName);
+            if (!string.IsNullOrWhiteSpace(folderTitle))
+            {
+                var finalTitle = string.IsNullOrWhiteSpace(parsedSeries) ? folderTitle : parsedSeries;
+                var finalYear = parsedYear ?? folderYear;
+                return (finalTitle, finalYear, season, episode, suffixLabel);
+            }
+        }
+
+        return (parsedSeries, parsedYear, season, episode, suffixLabel);
+    }
+
     private static (string SeriesTitle, int? Year, int SeasonNumber, int EpisodeNumber, string? SuffixLabel) ParseEpisodeFilename(string baseName)
     {
         var (working, suffixLabel) = SplitDashSuffix(baseName);
@@ -573,6 +623,14 @@ public sealed partial class LibraryScannerService(
             return (cleanSeries, year, season, episode, suffixLabel);
         }
 
+        var bareMatch = BareEpisodePatternRegex().Match(working);
+        if (bareMatch.Success)
+        {
+            var season = int.Parse(bareMatch.Groups["season"].Value);
+            var episode = int.Parse(bareMatch.Groups["episode"].Value);
+            return (string.Empty, null, season, episode, suffixLabel);
+        }
+
         return (working, null, 1, 1, suffixLabel);
     }
 
@@ -584,4 +642,10 @@ public sealed partial class LibraryScannerService(
 
     [GeneratedRegex(@"^(?<series>.+?)[.\s_-]+[Ss](?<season>\d{1,2})[Ee](?<episode>\d{1,3})")]
     private static partial Regex EpisodePatternRegex();
+
+    [GeneratedRegex(@"^[Ss](?<season>\d{1,2})[Ee](?<episode>\d{1,3})\b")]
+    private static partial Regex BareEpisodePatternRegex();
+
+    [GeneratedRegex(@"^(?:Season\s*\d+|Specials|S\d{1,2})$", RegexOptions.IgnoreCase)]
+    private static partial Regex SeasonFolderRegex();
 }

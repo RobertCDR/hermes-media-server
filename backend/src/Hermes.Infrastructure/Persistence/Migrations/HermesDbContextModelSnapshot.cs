@@ -341,6 +341,14 @@ namespace Hermes.Infrastructure.Persistence.Migrations
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)");
 
+                    b.Property<string>("CastJson")
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)");
+
+                    b.Property<string>("GenresCsv")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
                     b.Property<bool>("IsMetadataLocked")
                         .HasColumnType("boolean");
 
@@ -349,6 +357,12 @@ namespace Hermes.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("Overview")
                         .HasColumnType("text");
+
+                    b.Property<double?>("Rating")
+                        .HasColumnType("double precision");
+
+                    b.Property<int?>("RuntimeMinutes")
+                        .HasColumnType("integer");
 
                     b.Property<string>("Title")
                         .IsRequired()
@@ -646,6 +660,9 @@ namespace Hermes.Infrastructure.Persistence.Migrations
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)");
 
+                    b.Property<int?>("ExpectedEpisodeCount")
+                        .HasColumnType("integer");
+
                     b.Property<int>("SeasonNumber")
                         .HasColumnType("integer");
 
@@ -682,6 +699,14 @@ namespace Hermes.Infrastructure.Persistence.Migrations
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)");
 
+                    b.Property<string>("CastJson")
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)");
+
+                    b.Property<string>("GenresCsv")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
                     b.Property<bool>("IsMetadataLocked")
                         .HasColumnType("boolean");
 
@@ -690,6 +715,9 @@ namespace Hermes.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("Overview")
                         .HasColumnType("text");
+
+                    b.Property<double?>("Rating")
+                        .HasColumnType("double precision");
 
                     b.Property<string>("Title")
                         .IsRequired()
@@ -834,6 +862,37 @@ namespace Hermes.Infrastructure.Persistence.Migrations
                         .HasFilter("\"MovieId\" IS NOT NULL");
 
                     b.ToTable("WatchProgresses");
+                });
+
+            modelBuilder.Entity("Hermes.Domain.Entities.WatchlistItem", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("AddedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("MovieId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("TvSeriesId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "MovieId")
+                        .IsUnique()
+                        .HasFilter("\"MovieId\" IS NOT NULL");
+
+                    b.HasIndex("UserId", "TvSeriesId")
+                        .IsUnique()
+                        .HasFilter("\"TvSeriesId\" IS NOT NULL");
+
+                    b.ToTable("WatchlistItems");
                 });
 
             modelBuilder.Entity("Hermes.Domain.Entities.Album", b =>
