@@ -15,9 +15,11 @@ class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({
     super.key,
     required this.adminService,
+    this.onServerNameChanged,
   });
 
   final AdminService adminService;
+  final ValueChanged<String>? onServerNameChanged;
 
   @override
   State<AdminDashboardScreen> createState() => _AdminDashboardScreenState();
@@ -29,6 +31,15 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   List<UnmatchedMediaModel> _unmatched = [];
   List<InviteModel> _invites = [];
   List<UserSummaryModel> _users = [];
+  ServerSettingsModel? _serverSettings;
+  final TextEditingController _serverNameController =
+      TextEditingController(text: 'Hermes Media Server');
+  bool _transcodingEnabled = true;
+  HardwareAccelerationMode _hwAccelMode = HardwareAccelerationMode.none;
+  int _maxVideoTranscodes = 2;
+  int _maxAudioTranscodes = 4;
+  int? _maxRemoteBitrateBps;
+  bool _savingSettings = false;
   final Set<String> _localScanningLibs = {};
   Timer? _scanPollTimer;
   bool _loading = true;
@@ -43,6 +54,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   @override
   void dispose() {
     _scanPollTimer?.cancel();
+    _serverNameController.dispose();
     super.dispose();
   }
 
@@ -73,6 +85,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         widget.adminService.listUnmatchedMedia,
         const <UnmatchedMediaModel>[],
       );
+      final settings = await _safeOptional<ServerSettingsModel?>(
+        widget.adminService.getServerSettings,
+        null,
+      );
 
       if (!mounted) return;
       setState(() {
@@ -81,6 +97,15 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         _users = users;
         _sessions = sessions;
         _unmatched = unmatched;
+        if (settings != null) {
+          _serverSettings = settings;
+          _serverNameController.text = settings.serverName;
+          _transcodingEnabled = settings.transcodingEnabled;
+          _hwAccelMode = settings.hardwareAccelerationMode;
+          _maxVideoTranscodes = settings.maxConcurrentVideoTranscodes;
+          _maxAudioTranscodes = settings.maxConcurrentAudioTranscodes;
+          _maxRemoteBitrateBps = settings.maxRemoteVideoBitrateBps;
+        }
         _loading = false;
         _loadError = null;
       });
@@ -175,6 +200,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         mediaType: result.mediaType,
         rootPath: result.rootPath,
         watchEnabled: result.watchEnabled,
+        fetchMetadata: result.fetchMetadata,
       );
       if (!mounted) return;
       _showToast('Added "${created.name}". Scanning library...');
@@ -183,6 +209,90 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       _showToast('Add library error: $e');
     }
   }
+
+  Future<void> _openEditLibrary(LibraryRootModel lib) async {
+    final result = await showDialog<AddLibraryResult>(
+      context: context,
+      builder: (_) => AddLibraryDialog(initialLibrary: lib),
+    );
+    if (result == null) return;
+
+    try {
+      final updated = await widget.adminService.updateLibrary(
+        id: lib.id,
+        name: result.name,
+        rootPath: result.rootPath,
+        watchEnabled: result.watchEnabled,
+        fetchMetadata: result.fetchMetadata,
+      );
+      if (!mounted) return;
+      _showToast('Updated "${updated.name}".');
+      await _refresh(showSpinner: false);
+    } catch (e) {
+      _showToast('Update library error: $e');
+    }
+  }
+
+  Future<void> _deleteLibrary(LibraryRootModel lib) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => ConfirmDeleteLibraryDialog(library: lib),
+    );
+    if (confirmed != true) return;
+
+    try {
+      await widget.adminService.deleteLibrary(lib.id);
+      if (!mounted) return;
+      _showToast('Deleted "${lib.name}".');
+      await _refresh(showSpinner: false);
+    } catch (e) {
+      _showToast('Delete library error: $e');
+    }
+  }
+
+  Future<void> _saveServerSettings() async {
+    final serverName = _serverNameController.text.trim();
+    if (serverName.isEmpty) {
+      _showToast('Server name cannot be empty.');
+      return;
+    }
+
+    setState(() => _savingSettings = true);
+    try {
+      final updated = await widget.adminService.updateServerSettings(
+        UpdateServerSettingsInput(
+          serverName: serverName,
+          transcodingEnabled: _transcodingEnabled,
+          maxConcurrentVideoTranscodes: _maxVideoTranscodes,
+          maxConcurrentAudioTranscodes: _maxAudioTranscodes,
+          maxRemoteVideoBitrateBps: _maxRemoteBitrateBps,
+          hardwareAccelerationMode: _hwAccelMode,
+        ),
+      );
+      if (!mounted) return;
+      setState(() {
+        _serverSettings = updated;
+        _serverNameController.text = updated.serverName;
+        _transcodingEnabled = updated.transcodingEnabled;
+        _hwAccelMode = updated.hardwareAccelerationMode;
+        _maxVideoTranscodes = updated.maxConcurrentVideoTranscodes;
+        _maxAudioTranscodes = updated.maxConcurrentAudioTranscodes;
+        _maxRemoteBitrateBps = updated.maxRemoteVideoBitrateBps;
+        _savingSettings = false;
+      });
+      widget.onServerNameChanged?.call(updated.serverName);
+      _showToast('Saved server settings.');
+    } catch (e) {
+      if (mounted) {
+        setState(() => _savingSettings = false);
+      }
+      _showToast('Could not save settings: $e');
+    }
+  }
+
+  int get _effectiveTotalStorageBytes =>
+      _serverSettings?.totalMediaSizeBytes ??
+      _libraries.fold<int>(0, (sum, lib) => sum + lib.totalSizeBytes);
 
   Future<void> _openCreateInvite() async {
     final opts = await showDialog<CreateInviteOptions>(
@@ -344,6 +454,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                     ],
                     const SizedBox(height: 36),
                     _buildPeopleSection(tokens, wide),
+                    const SizedBox(height: 36),
+                    _buildServerSettingsSection(tokens, wide),
                   ],
                 ),
               ),
@@ -464,13 +576,26 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Libraries',
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.w800,
-            color: tokens.text,
-          ),
+        Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 12,
+          runSpacing: 4,
+          children: [
+            Text(
+              'Libraries',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+                color: tokens.text,
+              ),
+            ),
+            if (_libraries.isNotEmpty)
+              Text(
+                'Total storage: ${formatStorageBytes(_effectiveTotalStorageBytes)}',
+                style: TextStyle(fontSize: 13, color: tokens.text2),
+              ),
+          ],
         ),
         const SizedBox(height: 10),
         if (_libraries.isEmpty)
@@ -494,7 +619,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                     Expanded(flex: 2, child: Text('Contents', style: thStyle)),
                     Expanded(flex: 1, child: Text('Size', style: thStyle)),
                     Expanded(flex: 2, child: Text('Last scanned', style: thStyle)),
-                    const SizedBox(width: 116),
+                    const SizedBox(width: 184),
                   ],
                 ),
               ),
@@ -601,13 +726,28 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                   ),
           ),
           SizedBox(
-            width: 116,
+            width: 184,
             child: Align(
               alignment: Alignment.centerRight,
-              child: _InlineTextAction(
-                label: 'Scan Now',
-                enabled: !scanning,
-                onTap: () => unawaited(_scanLibrary(lib.id)),
+              child: Wrap(
+                spacing: 10,
+                children: [
+                  _InlineTextAction(
+                    label: 'Scan Now',
+                    enabled: !scanning,
+                    onTap: () => unawaited(_scanLibrary(lib.id)),
+                  ),
+                  _InlineTextAction(
+                    label: 'Edit',
+                    enabled: !scanning,
+                    onTap: () => unawaited(_openEditLibrary(lib)),
+                  ),
+                  _InlineTextAction(
+                    label: 'Delete',
+                    enabled: !scanning,
+                    onTap: () => unawaited(_deleteLibrary(lib)),
+                  ),
+                ],
               ),
             ),
           ),
@@ -660,10 +800,31 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             ),
           ),
           const SizedBox(width: 10),
-          _InlineTextAction(
-            label: 'Scan Now',
-            enabled: !scanning,
-            onTap: () => unawaited(_scanLibrary(lib.id)),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              _InlineTextAction(
+                label: 'Scan Now',
+                enabled: !scanning,
+                onTap: () => unawaited(_scanLibrary(lib.id)),
+              ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _InlineTextAction(
+                    label: 'Edit',
+                    enabled: !scanning,
+                    onTap: () => unawaited(_openEditLibrary(lib)),
+                  ),
+                  const SizedBox(width: 8),
+                  _InlineTextAction(
+                    label: 'Delete',
+                    enabled: !scanning,
+                    onTap: () => unawaited(_deleteLibrary(lib)),
+                  ),
+                ],
+              ),
+            ],
           ),
         ],
       ),
@@ -1006,6 +1167,327 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildServerSettingsSection(HermesThemeTokens tokens, bool wide) {
+    final totalBytes = _effectiveTotalStorageBytes;
+    final libCount = _serverSettings?.libraryCount ?? _libraries.length;
+    final countsLabel = _serverSettings != null
+        ? '${_serverSettings!.totalMovies} movies • ${_serverSettings!.totalSeries} series • ${_serverSettings!.totalSongs} tracks'
+        : '$libCount ${libCount == 1 ? 'library' : 'libraries'} configured';
+
+    const bitrateOptions = <int?>[null, 20000000, 15000000, 10000000, 8000000, 4000000];
+    final currentBitrate = bitrateOptions.contains(_maxRemoteBitrateBps)
+        ? _maxRemoteBitrateBps
+        : null;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 12,
+          runSpacing: 4,
+          children: [
+            Text(
+              'Server settings',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+                color: tokens.text,
+              ),
+            ),
+            Text(
+              'Total media size: ${formatStorageBytes(totalBytes)} • $countsLabel',
+              style: TextStyle(fontSize: 13, color: tokens.text2),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: tokens.surface,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: tokens.lineSoft),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (wide)
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      flex: 2,
+                      child: _buildServerNameField(tokens),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      flex: 2,
+                      child: _buildHwAccelDropdown(tokens),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      flex: 1,
+                      child: _buildRemoteBitrateDropdown(tokens, currentBitrate, bitrateOptions),
+                    ),
+                  ],
+                )
+              else ...[
+                _buildServerNameField(tokens),
+                const SizedBox(height: 14),
+                _buildHwAccelDropdown(tokens),
+                const SizedBox(height: 14),
+                _buildRemoteBitrateDropdown(tokens, currentBitrate, bitrateOptions),
+              ],
+              const SizedBox(height: 18),
+              Container(
+                padding: const EdgeInsets.only(top: 14),
+                decoration: BoxDecoration(
+                  border: Border(top: BorderSide(color: tokens.lineSoft)),
+                ),
+                child: Column(
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Enable transcoding',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: tokens.text,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                'Allow ffmpeg video HLS & audio bitrate conversion when clients cannot Direct Play.',
+                                style: TextStyle(fontSize: 12, color: tokens.text2),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Switch(
+                          value: _transcodingEnabled,
+                          onChanged: (v) => setState(() => _transcodingEnabled = v),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    _SlotStepperRow(
+                      label: 'Max concurrent video transcodes',
+                      value: _maxVideoTranscodes,
+                      min: 0,
+                      max: 16,
+                      onChanged: (v) => setState(() => _maxVideoTranscodes = v),
+                    ),
+                    const SizedBox(height: 8),
+                    _SlotStepperRow(
+                      label: 'Max concurrent audio transcodes',
+                      value: _maxAudioTranscodes,
+                      min: 0,
+                      max: 16,
+                      onChanged: (v) => setState(() => _maxAudioTranscodes = v),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              Align(
+                alignment: Alignment.centerRight,
+                child: FilledButton(
+                  onPressed: _savingSettings ? null : _saveServerSettings,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: tokens.accent,
+                    foregroundColor: tokens.accentInk,
+                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(99)),
+                  ),
+                  child: Text(
+                    _savingSettings ? 'Saving…' : 'Save settings',
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildServerNameField(HermesThemeTokens tokens) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Server name',
+          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: tokens.text),
+        ),
+        const SizedBox(height: 6),
+        TextField(
+          controller: _serverNameController,
+          style: TextStyle(fontSize: 14, color: tokens.text),
+          decoration: InputDecoration(
+            hintText: 'Hermes Media Server',
+            hintStyle: TextStyle(color: tokens.text3),
+            filled: true,
+            fillColor: tokens.surface3,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(6),
+              borderSide: BorderSide.none,
+            ),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+            isDense: true,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildHwAccelDropdown(HermesThemeTokens tokens) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Hardware acceleration',
+          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: tokens.text),
+        ),
+        const SizedBox(height: 6),
+        DropdownButtonFormField<HardwareAccelerationMode>(
+          initialValue: _hwAccelMode,
+          isExpanded: true,
+          dropdownColor: tokens.surface3,
+          decoration: InputDecoration(
+            filled: true,
+            fillColor: tokens.surface3,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(6),
+              borderSide: BorderSide.none,
+            ),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            isDense: true,
+          ),
+          items: [
+            for (final mode in HardwareAccelerationMode.values)
+              DropdownMenuItem(
+                value: mode,
+                child: Text(
+                  mode.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+          ],
+          onChanged: (v) {
+            if (v != null) setState(() => _hwAccelMode = v);
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRemoteBitrateDropdown(
+    HermesThemeTokens tokens,
+    int? currentBitrate,
+    List<int?> bitrateOptions,
+  ) {
+    String labelForBitrate(int? bps) {
+      if (bps == null) return 'Unlimited';
+      return '${(bps / 1000000).round()} Mbps';
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Remote cap',
+          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: tokens.text),
+        ),
+        const SizedBox(height: 6),
+        DropdownButtonFormField<int?>(
+          initialValue: currentBitrate,
+          isExpanded: true,
+          dropdownColor: tokens.surface3,
+          decoration: InputDecoration(
+            filled: true,
+            fillColor: tokens.surface3,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(6),
+              borderSide: BorderSide.none,
+            ),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            isDense: true,
+          ),
+          items: [
+            for (final bps in bitrateOptions)
+              DropdownMenuItem<int?>(
+                value: bps,
+                child: Text(
+                  labelForBitrate(bps),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+          ],
+          onChanged: (v) => setState(() => _maxRemoteBitrateBps = v),
+        ),
+      ],
+    );
+  }
+}
+
+class _SlotStepperRow extends StatelessWidget {
+  const _SlotStepperRow({
+    required this.label,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.onChanged,
+  });
+
+  final String label;
+  final int value;
+  final int min;
+  final int max;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = HermesThemeTokens.of(context);
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            label,
+            style: TextStyle(fontSize: 13, color: tokens.text2),
+          ),
+        ),
+        IconButton(
+          icon: const Icon(Icons.remove_rounded, size: 16),
+          onPressed: value > min ? () => onChanged(value - 1) : null,
+          visualDensity: VisualDensity.compact,
+        ),
+        SizedBox(
+          width: 28,
+          child: Text(
+            '$value',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: tokens.text),
+          ),
+        ),
+        IconButton(
+          icon: const Icon(Icons.add_rounded, size: 16),
+          onPressed: value < max ? () => onChanged(value + 1) : null,
+          visualDensity: VisualDensity.compact,
+        ),
+      ],
     );
   }
 }
