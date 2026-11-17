@@ -224,7 +224,9 @@ public static class LibraryAdminEndpoints
                         .Where(a => !db.Songs.Any(s => s.AlbumId == a.Id))
                         .ExecuteDeleteAsync(cancellationToken);
                     await db.Artists
-                        .Where(a => !db.Songs.Any(s => s.ArtistId == a.Id) && !db.Albums.Any(al => al.ArtistId == a.Id))
+                        .Where(a => !db.Songs.Any(s => s.ArtistId == a.Id) &&
+                                    !db.Albums.Any(al => al.ArtistId == a.Id) &&
+                                    !db.SongArtists.Any(sa => sa.ArtistId == a.Id))
                         .ExecuteDeleteAsync(cancellationToken);
                 }
                 break;

@@ -270,6 +270,9 @@ public static class PlaylistEndpoints
             .ThenInclude(s => s.Artist)
             .Include(t => t.Song)
             .ThenInclude(s => s.Album)
+            .Include(t => t.Song)
+            .ThenInclude(s => s.SongArtists)
+            .ThenInclude(sa => sa.Artist)
             .Where(t => t.PlaylistId == playlistId)
             .OrderBy(t => t.Position)
             .ToListAsync(cancellationToken);
