@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 import 'package:material_ui/material_ui.dart';
 import 'music_models.dart';
@@ -25,6 +26,14 @@ abstract interface class AudioEngineAdapter {
   Future<void> seek(int positionMs);
 }
 
+abstract interface class ControllableAudioEngine implements AudioEngineAdapter {
+  Future<void> resume();
+  Future<void> setVolume(double volume01);
+  Future<void> setNormalizationEnabled(bool enabled);
+  Stream<int> get positionMsStream;
+  Stream<void> get trackCompletedStream;
+}
+
 class NoOpAudioEngineAdapter implements AudioEngineAdapter {
   @override
   Future<void> loadAndPlay(Uri streamUri, SongModel track, int startPositionMs) async {}
@@ -49,11 +58,18 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
     this.audioQualityPolicy = const AudioQualityPolicy(),
     Future<String> Function(String songId)? ticketIssuer,
     Map<String, SongModel>? catalogSongs,
+    this.onProgressHeartbeat,
   }) : _ticketIssuer = ticketIssuer ?? musicService.issueAudioTicket {
     if (catalogSongs != null) {
       _songsById.addAll(catalogSongs);
     }
     mediaBridge.setCommandHandler(_handleMediaButton);
+    if (audioEngine case final ControllableAudioEngine controllable) {
+      _positionSub = controllable.positionMsStream.listen(_onEnginePositionMs);
+      _completedSub = controllable.trackCompletedStream.listen((_) {
+        unawaited(_onEngineTrackCompleted());
+      });
+    }
   }
 
   final String localDeviceId;
@@ -63,6 +79,7 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
   final ConnectTransport? transport;
   AudioQualityPolicy audioQualityPolicy;
   final Future<String> Function(String songId) _ticketIssuer;
+  Future<void> Function(int positionMs)? onProgressHeartbeat;
 
   final Map<String, SongModel> _songsById = {};
   final List<String> _upNextSongIds = [];
@@ -75,8 +92,20 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
   double _lastNonZeroVolume = 0.85;
   final Random _random = Random();
 
+  StreamSubscription<int>? _positionSub;
+  StreamSubscription<void>? _completedSub;
+  String? _loadedTrackId;
+  AudioQualityPreset? _loadedQuality;
+  PlaybackState _loadedEngineState = PlaybackState.stopped;
+  int _livePositionMs = 0;
+  int _lastNotifiedPositionMs = -1000;
+  int _lastHeartbeatPositionMs = -10000;
+  bool _disposed = false;
+
   int get lastAppliedVersion => _lastAppliedVersion;
   PlaybackSessionState? get session => _session;
+  int get currentPositionMs =>
+      _loadedTrackId != null ? _livePositionMs : (_session?.positionMs ?? 0);
   NetworkTransportMode get networkMode => _networkMode;
   AudioQualityPreset get effectiveQuality => audioQualityPolicy.presetFor(_networkMode);
   bool get nowPlayingOpen => _nowPlayingOpen;
@@ -199,12 +228,78 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> applyServerSession(PlaybackSessionState incoming) async {
-    // Strict monotonic Connect guard: discard stale/reordered packets.
-    if (incoming.version <= _lastAppliedVersion) {
+  Future<void> setNormalizationEnabled(bool enabled) async {
+    if (audioEngine case final ControllableAudioEngine controllable) {
+      await controllable.setNormalizationEnabled(enabled);
+    }
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    unawaited(_positionSub?.cancel());
+    unawaited(_completedSub?.cancel());
+    _positionSub = null;
+    _completedSub = null;
+    super.dispose();
+  }
+
+  void _onEnginePositionMs(int positionMs) {
+    if (_disposed || !isLocalRenderer || _session?.state != PlaybackState.playing) {
+      return;
+    }
+    _livePositionMs = positionMs;
+    if ((positionMs - _lastNotifiedPositionMs).abs() >= 250) {
+      _lastNotifiedPositionMs = positionMs;
+      notifyListeners();
+    }
+    if ((positionMs - _lastHeartbeatPositionMs).abs() >= 5000) {
+      _lastHeartbeatPositionMs = positionMs;
+      final cb = onProgressHeartbeat;
+      if (cb != null) {
+        unawaited(cb(positionMs));
+      }
+    }
+  }
+
+  Future<void> _onEngineTrackCompleted() async {
+    if (_disposed || !isLocalRenderer) {
+      return;
+    }
+    final current = _session;
+    if (current == null || current.state != PlaybackState.playing) {
+      return;
+    }
+    _loadedTrackId = null;
+    _loadedEngineState = PlaybackState.stopped;
+
+    if (current.repeatMode == HermesRepeatMode.one) {
+      await _dispatchTransport(
+        PlaybackState.playing,
+        currentIndex: current.currentIndex,
+        positionMs: 0,
+      );
       return;
     }
 
+    final hasNext = _upNextSongIds.isNotEmpty ||
+        current.repeatMode == HermesRepeatMode.all ||
+        current.currentIndex + 1 < current.queueSongIds.length;
+    if (hasNext) {
+      await skipNext();
+    } else {
+      await _dispatchTransport(PlaybackState.paused, positionMs: 0);
+    }
+  }
+
+  Future<void> applyServerSession(PlaybackSessionState incoming) async {
+    // Strict monotonic Connect guard: discard stale/reordered packets.
+    if (_disposed || incoming.version <= _lastAppliedVersion) {
+      return;
+    }
+
+    final previousTrackId = _session?.currentSongId;
+    final previousVolume = _session?.volume;
     _lastAppliedVersion = incoming.version;
     _session = incoming;
     if (incoming.volume > 0) {
@@ -214,6 +309,10 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
 
     if (!rendererLocal) {
       // Remote Control mode: silence local output without stealing ActiveRenderer.
+      _loadedTrackId = null;
+      _loadedQuality = null;
+      _loadedEngineState = PlaybackState.stopped;
+      _livePositionMs = incoming.positionMs;
       await audioEngine.stop();
       notifyListeners();
       return;
@@ -223,24 +322,64 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
     final track = trackId == null ? null : _songsById[trackId];
 
     if (incoming.state == PlaybackState.playing && track != null) {
-      final ticket = await _ticketIssuer(track.id);
-      final streamUri = musicService.buildAudioStreamUri(
-        songId: track.id,
-        ticket: ticket,
-        quality: effectiveQuality,
-      );
-      await audioEngine.loadAndPlay(streamUri, track, incoming.positionMs);
+      final controllable = audioEngine is ControllableAudioEngine
+          ? audioEngine as ControllableAudioEngine
+          : null;
+      final quality = effectiveQuality;
+      final sameTrackLoaded = controllable != null &&
+          _loadedTrackId == track.id &&
+          _loadedQuality == quality &&
+          _loadedEngineState != PlaybackState.stopped;
+
+      if (sameTrackLoaded) {
+        if (previousVolume != incoming.volume) {
+          await controllable.setVolume(incoming.volume);
+        }
+        if ((incoming.positionMs - _livePositionMs).abs() > 2500) {
+          _livePositionMs = incoming.positionMs;
+          await audioEngine.seek(incoming.positionMs);
+        }
+        if (_loadedEngineState == PlaybackState.paused) {
+          await controllable.resume();
+        }
+        _loadedEngineState = PlaybackState.playing;
+      } else {
+        final ticket = await _ticketIssuer(track.id);
+        final streamUri = musicService.buildAudioStreamUri(
+          songId: track.id,
+          ticket: ticket,
+          quality: quality,
+        );
+        _loadedTrackId = track.id;
+        _loadedQuality = quality;
+        _loadedEngineState = PlaybackState.playing;
+        _livePositionMs = incoming.positionMs;
+        _lastNotifiedPositionMs = incoming.positionMs;
+        _lastHeartbeatPositionMs = incoming.positionMs;
+        await audioEngine.loadAndPlay(streamUri, track, incoming.positionMs);
+        await controllable?.setVolume(incoming.volume);
+      }
       await mediaBridge.publishState(
         MediaBridgeMetadata(
           title: track.title,
           artist: track.artistName,
           album: track.albumTitle,
           isPlaying: true,
-          positionMs: incoming.positionMs,
+          positionMs: _livePositionMs,
           durationMs: track.durationMs,
         ),
       );
     } else if (incoming.state == PlaybackState.paused && track != null) {
+      if (previousTrackId != track.id ||
+          (incoming.positionMs - _livePositionMs).abs() > 2500) {
+        _livePositionMs = incoming.positionMs;
+      }
+      _loadedEngineState = PlaybackState.paused;
+      if (audioEngine case final ControllableAudioEngine controllable) {
+        if (previousVolume != incoming.volume) {
+          await controllable.setVolume(incoming.volume);
+        }
+      }
       await audioEngine.pause();
       await mediaBridge.publishState(
         MediaBridgeMetadata(
@@ -248,11 +387,15 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
           artist: track.artistName,
           album: track.albumTitle,
           isPlaying: false,
-          positionMs: incoming.positionMs,
+          positionMs: _livePositionMs,
           durationMs: track.durationMs,
         ),
       );
     } else {
+      _loadedTrackId = null;
+      _loadedQuality = null;
+      _loadedEngineState = PlaybackState.stopped;
+      _livePositionMs = 0;
       await audioEngine.stop();
       await mediaBridge.clearState();
     }
@@ -410,6 +553,8 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
     final duration = currentSong?.durationMs ?? positionMs;
     final clamped = positionMs.clamp(0, duration > 0 ? duration : positionMs);
     if (isLocalRenderer) {
+      _livePositionMs = clamped;
+      _lastNotifiedPositionMs = clamped;
       await audioEngine.seek(clamped);
     }
     await _dispatchTransport(current.state, positionMs: clamped);
