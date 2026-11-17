@@ -313,13 +313,16 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
             children: [
               // Frame placeholder / backdrop
               if (widget.backdropUri != null)
-                Opacity(
-                  opacity: 0.72,
-                  child: HermesArtworkImage(
-                    uri: widget.backdropUri,
-                    fallbackTitle: widget.title,
-                    showFallbackLabel: false,
-                    borderRadius: BorderRadius.zero,
+                ExcludeSemantics(
+                  child: Opacity(
+                    alwaysIncludeSemantics: true,
+                    opacity: 0.72,
+                    child: HermesArtworkImage(
+                      uri: widget.backdropUri,
+                      fallbackTitle: widget.title,
+                      showFallbackLabel: false,
+                      borderRadius: BorderRadius.zero,
+                    ),
                   ),
                 ),
               // Center video stream info indicator when controls visible or paused
@@ -362,8 +365,10 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
               ),
               // Top & bottom protective scrim gradient
               IgnorePointer(
-                child: AnimatedOpacity(
-                  opacity: _controlsHidden ? 0.0 : 1.0,
+                child: ExcludeSemantics(
+                  child: AnimatedOpacity(
+                    alwaysIncludeSemantics: true,
+                    opacity: _controlsHidden ? 0.0 : 1.0,
                   duration: widget.reduceMotion
                       ? Duration.zero
                       : const Duration(milliseconds: 280),
@@ -382,6 +387,7 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
                       ),
                     ),
                   ),
+                ),
                 ),
               ),
               // Live HDR-safe Subtitles (#D8D8D8)
@@ -432,6 +438,7 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
                 ),
               // Auto-hiding HUD Chrome
               AnimatedOpacity(
+                alwaysIncludeSemantics: true,
                 opacity: _controlsHidden ? 0.0 : 1.0,
                 duration: widget.reduceMotion
                     ? Duration.zero
@@ -542,7 +549,9 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
                               ),
                               const SizedBox(width: 44),
                               Semantics(
+                                container: true,
                                 button: true,
+                                excludeSemantics: true,
                                 label: _playing ? 'Pause' : 'Play',
                                 child: InkWell(
                                   key: const Key('vp-center-play-btn'),

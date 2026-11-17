@@ -417,18 +417,21 @@ class _MiniPlayerBarState extends State<MiniPlayerBar> {
                                     ),
                                   ),
                                 ),
-                                AnimatedOpacity(
-                                  opacity: (_volumeHover || _volumeDrag != null) ? 1.0 : 0.0,
-                                  duration: const Duration(milliseconds: 140),
-                                  child: SizedBox(
-                                    width: 34,
-                                    child: Text(
-                                      '${(effectiveVolume * 100).round()}%',
-                                      textAlign: TextAlign.right,
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        fontFeatures: const [FontFeature.tabularFigures()],
-                                        color: tokens.text2,
+                                ExcludeSemantics(
+                                  child: AnimatedOpacity(
+                                    alwaysIncludeSemantics: true,
+                                    opacity: (_volumeHover || _volumeDrag != null) ? 1.0 : 0.0,
+                                    duration: const Duration(milliseconds: 140),
+                                    child: SizedBox(
+                                      width: 34,
+                                      child: Text(
+                                        '${(effectiveVolume * 100).round()}%',
+                                        textAlign: TextAlign.right,
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          fontFeatures: const [FontFeature.tabularFigures()],
+                                          color: tokens.text2,
+                                        ),
                                       ),
                                     ),
                                   ),

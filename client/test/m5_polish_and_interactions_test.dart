@@ -690,4 +690,106 @@ void main() {
       expect(find.text('Save password'), findsNothing);
     });
   });
+
+  group('M5 Windows AXTree Semantics Stability', () {
+    testWidgets('preserves consistent Semantics tree under rapid mouse hover, 90-song Music list & Search', (tester) async {
+      final semanticsHandle = tester.ensureSemantics();
+      try {
+        await tester.binding.setSurfaceSize(const Size(1280, 860));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+
+        final tokens = HermesThemeTokens.resolve(themeId: HermesThemeId.crimson);
+        final ninetySongs = List.generate(
+          90,
+          (i) => {
+            'id': 's-$i',
+            'artistId': 'art-1',
+            'artistName': 'Artist One',
+            'albumId': 'alb-1',
+            'albumTitle': 'Album One',
+            'title': 'Track $i',
+            'trackNumber': i + 1,
+            'discNumber': 1,
+            'durationMs': 200000,
+            'codec': 'flac',
+            'bitrateBps': 1411000,
+            'sampleRateHz': 44100,
+            'bitDepth': 16,
+            'isLiked': i % 3 == 0,
+            'isMissing': false,
+          },
+        );
+        final client = MockClient((req) async {
+          return switch (req.url.path) {
+            '/api/v1/music/songs' => _json(ninetySongs),
+            '/api/v1/music/albums' => _json([
+                {
+                  'id': 'alb-1',
+                  'artistId': 'art-1',
+                  'artistName': 'Artist One',
+                  'title': 'Album One',
+                  'year': 2024,
+                  'songCount': 90,
+                },
+              ]),
+            '/api/v1/music/artists' => _json([
+                {'id': 'art-1', 'name': 'Artist One', 'albumCount': 1},
+              ]),
+            '/api/v1/music/playlists' => _json([]),
+            _ => _json([]),
+          };
+        });
+
+        final service = MusicService(
+          baseUri: Uri.parse('http://localhost:5258'),
+          accessToken: 'jwt',
+          httpClient: client,
+        );
+        final coordinator = MusicPlaybackCoordinator(
+          localDeviceId: 'dev-1',
+          musicService: service,
+          audioEngine: _FakeAudioEngine(),
+          mediaBridge: InMemoryPlatformMediaBridge(),
+        );
+        addTearDown(coordinator.dispose);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: tokens.toThemeData(),
+            home: Scaffold(
+              body: MusicWorldScreen(
+                musicService: service,
+                coordinator: coordinator,
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.text('Songs').first);
+        await tester.pumpAndSettle();
+
+        final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+        await gesture.addPointer(location: Offset.zero);
+        addTearDown(gesture.removePointer);
+
+        for (var i = 0; i < 6; i++) {
+          final trackFinder = find.text('Track $i').first;
+          await tester.ensureVisible(trackFinder);
+          await tester.pumpAndSettle();
+          await gesture.moveTo(tester.getCenter(trackFinder));
+          await tester.pump(const Duration(milliseconds: 40));
+        }
+
+        await tester.tap(find.byKey(const Key('music-search-input')));
+        await tester.pump();
+        await tester.enterText(find.byKey(const Key('music-search-input')), 'Track 42');
+        await tester.pumpAndSettle();
+
+        expect(find.text('Track 42'), findsWidgets);
+      } finally {
+        semanticsHandle.dispose();
+      }
+    });
+  });
 }

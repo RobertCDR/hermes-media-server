@@ -278,8 +278,10 @@ class HermesSegmentedControl<T> extends StatelessWidget {
         children: options.map((option) {
           final isSelected = option.value == selected;
           return Semantics(
+            container: true,
             button: true,
             selected: isSelected,
+            excludeSemantics: true,
             label: option.label,
             child: InkWell(
               borderRadius: BorderRadius.circular(4),

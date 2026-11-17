@@ -316,7 +316,9 @@ class _CinemaDetailPageState extends State<CinemaDetailPage> {
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
                               Semantics(
+                                container: true,
                                 button: true,
+                                excludeSemantics: true,
                                 label: 'Back',
                                 child: InkWell(
                                   key: const Key('detail-back-btn'),
@@ -894,17 +896,20 @@ class _EpisodeTileCardState extends State<_EpisodeTileCard> {
                         ),
                       ),
                       if (widget.onPlay != null)
-                        AnimatedOpacity(
-                          opacity: _hovered ? 1.0 : 0.0,
-                          duration: widget.reduceMotion
-                              ? Duration.zero
-                              : const Duration(milliseconds: 160),
-                          child: Container(
-                            color: Colors.black.withValues(alpha: 0.35),
-                            alignment: Alignment.center,
-                            child: const HermesPlayIcon(
-                              size: 32,
-                              color: Colors.white,
+                        ExcludeSemantics(
+                          child: AnimatedOpacity(
+                            alwaysIncludeSemantics: true,
+                            opacity: _hovered ? 1.0 : 0.0,
+                            duration: widget.reduceMotion
+                                ? Duration.zero
+                                : const Duration(milliseconds: 160),
+                            child: Container(
+                              color: Colors.black.withValues(alpha: 0.35),
+                              alignment: Alignment.center,
+                              child: const HermesPlayIcon(
+                                size: 32,
+                                color: Colors.white,
+                              ),
                             ),
                           ),
                         ),

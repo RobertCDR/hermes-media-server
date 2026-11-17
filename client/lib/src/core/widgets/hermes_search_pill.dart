@@ -108,8 +108,10 @@ class _HermesSearchPillState extends State<HermesSearchPill> {
         ? Colors.white.withValues(alpha: 0.5)
         : tokens.text3;
 
-    return Theme(
-      data: Theme.of(context).copyWith(
+    return Semantics(
+      container: true,
+      child: Theme(
+        data: Theme.of(context).copyWith(
         inputDecorationTheme: const InputDecorationTheme(
           filled: false,
           border: InputBorder.none,
@@ -196,6 +198,7 @@ class _HermesSearchPillState extends State<HermesSearchPill> {
           ],
         ),
       ),
+    ),
     );
   }
 }

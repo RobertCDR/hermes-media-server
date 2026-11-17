@@ -146,7 +146,9 @@ class CinemaGlassIconButton extends StatelessWidget {
     return Tooltip(
       message: tooltip,
       child: Semantics(
+        container: true,
         button: true,
+        excludeSemantics: true,
         label: tooltip,
         child: Material(
           color: bgColor,
@@ -345,13 +347,15 @@ class _CinemaPosterCardState extends State<CinemaPosterCard> {
     final showBookmark = widget.inWatchlist || _hovered;
     final posterHeight = widget.width * 1.5;
 
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      child: GestureDetector(
-        onTap: widget.onTap,
-        child: SizedBox(
+    return Semantics(
+      container: true,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: GestureDetector(
+          onTap: widget.onTap,
+          child: SizedBox(
           width: widget.width,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -411,36 +415,42 @@ class _CinemaPosterCardState extends State<CinemaPosterCard> {
                         Positioned(
                           top: 8,
                           right: 8,
-                          child: AnimatedOpacity(
-                            opacity: showBookmark ? 1.0 : 0.0,
-                            duration: widget.reduceMotion
-                                ? Duration.zero
-                                : const Duration(milliseconds: 150),
-                            child: Semantics(
-                              button: true,
-                              label: widget.inWatchlist
-                                  ? 'Remove from Watchlist'
-                                  : 'Add to Watchlist',
-                              child: InkWell(
-                                key: Key('poster-bookmark-${widget.itemKey}'),
-                                customBorder: const CircleBorder(),
-                                onTap: widget.onToggleWatchlist,
-                                child: Container(
-                                  width: 32,
-                                  height: 32,
-                                  alignment: Alignment.center,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: widget.inWatchlist
-                                        ? Colors.white
-                                        : Colors.black.withValues(alpha: 0.62),
-                                  ),
-                                  child: HermesBookmarkIcon(
-                                    size: 15,
-                                    filled: widget.inWatchlist,
-                                    color: widget.inWatchlist
-                                        ? const Color(0xFF0B0B0B)
-                                        : Colors.white,
+                          child: IgnorePointer(
+                            ignoring: !showBookmark,
+                            child: AnimatedOpacity(
+                              alwaysIncludeSemantics: true,
+                              opacity: showBookmark ? 1.0 : 0.0,
+                              duration: widget.reduceMotion
+                                  ? Duration.zero
+                                  : const Duration(milliseconds: 150),
+                              child: Semantics(
+                                container: true,
+                                button: true,
+                                excludeSemantics: true,
+                                label: widget.inWatchlist
+                                    ? 'Remove from Watchlist'
+                                    : 'Add to Watchlist',
+                                child: InkWell(
+                                  key: Key('poster-bookmark-${widget.itemKey}'),
+                                  customBorder: const CircleBorder(),
+                                  onTap: widget.onToggleWatchlist,
+                                  child: Container(
+                                    width: 32,
+                                    height: 32,
+                                    alignment: Alignment.center,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: widget.inWatchlist
+                                          ? Colors.white
+                                          : Colors.black.withValues(alpha: 0.62),
+                                    ),
+                                    child: HermesBookmarkIcon(
+                                      size: 15,
+                                      filled: widget.inWatchlist,
+                                      color: widget.inWatchlist
+                                          ? const Color(0xFF0B0B0B)
+                                          : Colors.white,
+                                    ),
                                   ),
                                 ),
                               ),
@@ -515,6 +525,7 @@ class _CinemaPosterCardState extends State<CinemaPosterCard> {
           ),
         ),
       ),
+    ),
     );
   }
 }
@@ -550,13 +561,15 @@ class _CinemaLandscapeCardState extends State<CinemaLandscapeCard> {
   Widget build(BuildContext context) {
     final tokens = HermesThemeTokens.of(context);
 
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      child: GestureDetector(
-        onTap: widget.onTap,
-        child: SizedBox(
+    return Semantics(
+      container: true,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: GestureDetector(
+          onTap: widget.onTap,
+          child: SizedBox(
           width: 300,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -584,17 +597,20 @@ class _CinemaLandscapeCardState extends State<CinemaLandscapeCard> {
                           showFallbackLabel: false,
                         ),
                       ),
-                      AnimatedOpacity(
-                        opacity: _hovered ? 1.0 : 0.0,
-                        duration: widget.reduceMotion
-                            ? Duration.zero
-                            : const Duration(milliseconds: 180),
-                        child: Container(
-                          color: Colors.black.withValues(alpha: 0.35),
-                          alignment: Alignment.center,
-                          child: const HermesPlayIcon(
-                            size: 34,
-                            color: Colors.white,
+                      ExcludeSemantics(
+                        child: AnimatedOpacity(
+                          alwaysIncludeSemantics: true,
+                          opacity: _hovered ? 1.0 : 0.0,
+                          duration: widget.reduceMotion
+                              ? Duration.zero
+                              : const Duration(milliseconds: 180),
+                          child: Container(
+                            color: Colors.black.withValues(alpha: 0.35),
+                            alignment: Alignment.center,
+                            child: const HermesPlayIcon(
+                              size: 34,
+                              color: Colors.white,
+                            ),
                           ),
                         ),
                       ),
@@ -666,6 +682,7 @@ class _CinemaLandscapeCardState extends State<CinemaLandscapeCard> {
           ),
         ),
       ),
+    ),
     );
   }
 }

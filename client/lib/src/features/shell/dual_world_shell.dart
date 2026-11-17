@@ -316,7 +316,9 @@ class _ObsidianRail extends StatelessWidget {
       child: Column(
         children: [
           Semantics(
+            container: true,
             button: true,
+            excludeSemantics: true,
             label: 'Hermes Home',
             child: InkWell(
               borderRadius: BorderRadius.circular(8),
@@ -363,7 +365,9 @@ class _ObsidianRail extends StatelessWidget {
           ),
           const SizedBox(height: 14),
           Semantics(
+            container: true,
             button: true,
+            excludeSemantics: true,
             label: 'Account and server',
             child: InkWell(
               key: const Key('rail-avatar-button'),

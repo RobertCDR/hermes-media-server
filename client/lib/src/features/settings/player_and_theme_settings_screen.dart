@@ -753,8 +753,10 @@ class _ThemePreviewGrid extends StatelessWidget {
             return SizedBox(
               width: cardWidth,
               child: Semantics(
+                container: true,
                 button: true,
                 selected: isSelected,
+                excludeSemantics: true,
                 label: '${id.label} theme',
                 child: InkWell(
                   key: Key('theme-card-${id.id}'),

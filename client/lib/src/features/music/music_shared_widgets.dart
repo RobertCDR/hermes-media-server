@@ -770,43 +770,47 @@ class _TrackTableRowState extends State<_TrackTableRow> {
     final tokens = HermesThemeTokens.of(context);
     final song = widget.song;
 
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      child: InkWell(
-        onTap: widget.onPlay,
-        onSecondaryTapDown: (details) =>
-            unawaited(_openContextMenu(details.globalPosition)),
-        borderRadius: BorderRadius.circular(4),
-        child: Container(
-          height: 56,
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          decoration: BoxDecoration(
-            color: _hovered
-                ? Colors.white.withValues(alpha: 0.08)
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(4),
-          ),
-          child: Row(
-            children: [
-              SizedBox(
-                width: widget.wide ? 36 : 28,
-                child: Align(
-                  alignment: Alignment.centerRight,
-                  child: _hovered
-                      ? HermesPlayIcon(size: 14, color: tokens.text)
-                      : widget.isPlaying
-                          ? HermesEqBars(color: tokens.accent, height: 13)
-                          : Text(
-                              '${widget.displayIndex}',
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontFeatures: const [FontFeature.tabularFigures()],
-                                color: widget.isCurrent ? tokens.accent : tokens.text2,
-                              ),
-                            ),
+    return Semantics(
+      container: true,
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: InkWell(
+          onTap: widget.onPlay,
+          onSecondaryTapDown: (details) =>
+              unawaited(_openContextMenu(details.globalPosition)),
+          borderRadius: BorderRadius.circular(4),
+          child: Container(
+            height: 56,
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            decoration: BoxDecoration(
+              color: _hovered
+                  ? Colors.white.withValues(alpha: 0.08)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: widget.wide ? 36 : 28,
+                  child: ExcludeSemantics(
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: _hovered
+                          ? HermesPlayIcon(size: 14, color: tokens.text)
+                          : widget.isPlaying
+                              ? HermesEqBars(color: tokens.accent, height: 13)
+                              : Text(
+                                  '${widget.displayIndex}',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontFeatures: const [FontFeature.tabularFigures()],
+                                    color: widget.isCurrent ? tokens.accent : tokens.text2,
+                                  ),
+                                ),
+                    ),
+                  ),
                 ),
-              ),
               const SizedBox(width: 14),
               Expanded(
                 flex: 5,
@@ -868,6 +872,7 @@ class _TrackTableRowState extends State<_TrackTableRow> {
               SizedBox(
                 width: 40,
                 child: Opacity(
+                  alwaysIncludeSemantics: true,
                   opacity: (song.isLiked || _hovered || !widget.wide) ? 1.0 : 0.0,
                   child: IconButton(
                     tooltip: song.isLiked ? 'Remove from Liked Songs' : 'Save to Liked Songs',
@@ -929,6 +934,7 @@ class _TrackTableRowState extends State<_TrackTableRow> {
           ),
         ),
       ),
+    ),
     );
   }
 }
@@ -989,15 +995,17 @@ class _MusicBrowseCardState extends State<MusicBrowseCard> {
   Widget build(BuildContext context) {
     final tokens = HermesThemeTokens.of(context);
 
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      child: InkWell(
-        onTap: widget.onOpen,
-        onSecondaryTapDown: (details) =>
-            unawaited(_openContextMenu(details.globalPosition)),
-        borderRadius: BorderRadius.circular(8),
-        child: AnimatedContainer(
+    return Semantics(
+      container: true,
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: InkWell(
+          onTap: widget.onOpen,
+          onSecondaryTapDown: (details) =>
+              unawaited(_openContextMenu(details.globalPosition)),
+          borderRadius: BorderRadius.circular(8),
+          child: AnimatedContainer(
           duration: const Duration(milliseconds: 140),
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
@@ -1032,19 +1040,25 @@ class _MusicBrowseCardState extends State<MusicBrowseCard> {
                             Positioned(
                               right: 8,
                               bottom: 8,
-                              child: AnimatedOpacity(
-                                opacity: _hovered ? 1.0 : 0.0,
-                                duration: const Duration(milliseconds: 160),
-                                child: AnimatedSlide(
-                                  offset: _hovered
-                                      ? Offset.zero
-                                      : const Offset(0, 0.16),
-                                  duration: const Duration(milliseconds: 160),
-                                  child: HermesCircularPlayButton(
-                                    size: 44,
-                                    iconSize: 18,
-                                    onPressed: widget.onPlay,
-                                    tooltip: 'Play ${widget.title}',
+                              child: IgnorePointer(
+                                ignoring: !_hovered,
+                                child: ExcludeSemantics(
+                                  child: AnimatedOpacity(
+                                    alwaysIncludeSemantics: true,
+                                    opacity: _hovered ? 1.0 : 0.0,
+                                    duration: const Duration(milliseconds: 160),
+                                    child: AnimatedSlide(
+                                      offset: _hovered
+                                          ? Offset.zero
+                                          : const Offset(0, 0.16),
+                                      duration: const Duration(milliseconds: 160),
+                                      child: HermesCircularPlayButton(
+                                        size: 44,
+                                        iconSize: 18,
+                                        onPressed: widget.onPlay,
+                                        tooltip: 'Play ${widget.title}',
+                                      ),
+                                    ),
                                   ),
                                 ),
                               ),
@@ -1079,6 +1093,7 @@ class _MusicBrowseCardState extends State<MusicBrowseCard> {
           ),
         ),
       ),
+    ),
     );
   }
 }

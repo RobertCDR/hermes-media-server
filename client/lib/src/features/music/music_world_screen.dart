@@ -1848,6 +1848,7 @@ class _MusicTopbar extends StatelessWidget {
       child: Row(
         children: [
           Opacity(
+            alwaysIncludeSemantics: true,
             opacity: canGoBack ? 1.0 : 0.45,
             child: InkWell(
               onTap: canGoBack ? onBack : null,
@@ -2007,73 +2008,78 @@ class _HomeShortcutTileState extends State<_HomeShortcutTile> {
     final tokens = HermesThemeTokens.of(context);
     final data = widget.data;
 
-    return MouseRegion(
-      onEnter: (_) {
-        setState(() => _hovered = true);
-        widget.onHoverChanged(true);
-      },
-      onExit: (_) {
-        setState(() => _hovered = false);
-        widget.onHoverChanged(false);
-      },
-      child: InkWell(
-        onTap: data.onOpen,
-        onSecondaryTapDown: (d) => unawaited(
-          openMusicCollectionContextMenu(
-            context,
-            d.globalPosition,
-            openLabel: data.openLabel,
-            onOpen: data.onOpen,
-            onPlay: data.onPlay,
-            onAddToQueue: data.onAddToQueue,
-            extraItems: data.extraMenuItems,
-            onExtraSelected: data.onExtraMenuSelected,
+    return Semantics(
+      container: true,
+      child: MouseRegion(
+        onEnter: (_) {
+          setState(() => _hovered = true);
+          widget.onHoverChanged(true);
+        },
+        onExit: (_) {
+          setState(() => _hovered = false);
+          widget.onHoverChanged(false);
+        },
+        child: InkWell(
+          onTap: data.onOpen,
+          onSecondaryTapDown: (d) => unawaited(
+            openMusicCollectionContextMenu(
+              context,
+              d.globalPosition,
+              openLabel: data.openLabel,
+              onOpen: data.onOpen,
+              onPlay: data.onPlay,
+              onAddToQueue: data.onAddToQueue,
+              extraItems: data.extraMenuItems,
+              onExtraSelected: data.onExtraMenuSelected,
+            ),
           ),
-        ),
-        borderRadius: BorderRadius.circular(4),
-        child: Container(
-          height: 56,
-          clipBehavior: Clip.antiAlias,
-          decoration: BoxDecoration(
-            color: _hovered
-                ? Colors.white.withValues(alpha: 0.16)
-                : Colors.white.withValues(alpha: 0.08),
-            borderRadius: BorderRadius.circular(4),
-          ),
-          child: Row(
-            children: [
-              MusicArtworkTile(
-                size: 56,
-                title: data.title,
-                uri: data.artworkUri,
-                borderRadius: 0,
-                isLikedCollection: data.isLiked,
-                isPlaylist: data.isPlaylist,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  data.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: tokens.text,
+          borderRadius: BorderRadius.circular(4),
+          child: Container(
+            height: 56,
+            clipBehavior: Clip.antiAlias,
+            decoration: BoxDecoration(
+              color: _hovered
+                  ? Colors.white.withValues(alpha: 0.16)
+                  : Colors.white.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Row(
+              children: [
+                MusicArtworkTile(
+                  size: 56,
+                  title: data.title,
+                  uri: data.artworkUri,
+                  borderRadius: 0,
+                  isLikedCollection: data.isLiked,
+                  isPlaylist: data.isPlaylist,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    data.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: tokens.text,
+                    ),
                   ),
                 ),
-              ),
-              if (_hovered)
-                Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: HermesCircularPlayButton(
-                    size: 38,
-                    iconSize: 15,
-                    onPressed: data.onPlay,
-                    tooltip: 'Play ${data.title}',
+                if (_hovered)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: ExcludeSemantics(
+                      child: HermesCircularPlayButton(
+                        size: 38,
+                        iconSize: 15,
+                        onPressed: data.onPlay,
+                        tooltip: 'Play ${data.title}',
+                      ),
+                    ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
