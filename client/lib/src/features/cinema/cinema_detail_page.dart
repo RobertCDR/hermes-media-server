@@ -758,13 +758,13 @@ class _CinemaDetailPageState extends State<CinemaDetailPage> {
           ),
         ),
         const SizedBox(height: 14),
-        SizedBox(
-          height: 274,
+        Padding(
+          padding: EdgeInsets.symmetric(horizontal: horizontalPad),
           child: ListView.separated(
-            padding: EdgeInsets.symmetric(horizontal: horizontalPad),
-            scrollDirection: Axis.horizontal,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
             itemCount: cardCount,
-            separatorBuilder: (_, _) => const SizedBox(width: 14),
+            separatorBuilder: (_, _) => const SizedBox(height: 12),
             itemBuilder: (_, idx) {
               if (idx < activeSeason.episodes.length) {
                 final ep = activeSeason.episodes[idx];
@@ -850,6 +850,178 @@ class _EpisodeTileCard extends StatefulWidget {
 class _EpisodeTileCardState extends State<_EpisodeTileCard> {
   bool _hovered = false;
 
+  Widget _buildThumbnail({
+    required double width,
+    required double height,
+    required WatchProgressModel? wp,
+    required bool done,
+    required bool inProgress,
+  }) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: SizedBox(
+        width: width,
+        height: height,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            ExcludeSemantics(
+              child: AnimatedScale(
+                scale: (_hovered && !widget.reduceMotion) ? 1.04 : 1.0,
+                duration: widget.reduceMotion
+                    ? Duration.zero
+                    : const Duration(milliseconds: 280),
+                curve: Curves.easeOutCubic,
+                child: HermesArtworkImage(
+                  uri: widget.stillUri,
+                  fallbackTitle: widget.episode.title,
+                  width: width,
+                  height: height,
+                  borderRadius: BorderRadius.zero,
+                  showFallbackLabel: false,
+                ),
+              ),
+            ),
+            if (widget.onPlay != null)
+              ExcludeSemantics(
+                child: AnimatedOpacity(
+                  alwaysIncludeSemantics: true,
+                  opacity: _hovered ? 1.0 : 0.0,
+                  duration: widget.reduceMotion
+                      ? Duration.zero
+                      : const Duration(milliseconds: 160),
+                  child: Container(
+                    color: Colors.black.withValues(alpha: 0.35),
+                    alignment: Alignment.center,
+                    child: const HermesPlayIcon(
+                      size: 30,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
+            if (done)
+              Positioned(
+                top: 8,
+                left: 8,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 7,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.72),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: const Text(
+                    'Watched',
+                    style: TextStyle(
+                      fontFamily: 'Figtree',
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
+            if (inProgress && wp != null)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: ExcludeSemantics(
+                  child: LinearProgressIndicator(
+                    value: wp.completionRatio,
+                    minHeight: 4,
+                    color: widget.tokens.accent,
+                    backgroundColor: Colors.white.withValues(alpha: 0.22),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMetaColumn(String durText) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                widget.episode.sources.isEmpty
+                    ? 'Episode ${widget.episode.episodeNumber} · Not indexed'
+                    : 'Episode ${widget.episode.episodeNumber} · $durText',
+                style: TextStyle(
+                  fontFamily: 'Figtree',
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: widget.tokens.text2,
+                ),
+              ),
+            ),
+            if (widget.onPickVersion != null)
+              Semantics(
+                container: true,
+                button: true,
+                excludeSemantics: true,
+                label: 'Select version',
+                child: InkWell(
+                  customBorder: const CircleBorder(),
+                  onTap: widget.onPickVersion,
+                  child: Container(
+                    width: 30,
+                    height: 30,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: widget.tokens.surface3,
+                    ),
+                    child: Icon(
+                      Icons.tune_rounded,
+                      size: 15,
+                      color: widget.tokens.text,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          widget.episode.title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontFamily: 'Figtree',
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+            color: widget.tokens.text,
+          ),
+        ),
+        if (widget.episode.overview != null &&
+            widget.episode.overview!.trim().isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Text(
+            widget.episode.overview!,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontFamily: 'Figtree',
+              fontSize: 13,
+              height: 1.45,
+              color: widget.tokens.text2,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final wp = widget.episode.watchProgress;
@@ -870,170 +1042,53 @@ class _EpisodeTileCardState extends State<_EpisodeTileCard> {
         onExit: (_) => setState(() => _hovered = false),
         child: GestureDetector(
           onTap: widget.onPlay,
-          child: SizedBox(
-            width: 308,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: SizedBox(
-                    width: 308,
-                    height: 173,
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        ExcludeSemantics(
-                          child: AnimatedScale(
-                            scale: (_hovered && !widget.reduceMotion) ? 1.04 : 1.0,
-                            duration: widget.reduceMotion
-                                ? Duration.zero
-                                : const Duration(milliseconds: 280),
-                            curve: Curves.easeOutCubic,
-                            child: HermesArtworkImage(
-                              uri: widget.stillUri,
-                              fallbackTitle: widget.episode.title,
-                              width: 308,
-                              height: 173,
-                              borderRadius: BorderRadius.zero,
-                              showFallbackLabel: false,
-                            ),
-                          ),
-                        ),
-                      if (widget.onPlay != null)
-                        ExcludeSemantics(
-                          child: AnimatedOpacity(
-                            alwaysIncludeSemantics: true,
-                            opacity: _hovered ? 1.0 : 0.0,
-                            duration: widget.reduceMotion
-                                ? Duration.zero
-                                : const Duration(milliseconds: 160),
-                            child: Container(
-                              color: Colors.black.withValues(alpha: 0.35),
-                              alignment: Alignment.center,
-                              child: const HermesPlayIcon(
-                                size: 32,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ),
-                        ),
-                      if (done)
-                        Positioned(
-                          top: 8,
-                          left: 8,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 7,
-                              vertical: 3,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.black.withValues(alpha: 0.72),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: const Text(
-                              'Watched',
-                              style: TextStyle(
-                                fontFamily: 'Figtree',
-                                fontSize: 11,
-                                fontWeight: FontWeight.w800,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ),
-                        ),
-                      if (widget.onPickVersion != null)
-                        Positioned(
-                          top: 8,
-                          right: 8,
-                          child: Semantics(
-                            container: true,
-                            button: true,
-                            excludeSemantics: true,
-                            label: 'Select version',
-                            child: InkWell(
-                              customBorder: const CircleBorder(),
-                              onTap: widget.onPickVersion,
-                              child: Container(
-                                width: 30,
-                                height: 30,
-                                alignment: Alignment.center,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: Colors.black.withValues(alpha: 0.68),
-                                ),
-                                child: const Icon(
-                                  Icons.tune_rounded,
-                                  size: 15,
-                                  color: Colors.white,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      if (inProgress)
-                        Positioned(
-                          left: 0,
-                          right: 0,
-                          bottom: 0,
-                          child: ExcludeSemantics(
-                            child: LinearProgressIndicator(
-                              value: wp.completionRatio,
-                              minHeight: 4,
-                              color: widget.tokens.accent,
-                              backgroundColor:
-                                  Colors.white.withValues(alpha: 0.22),
-                            ),
-                          ),
-                        ),
+          child: Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: _hovered ? widget.tokens.surface2 : widget.tokens.surface,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: widget.tokens.lineSoft),
+            ),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final wide = constraints.maxWidth >= 560;
+                if (wide) {
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      _buildThumbnail(
+                        width: 216,
+                        height: 121.5,
+                        wp: wp,
+                        done: done,
+                        inProgress: inProgress,
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(child: _buildMetaColumn(durText)),
                     ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                widget.episode.sources.isEmpty
-                    ? 'Episode ${widget.episode.episodeNumber} · Not indexed'
-                    : 'Episode ${widget.episode.episodeNumber} · $durText',
-                style: TextStyle(
-                  fontFamily: 'Figtree',
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  color: widget.tokens.text2,
-                ),
-              ),
-              const SizedBox(height: 3),
-              Text(
-                widget.episode.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontFamily: 'Figtree',
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
-                  color: widget.tokens.text,
-                ),
-              ),
-              if (widget.episode.overview != null &&
-                  widget.episode.overview!.trim().isNotEmpty) ...[
-                const SizedBox(height: 4),
-                Text(
-                  widget.episode.overview!,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontFamily: 'Figtree',
-                    fontSize: 13,
-                    height: 1.4,
-                    color: widget.tokens.text2,
-                  ),
-                ),
-              ],
-            ],
+                  );
+                }
+
+                final thumbWidth = constraints.maxWidth;
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildThumbnail(
+                      width: thumbWidth,
+                      height: thumbWidth * 9 / 16,
+                      wp: wp,
+                      done: done,
+                      inProgress: inProgress,
+                    ),
+                    const SizedBox(height: 10),
+                    _buildMetaColumn(durText),
+                  ],
+                );
+              },
+            ),
           ),
         ),
       ),
-    ),
     );
   }
 }
@@ -1055,15 +1110,19 @@ class _MissingEpisodePlaceholderCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Opacity(
       alwaysIncludeSemantics: true,
-      opacity: 0.8,
-      child: SizedBox(
-        width: 308,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+      opacity: 0.85,
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: tokens.surface,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: tokens.lineSoft),
+        ),
+        child: Row(
           children: [
             Container(
-              width: 308,
-              height: 173,
+              width: 56,
+              height: 56,
               decoration: BoxDecoration(
                 color: tokens.surface2,
                 borderRadius: BorderRadius.circular(8),
@@ -1072,44 +1131,51 @@ class _MissingEpisodePlaceholderCard extends StatelessWidget {
               alignment: Alignment.center,
               child: Icon(
                 Icons.layers_outlined,
-                size: 28,
+                size: 24,
                 color: tokens.text3,
               ),
             ),
-            const SizedBox(height: 10),
-            Text(
-              rangeLabel,
-              style: TextStyle(
-                fontFamily: 'Figtree',
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-                color: tokens.text2,
-              ),
-            ),
-            const SizedBox(height: 3),
-            Text(
-              missingCount == 1
-                  ? '1 episode isn\'t on the server'
-                  : '$missingCount episodes aren\'t on the server',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontFamily: 'Figtree',
-                fontSize: 15,
-                fontWeight: FontWeight.w700,
-                color: tokens.text,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Add episodes under $seriesTitle and scan the TV Shows library.',
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontFamily: 'Figtree',
-                fontSize: 13,
-                height: 1.4,
-                color: tokens.text2,
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    rangeLabel,
+                    style: TextStyle(
+                      fontFamily: 'Figtree',
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: tokens.text2,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    missingCount == 1
+                        ? '1 episode isn\'t on the server'
+                        : '$missingCount episodes aren\'t on the server',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontFamily: 'Figtree',
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      color: tokens.text,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Add episodes under $seriesTitle and scan the TV Shows library.',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontFamily: 'Figtree',
+                      fontSize: 13,
+                      height: 1.4,
+                      color: tokens.text2,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
