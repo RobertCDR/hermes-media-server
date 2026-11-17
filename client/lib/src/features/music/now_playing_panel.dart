@@ -562,10 +562,11 @@ class _NowPlayingPanelState extends State<NowPlayingPanel> {
     }
 
     var activeIndex = -1;
+    final positionMs = widget.coordinator.currentPositionMs;
     if (lyrics.isSynced) {
       for (var i = 0; i < lyrics.lines.length; i++) {
         final ts = lyrics.lines[i].timestampMs;
-        if (ts != null && session.positionMs >= ts) {
+        if (ts != null && positionMs >= ts) {
           activeIndex = i;
         }
       }

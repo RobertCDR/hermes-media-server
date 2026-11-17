@@ -26,6 +26,7 @@ class MiniPlayerBar extends StatefulWidget {
     this.onToggleLike,
     this.onToggleNowPlaying,
     this.nowPlayingOpen = false,
+    this.positionMs,
     this.onTapTitle,
     this.onTapArtist,
   });
@@ -46,6 +47,7 @@ class MiniPlayerBar extends StatefulWidget {
   final VoidCallback? onToggleLike;
   final VoidCallback? onToggleNowPlaying;
   final bool nowPlayingOpen;
+  final int? positionMs;
   final VoidCallback? onTapTitle;
   final VoidCallback? onTapArtist;
 
@@ -74,7 +76,9 @@ class _MiniPlayerBarState extends State<MiniPlayerBar> {
         isRemote ? 'Playing on $deviceName' : 'Playing on This Device';
     final isPlaying = s.state == PlaybackState.playing;
     final maxMs = song.durationMs > 0 ? song.durationMs.toDouble() : 1.0;
-    final activeMs = (_scrubDragMs ?? s.positionMs.toDouble()).clamp(0.0, maxMs);
+    final activeMs =
+        (_scrubDragMs ?? (widget.positionMs ?? s.positionMs).toDouble())
+            .clamp(0.0, maxMs);
     final effectiveVolume = (_volumeDrag ?? s.volume).clamp(0.0, 1.0);
 
     return Container(

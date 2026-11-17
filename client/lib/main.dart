@@ -23,6 +23,7 @@ import 'src/features/cinema/cinema_models.dart';
 import 'src/features/cinema/cinema_service.dart';
 import 'src/features/cinema/hermes_video_player.dart';
 import 'src/features/music/device_picker_sheet.dart';
+import 'src/features/music/media_kit_audio_engine.dart';
 import 'src/features/music/mini_player_bar.dart';
 import 'src/features/music/music_models.dart';
 import 'src/features/music/music_playback_coordinator.dart';
@@ -55,12 +56,14 @@ class HermesApp extends StatefulWidget {
     this.preferencesStore,
     this.httpClient,
     this.syncClientFactory,
+    this.audioEngine,
   });
 
   final SessionStore? sessionStore;
   final DevicePreferencesStore? preferencesStore;
   final http.Client? httpClient;
   final HermesSyncClientFactory? syncClientFactory;
+  final AudioEngineAdapter? audioEngine;
 
   @override
   State<HermesApp> createState() => _HermesAppState();
@@ -72,7 +75,8 @@ class _HermesAppState extends State<HermesApp> {
   late final SessionStore _sessionStore;
   late final DevicePreferencesStore _preferencesStore;
   final _mediaBridge = InMemoryPlatformMediaBridge();
-  final _audioEngine = NoOpAudioEngineAdapter();
+  late final AudioEngineAdapter _audioEngine;
+  late final bool _ownsAudioEngine;
   late final EndpointResolver _endpointResolver;
   late final AuthService _authService;
   late final AuthenticatedHttpClient _apiHttpClient;
@@ -124,6 +128,16 @@ class _HermesAppState extends State<HermesApp> {
     super.initState();
     _rawHttpClient = widget.httpClient ?? http.Client();
     _ownsHttpClient = widget.httpClient == null;
+    if (widget.audioEngine != null) {
+      _audioEngine = widget.audioEngine!;
+      _ownsAudioEngine = false;
+    } else if (HermesMediaRuntime.isInitialized) {
+      _audioEngine = MediaKitAudioEngineAdapter();
+      _ownsAudioEngine = true;
+    } else {
+      _audioEngine = NoOpAudioEngineAdapter();
+      _ownsAudioEngine = false;
+    }
     _sessionStore = widget.sessionStore ?? SharedPrefsSessionStore();
     _preferencesStore =
         widget.preferencesStore ?? SharedPrefsDevicePreferencesStore();
@@ -236,6 +250,10 @@ class _HermesAppState extends State<HermesApp> {
     unawaited(_watchProgressController.close());
     _worldNotifier.dispose();
     _musicCoordinator?.dispose();
+    final audioEngine = _audioEngine;
+    if (_ownsAudioEngine && audioEngine is MediaKitAudioEngineAdapter) {
+      unawaited(audioEngine.dispose());
+    }
     if (_ownsHttpClient) {
       _rawHttpClient.close();
     }
@@ -389,9 +407,11 @@ class _HermesAppState extends State<HermesApp> {
       audioEngine: _audioEngine,
       mediaBridge: _mediaBridge,
       transport: connectTransport,
+      onProgressHeartbeat: (posMs) => syncClient.reportProgress(posMs),
     );
 
     coordinator.updateQualityPolicy(_devicePrefs.toAudioQualityPolicy());
+    unawaited(coordinator.setNormalizationEnabled(_accountPrefs.normalizeVolume));
 
     _syncClient = syncClient;
     _syncSessionSub = syncClient.sessionStream.listen((remoteState) {
@@ -440,6 +460,10 @@ class _HermesAppState extends State<HermesApp> {
       setState(() {
         _accountPrefs = prefs;
       });
+      unawaited(
+        _musicCoordinator?.setNormalizationEnabled(prefs.normalizeVolume) ??
+            Future<void>.value(),
+      );
     } catch (_) {
       // Keep defaults when server is offline or preferences endpoint is unavailable.
     }
@@ -449,6 +473,10 @@ class _HermesAppState extends State<HermesApp> {
     setState(() {
       _accountPrefs = next;
     });
+    unawaited(
+      _musicCoordinator?.setNormalizationEnabled(next.normalizeVolume) ??
+          Future<void>.value(),
+    );
     final session = _session;
     final endpoint = _endpoint;
     if (session == null || endpoint == null) return;
@@ -478,6 +506,7 @@ class _HermesAppState extends State<HermesApp> {
   Future<void> _signOut() async {
     await _stopSyncClient();
     await _authService.signOut();
+    unawaited(_audioEngine.stop());
     _musicCoordinator?.dispose();
     if (!mounted) return;
     setState(() {
@@ -723,6 +752,7 @@ class _HermesAppState extends State<HermesApp> {
                         musicCoordinator.currentSong?.artworkHash,
                       ),
                       nowPlayingOpen: musicCoordinator.nowPlayingOpen,
+                      positionMs: musicCoordinator.currentPositionMs,
                       onTogglePlayPause: () =>
                           unawaited(musicCoordinator.togglePlayPause()),
                       onSkipNext: () =>
