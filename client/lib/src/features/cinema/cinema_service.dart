@@ -138,4 +138,48 @@ class CinemaService {
 
     return WatchProgressModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
+
+  Future<bool> setWatchlist({
+    String? movieId,
+    String? tvSeriesId,
+    required bool inWatchlist,
+  }) async {
+    final response = await httpClient.put(
+      baseUri.resolve('/api/v1/cinema/watchlist'),
+      headers: _authHeaders,
+      body: jsonEncode({
+        'movieId': movieId,
+        'tvSeriesId': tvSeriesId,
+        'inWatchlist': inWatchlist,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw CinemaApiException(
+        'Failed to update watchlist',
+        statusCode: response.statusCode,
+      );
+    }
+
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    return decoded['inWatchlist'] as bool? ?? inWatchlist;
+  }
+
+  Future<void> setSeriesWatched({
+    required String seriesId,
+    required bool watched,
+  }) async {
+    final response = await httpClient.put(
+      baseUri.resolve('/api/v1/cinema/series/$seriesId/watched'),
+      headers: _authHeaders,
+      body: jsonEncode({'watched': watched}),
+    );
+
+    if (response.statusCode != 200) {
+      throw CinemaApiException(
+        'Failed to update series watched status',
+        statusCode: response.statusCode,
+      );
+    }
+  }
 }

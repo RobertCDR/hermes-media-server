@@ -1,38 +1,69 @@
+import 'dart:async';
+
 import 'package:material_ui/material_ui.dart';
+
+import '../../core/settings/hermes_preferences.dart';
 import '../../core/theme/hermes_theme_tokens.dart';
 import '../../core/widgets/hermes_artwork_image.dart';
+import '../../core/widgets/hermes_icons.dart';
+import 'cinema_detail_page.dart';
 import 'cinema_models.dart';
 import 'cinema_service.dart';
+import 'cinema_shared_widgets.dart';
 import 'hermes_video_player.dart';
-import 'source_selector_card.dart';
 
 enum _CinemaFilter {
-  all('All'),
+  all('Home'),
   movies('Movies'),
-  series('TV Series');
+  series('TV Shows'),
+  watchlist('Watchlist');
 
   const _CinemaFilter(this.label);
   final String label;
 }
 
-class _ContinueWatchingItem {
-  const _ContinueWatchingItem({
+class _ContinueWatchingEntry {
+  const _ContinueWatchingEntry({
     required this.title,
     required this.subtitle,
     required this.artworkUri,
     required this.progress,
-    required this.sources,
-    this.movieId,
-    this.episodeId,
+    required this.isUpNext,
+    required this.updatedAtUtc,
+    required this.source,
+    this.movie,
+    this.series,
+    this.episodeEntry,
+    this.initialPositionMs = 0,
   });
 
   final String title;
   final String subtitle;
   final Uri? artworkUri;
-  final WatchProgressModel progress;
-  final List<MediaSourceModel> sources;
-  final String? movieId;
-  final String? episodeId;
+  final double progress;
+  final bool isUpNext;
+  final DateTime updatedAtUtc;
+  final MediaSourceModel source;
+  final MovieSummary? movie;
+  final TvSeriesSummary? series;
+  final CinemaEpisodeEntry? episodeEntry;
+  final int initialPositionMs;
+}
+
+class _HeroSelection {
+  const _HeroSelection({this.movie, this.series});
+
+  final MovieSummary? movie;
+  final TvSeriesSummary? series;
+
+  bool get isEmpty => movie == null && series == null;
+  String get title => movie?.title ?? series?.title ?? '';
+  int? get year => movie?.year ?? series?.year;
+  String? get overview => movie?.overview ?? series?.overview;
+  double? get rating => movie?.rating ?? series?.rating;
+  List<String> get genres => movie?.genres ?? series?.genres ?? const [];
+  bool get isInWatchlist =>
+      movie?.isInWatchlist ?? series?.isInWatchlist ?? false;
 }
 
 class CinemaCatalogScreen extends StatefulWidget {
@@ -41,87 +72,575 @@ class CinemaCatalogScreen extends StatefulWidget {
     required this.cinemaService,
     required this.playerConfig,
     required this.defaultQuality,
+    this.accountPreferences = const HermesAccountPreferences(),
+    this.reduceMotion = false,
   });
 
   final CinemaService cinemaService;
   final HermesVideoPlayerConfig playerConfig;
   final VideoQualityPreset defaultQuality;
+  final HermesAccountPreferences accountPreferences;
+  final bool reduceMotion;
 
   @override
   State<CinemaCatalogScreen> createState() => _CinemaCatalogScreenState();
 }
 
 class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
-  late Future<(List<MovieSummary>, List<TvSeriesSummary>)> _catalogFuture;
+  final TextEditingController _searchController = TextEditingController();
+
+  bool _loading = true;
+  Object? _loadError;
+  List<MovieSummary> _movies = const [];
+  List<TvSeriesSummary> _series = const [];
+
   _CinemaFilter _filter = _CinemaFilter.all;
+  String _searchQuery = '';
+  String? _selectedMovieId;
+  String? _selectedSeriesId;
 
   @override
   void initState() {
     super.initState();
-    _catalogFuture = _load();
+    _loadCatalog();
   }
 
-  Future<(List<MovieSummary>, List<TvSeriesSummary>)> _load() async {
-    final results = await Future.wait([
-      widget.cinemaService.listMovies(),
-      widget.cinemaService.listSeries(),
-    ]);
-    return (
-      results[0] as List<MovieSummary>,
-      results[1] as List<TvSeriesSummary>,
-    );
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
-  void _refreshCatalog() {
+  Future<void> _loadCatalog() async {
     setState(() {
-      _catalogFuture = _load();
+      _loading = true;
+      _loadError = null;
     });
+
+    try {
+      final results = await Future.wait([
+        widget.cinemaService.listMovies(),
+        widget.cinemaService.listSeries(),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _movies = results[0] as List<MovieSummary>;
+        _series = results[1] as List<TvSeriesSummary>;
+        _loading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loadError = error;
+        _loading = false;
+      });
+    }
   }
 
-  void _launchPlayer({
-    required String title,
-    required MediaSourceModel source,
-    VideoQualityPreset? quality,
-    String? movieId,
-    String? episodeId,
-  }) {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => HermesVideoPlayerScreen(
-          title: title,
-          source: source,
-          initialQuality: quality ?? widget.defaultQuality,
-          config: widget.playerConfig,
-          cinemaService: widget.cinemaService,
-          movieId: movieId,
-          episodeId: episodeId,
+  Future<void> _toggleMovieWatchlist(MovieSummary movie) async {
+    final targetState = !movie.isInWatchlist;
+    setState(() {
+      _movies = _movies
+          .map((m) =>
+              m.id == movie.id ? m.copyWith(isInWatchlist: targetState) : m)
+          .toList(growable: false);
+    });
+    _showToast(
+      targetState ? 'Added to Watchlist' : 'Removed from Watchlist',
+    );
+    try {
+      await widget.cinemaService.setWatchlist(
+        movieId: movie.id,
+        inWatchlist: targetState,
+      );
+    } catch (_) {
+      // Keep responsive state; next refresh reconciles with backend.
+    }
+  }
+
+  Future<void> _toggleSeriesWatchlist(TvSeriesSummary show) async {
+    final targetState = !show.isInWatchlist;
+    setState(() {
+      _series = _series
+          .map((s) =>
+              s.id == show.id ? s.copyWith(isInWatchlist: targetState) : s)
+          .toList(growable: false);
+    });
+    _showToast(
+      targetState ? 'Added to Watchlist' : 'Removed from Watchlist',
+    );
+    try {
+      await widget.cinemaService.setWatchlist(
+        tvSeriesId: show.id,
+        inWatchlist: targetState,
+      );
+    } catch (_) {
+      // Keep responsive state; next refresh reconciles with backend.
+    }
+  }
+
+  Future<void> _toggleMovieWatched(MovieSummary movie) async {
+    final targetWatched = !movie.isWatched;
+    final durationMs = movie.sources.firstOrNull?.durationMs ?? 0;
+    final updatedProgress = WatchProgressModel(
+      positionMs: targetWatched ? durationMs : 0,
+      durationMs: durationMs,
+      isWatched: targetWatched,
+      updatedAtUtc: DateTime.now().toUtc(),
+    );
+
+    setState(() {
+      _movies = _movies
+          .map((m) => m.id == movie.id
+              ? m.copyWith(watchProgress: updatedProgress)
+              : m)
+          .toList(growable: false);
+    });
+    _showToast(targetWatched ? 'Marked as watched' : 'Marked as unwatched');
+
+    try {
+      await widget.cinemaService.updateWatchProgress(
+        movieId: movie.id,
+        positionMs: targetWatched ? durationMs : 0,
+        durationMs: durationMs,
+        markWatched: targetWatched,
+      );
+    } catch (_) {}
+  }
+
+  Future<void> _toggleSeriesWatched(TvSeriesSummary show) async {
+    final targetWatched = !show.isWatched;
+    final now = DateTime.now().toUtc();
+
+    setState(() {
+      _series = _series.map((s) {
+        if (s.id != show.id) return s;
+        return s.copyWith(
+          seasons: s.seasons.map((sn) {
+            return sn.copyWith(
+              episodes: sn.episodes.map((ep) {
+                final dur = ep.sources.firstOrNull?.durationMs ?? 0;
+                return ep.copyWith(
+                  watchProgress: WatchProgressModel(
+                    positionMs: targetWatched ? dur : 0,
+                    durationMs: dur,
+                    isWatched: targetWatched,
+                    updatedAtUtc: now,
+                  ),
+                );
+              }).toList(growable: false),
+            );
+          }).toList(growable: false),
+        );
+      }).toList(growable: false);
+    });
+    _showToast(targetWatched ? 'Marked as watched' : 'Marked as unwatched');
+
+    try {
+      await widget.cinemaService.setSeriesWatched(
+        seriesId: show.id,
+        watched: targetWatched,
+      );
+    } catch (_) {}
+  }
+
+  void _showToast(String message) {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    messenger
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          duration: const Duration(seconds: 2),
         ),
+      );
+  }
+
+  void _launchPlayback(
+    MediaSourceModel source,
+    VideoQualityPreset quality, {
+    MovieSummary? movie,
+    TvSeriesSummary? series,
+    CinemaEpisodeEntry? episodeEntry,
+    int initialPositionMs = 0,
+    bool replaceRoute = false,
+  }) {
+    final title = movie?.title ?? series?.title ?? 'Playback';
+    final ep = episodeEntry;
+    final subtitleLabel = ep != null
+        ? '${ep.code} · ${ep.episode.title}'
+        : movie?.year?.toString();
+
+    final backdropHash = ep?.episode.stillArtworkHash ??
+        series?.backdropHash ??
+        movie?.backdropHash ??
+        series?.artworkHash ??
+        movie?.artworkHash;
+    final backdropUri = widget.cinemaService.buildArtworkUri(
+      backdropHash,
+      variant: (ep?.episode.stillArtworkHash != null ||
+              series?.backdropHash != null ||
+              movie?.backdropHash != null)
+          ? 'backdrop_1280'
+          : 'poster_800',
+    );
+
+    final nextEntry = (series != null && ep != null)
+        ? series.nextEpisodeAfter(ep.seasonNumber, ep.episode.episodeNumber)
+        : null;
+    final nextSource = nextEntry?.episode.sources.firstOrNull;
+    final nextStillUri = nextEntry == null
+        ? null
+        : widget.cinemaService.buildArtworkUri(
+            nextEntry.episode.stillArtworkHash ??
+                series?.backdropHash ??
+                series?.artworkHash,
+            variant: 'backdrop_1280',
+          );
+
+    final route = MaterialPageRoute<void>(
+      builder: (_) => HermesVideoPlayerScreen(
+        title: title,
+        subtitleLabel: subtitleLabel,
+        source: source,
+        initialQuality: quality,
+        config: widget.playerConfig,
+        cinemaService: widget.cinemaService,
+        movieId: movie?.id,
+        episodeId: ep?.episode.id,
+        backdropUri: backdropUri,
+        titleTint: deriveTitleTint(title),
+        initialPositionMs: initialPositionMs,
+        accountPreferences: widget.accountPreferences,
+        reduceMotion: widget.reduceMotion,
+        nextEpisodeCode: nextEntry?.code,
+        nextEpisodeTitle: nextEntry?.episode.title,
+        nextEpisodeStillUri: nextStillUri,
+        onPlayNextEpisode: (nextEntry != null && nextSource != null)
+            ? () => _launchPlayback(
+                  nextSource,
+                  quality,
+                  series: series,
+                  episodeEntry: nextEntry,
+                  initialPositionMs: 0,
+                  replaceRoute: true,
+                )
+            : null,
       ),
     );
+
+    final nav = Navigator.of(context);
+    if (replaceRoute) {
+      nav.pushReplacement(route).then((_) {
+        if (mounted) _loadCatalog();
+      });
+    } else {
+      nav.push(route).then((_) {
+        if (mounted) _loadCatalog();
+      });
+    }
   }
 
-  void _openSourceSheet({
-    required String title,
-    required List<MediaSourceModel> sources,
-    String? movieId,
-    String? episodeId,
-  }) {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (ctx) => Padding(
-        padding: const EdgeInsets.all(20),
-        child: SourceSelectorCard(
-          sources: sources,
-          initialQuality: widget.defaultQuality,
-          onPlaySource: (source, quality) {
-            Navigator.of(ctx).pop();
-            _launchPlayer(
-              title: title,
-              source: source,
-              quality: quality,
-              movieId: movieId,
-              episodeId: episodeId,
+  List<_ContinueWatchingEntry> _buildContinueWatching(
+    List<MovieSummary> movies,
+    List<TvSeriesSummary> series,
+  ) {
+    final list = <_ContinueWatchingEntry>[];
+
+    for (final m in movies) {
+      final wp = m.watchProgress;
+      if (wp != null &&
+          !wp.isWatched &&
+          wp.positionMs > 0 &&
+          m.sources.isNotEmpty) {
+        list.add(
+          _ContinueWatchingEntry(
+            title: m.title,
+            subtitle: '${formatCinemaMinutes(m.resumePoint.remainingMinutes)} left',
+            artworkUri: widget.cinemaService.buildArtworkUri(
+              m.backdropHash ?? m.artworkHash,
+              variant: m.backdropHash != null ? 'backdrop_1280' : 'poster_800',
+            ),
+            progress: wp.completionRatio,
+            isUpNext: false,
+            updatedAtUtc: wp.updatedAtUtc,
+            source: m.sources.first,
+            movie: m,
+            initialPositionMs: wp.positionMs,
+          ),
+        );
+      }
+    }
+
+    for (final s in series) {
+      if (s.isWatched) continue;
+      final r = s.resumePoint;
+      if (r == null ||
+          (r.mode != CinemaResumeMode.resume &&
+              r.mode != CinemaResumeMode.next)) {
+        continue;
+      }
+      final entry = r.episodeEntry;
+      final source = entry?.episode.sources.firstOrNull;
+      if (entry == null || source == null) continue;
+
+      final isNext = r.mode == CinemaResumeMode.next;
+      final sub = isNext
+          ? 'Next · ${entry.code} ${entry.episode.title}'
+          : '${entry.code} · ${formatCinemaMinutes(r.remainingMinutes)} left';
+
+      DateTime sortTimestamp = DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+      for (final e in s.allEpisodes) {
+        final ts = e.episode.watchProgress?.updatedAtUtc;
+        if (ts != null && ts.isAfter(sortTimestamp)) {
+          sortTimestamp = ts;
+        }
+      }
+
+      list.add(
+        _ContinueWatchingEntry(
+          title: s.title,
+          subtitle: sub,
+          artworkUri: widget.cinemaService.buildArtworkUri(
+            entry.episode.stillArtworkHash ?? s.backdropHash ?? s.artworkHash,
+            variant: (entry.episode.stillArtworkHash != null ||
+                    s.backdropHash != null)
+                ? 'backdrop_1280'
+                : 'poster_800',
+          ),
+          progress: r.progress,
+          isUpNext: isNext,
+          updatedAtUtc: sortTimestamp,
+          source: source,
+          series: s,
+          episodeEntry: entry,
+          initialPositionMs: entry.episode.watchProgress?.positionMs ?? 0,
+        ),
+      );
+    }
+
+    list.sort((a, b) => b.updatedAtUtc.compareTo(a.updatedAtUtc));
+    return list;
+  }
+
+  _HeroSelection _selectHero(
+    List<MovieSummary> filteredMovies,
+    List<TvSeriesSummary> filteredSeries,
+    List<_ContinueWatchingEntry> continueWatching,
+  ) {
+    final firstResume = continueWatching.firstOrNull;
+    if (firstResume != null) {
+      if (firstResume.movie != null &&
+          filteredMovies.any((m) => m.id == firstResume.movie!.id)) {
+        return _HeroSelection(movie: firstResume.movie);
+      }
+      if (firstResume.series != null &&
+          filteredSeries.any((s) => s.id == firstResume.series!.id)) {
+        return _HeroSelection(series: firstResume.series);
+      }
+    }
+
+    if (filteredMovies.isNotEmpty) {
+      return _HeroSelection(movie: filteredMovies.first);
+    }
+    if (filteredSeries.isNotEmpty) {
+      return _HeroSelection(series: filteredSeries.first);
+    }
+    return const _HeroSelection();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = HermesThemeTokens.of(context);
+
+    // Inline Nuvio Dedicated Detail Page
+    if (_selectedMovieId != null) {
+      final movie =
+          _movies.where((m) => m.id == _selectedMovieId).firstOrNull;
+      if (movie != null) {
+        return CinemaDetailPage(
+          movie: movie,
+          cinemaService: widget.cinemaService,
+          defaultQuality: widget.defaultQuality,
+          accountPreferences: widget.accountPreferences,
+          reduceMotion: widget.reduceMotion,
+          allMovies: _movies,
+          allSeries: _series,
+          onBack: () => setState(() => _selectedMovieId = null),
+          onPlay: _launchPlayback,
+          onToggleWatchlist: () => _toggleMovieWatchlist(movie),
+          onToggleWatched: () => _toggleMovieWatched(movie),
+          onOpenRelatedMovie: (rel) => setState(() {
+            _selectedMovieId = rel.id;
+            _selectedSeriesId = null;
+          }),
+          onOpenRelatedSeries: (rel) => setState(() {
+            _selectedSeriesId = rel.id;
+            _selectedMovieId = null;
+          }),
+        );
+      }
+    }
+
+    if (_selectedSeriesId != null) {
+      final show =
+          _series.where((s) => s.id == _selectedSeriesId).firstOrNull;
+      if (show != null) {
+        return CinemaDetailPage(
+          series: show,
+          cinemaService: widget.cinemaService,
+          defaultQuality: widget.defaultQuality,
+          accountPreferences: widget.accountPreferences,
+          reduceMotion: widget.reduceMotion,
+          allMovies: _movies,
+          allSeries: _series,
+          onBack: () => setState(() => _selectedSeriesId = null),
+          onPlay: _launchPlayback,
+          onToggleWatchlist: () => _toggleSeriesWatchlist(show),
+          onToggleWatched: () => _toggleSeriesWatched(show),
+          onOpenRelatedMovie: (rel) => setState(() {
+            _selectedMovieId = rel.id;
+            _selectedSeriesId = null;
+          }),
+          onOpenRelatedSeries: (rel) => setState(() {
+            _selectedSeriesId = rel.id;
+            _selectedMovieId = null;
+          }),
+        );
+      }
+    }
+
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_loadError != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Failed to load Cinema catalog: $_loadError',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: tokens.text2),
+              ),
+              const SizedBox(height: 14),
+              FilledButton(
+                onPressed: _loadCatalog,
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (_movies.isEmpty && _series.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.movie_filter_outlined, size: 52, color: tokens.text3),
+              const SizedBox(height: 12),
+              Text(
+                'No movies or series scanned yet. Open Server to scan a library.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: tokens.text2),
+              ),
+              const SizedBox(height: 14),
+              OutlinedButton.icon(
+                onPressed: _loadCatalog,
+                icon: const Icon(Icons.refresh_rounded, size: 18),
+                label: const Text('Refresh catalog'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final query = _searchQuery.trim().toLowerCase();
+    final isWatchlistTab = _filter == _CinemaFilter.watchlist;
+    final showHero = query.isEmpty && !isWatchlistTab;
+
+    final poolMovies = _filter == _CinemaFilter.series
+        ? const <MovieSummary>[]
+        : _movies;
+    final poolSeries = _filter == _CinemaFilter.movies
+        ? const <TvSeriesSummary>[]
+        : _series;
+
+    final continueWatching = _buildContinueWatching(poolMovies, poolSeries);
+    final hero = _selectHero(poolMovies, poolSeries, continueWatching);
+
+    final heroTokens = (!hero.isEmpty)
+        ? tokens.withTitleTint(
+            deriveTitleTint(hero.title),
+            overrideAccent: widget.accountPreferences.matchTitleColors,
+          )
+        : tokens;
+
+    return Theme(
+      data: heroTokens.toThemeData(),
+      child: Material(
+        color: heroTokens.bg,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final isDesktop = constraints.maxWidth >= 760;
+            final horizontalPad = isDesktop ? 48.0 : 20.0;
+
+            return ListView(
+              padding: const EdgeInsets.only(bottom: 56),
+              children: [
+                if (showHero && !hero.isEmpty)
+                  _buildImmersiveHero(
+                    context,
+                    heroTokens,
+                    hero,
+                    isDesktop,
+                    horizontalPad,
+                  )
+                else
+                  Padding(
+                    padding: EdgeInsets.fromLTRB(
+                      horizontalPad,
+                      22,
+                      horizontalPad,
+                      20,
+                    ),
+                    child: _buildTopbar(heroTokens, isDesktop, darkGlass: false),
+                  ),
+                if (isWatchlistTab)
+                  _buildWatchlistView(
+                    context,
+                    heroTokens,
+                    query,
+                    horizontalPad,
+                  )
+                else if (query.isNotEmpty)
+                  _buildSearchResults(
+                    context,
+                    heroTokens,
+                    poolMovies,
+                    poolSeries,
+                    query,
+                    horizontalPad,
+                  )
+                else
+                  _buildHomeRows(
+                    context,
+                    heroTokens,
+                    poolMovies,
+                    poolSeries,
+                    continueWatching,
+                    horizontalPad,
+                  ),
+              ],
             );
           },
         ),
@@ -129,636 +648,349 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
     );
   }
 
-  String _qualityBadgeFor(List<MediaSourceModel> sources) {
-    if (sources.isEmpty) {
-      return 'Offline';
-    }
-    final best = sources.reduce((a, b) => a.height >= b.height ? a : b);
-    if (best.height >= 2160) {
-      return best.isHdr ? '4K HDR' : '4K';
-    }
-    if (best.height >= 1080) {
-      return '1080p';
-    }
-    if (best.height > 0) {
-      return '${best.height}p';
-    }
-    return best.videoCodec.toUpperCase();
-  }
-
-  List<_ContinueWatchingItem> _buildContinueWatching(
-    List<MovieSummary> movies,
-    List<TvSeriesSummary> series,
-  ) {
-    final items = <_ContinueWatchingItem>[];
-
-    for (final movie in movies) {
-      final wp = movie.watchProgress;
-      if (wp != null && !wp.isWatched && wp.positionMs > 0 && movie.sources.isNotEmpty) {
-        items.add(
-          _ContinueWatchingItem(
-            title: movie.title,
-            subtitle: movie.year == null ? 'Movie' : '${movie.year} • Movie',
-            artworkUri: widget.cinemaService.buildArtworkUri(
-              movie.backdropHash ?? movie.artworkHash,
-              variant: movie.backdropHash != null ? 'backdrop_1280' : 'poster_800',
-            ),
-            progress: wp,
-            sources: movie.sources,
-            movieId: movie.id,
-          ),
-        );
-      }
-    }
-
-    for (final show in series) {
-      for (final season in show.seasons) {
-        for (final ep in season.episodes) {
-          final wp = ep.watchProgress;
-          if (wp != null && !wp.isWatched && wp.positionMs > 0 && ep.sources.isNotEmpty) {
-            items.add(
-              _ContinueWatchingItem(
-                title: show.title,
-                subtitle: 'S${season.seasonNumber}E${ep.episodeNumber} • ${ep.title}',
-                artworkUri: widget.cinemaService.buildArtworkUri(
-                  ep.stillArtworkHash ?? show.backdropHash ?? show.artworkHash,
-                  variant: show.backdropHash != null ? 'backdrop_1280' : 'poster_800',
+  Widget _buildTopbar(
+    HermesThemeTokens tokens,
+    bool isDesktop, {
+    required bool darkGlass,
+  }) {
+    final tabs = SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: _CinemaFilter.values.map((tab) {
+          final active = _filter == tab;
+          return Padding(
+            padding: const EdgeInsets.only(right: 24),
+            child: InkWell(
+              key: Key('cinema-tab-${tab.name}'),
+              borderRadius: BorderRadius.circular(4),
+              onTap: () => setState(() => _filter = tab),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: Text(
+                  tab.label,
+                  style: TextStyle(
+                    fontFamily: 'Figtree',
+                    fontSize: 15,
+                    fontWeight: active ? FontWeight.w800 : FontWeight.w600,
+                    color: active
+                        ? Colors.white
+                        : Colors.white.withValues(alpha: 0.62),
+                  ),
                 ),
-                progress: wp,
-                sources: ep.sources,
-                episodeId: ep.id,
               ),
-            );
-          }
-        }
-      }
-    }
-
-    items.sort((a, b) => b.progress.updatedAtUtc.compareTo(a.progress.updatedAtUtc));
-    return items;
-  }
-
-  void _openMovieDetail(MovieSummary movie) {
-    final tokens = HermesThemeTokens.of(context);
-    final badge = _qualityBadgeFor(movie.sources);
-    final posterUri = widget.cinemaService.buildArtworkUri(movie.artworkHash, variant: 'poster_800');
-    final backdropUri = widget.cinemaService.buildArtworkUri(
-      movie.backdropHash ?? movie.artworkHash,
-      variant: movie.backdropHash != null ? 'backdrop_1280' : 'poster_800',
+            ),
+          );
+        }).toList(growable: false),
+      ),
     );
 
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: tokens.bgElevated,
+    final searchBox = ConstrainedBox(
       constraints: BoxConstraints(
-        maxWidth: 780,
-        maxHeight: MediaQuery.sizeOf(context).height * 0.88,
+        maxWidth: isDesktop ? 320 : double.infinity,
       ),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
-      ),
-      builder: (ctx) => SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+      child: Container(
+        height: 40,
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        decoration: BoxDecoration(
+          color: darkGlass ? Colors.black.withValues(alpha: 0.42) : tokens.surface2,
+          borderRadius: BorderRadius.circular(99),
+          border: Border.all(
+            color: _searchQuery.isNotEmpty
+                ? Colors.white
+                : Colors.white.withValues(alpha: 0.14),
+            width: _searchQuery.isNotEmpty ? 1.5 : 1,
+          ),
+        ),
+        child: Row(
           children: [
-            Stack(
-              children: [
-                HermesArtworkImage(
-                  uri: backdropUri,
-                  fallbackTitle: movie.title,
-                  fallbackIcon: Icons.movie_outlined,
-                  width: double.infinity,
-                  height: 240,
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
-                  showFallbackLabel: false,
-                ),
-                Positioned.fill(
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          Colors.black.withValues(alpha: 0.12),
-                          tokens.bgElevated,
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                Positioned(
-                  right: 12,
-                  top: 12,
-                  child: IconButton.filledTonal(
-                    onPressed: () => Navigator.of(ctx).pop(),
-                    icon: const Icon(Icons.close),
-                  ),
-                ),
-                Positioned(
-                  left: 24,
-                  right: 24,
-                  bottom: 16,
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      HermesArtworkImage(
-                        uri: posterUri,
-                        fallbackTitle: movie.title,
-                        fallbackIcon: Icons.movie_outlined,
-                        width: 96,
-                        height: 142,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      const SizedBox(width: 18),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              movie.title,
-                              style: Theme.of(ctx).textTheme.headlineSmall?.copyWith(
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                            ),
-                            const SizedBox(height: 6),
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 6,
-                              children: [
-                                if (movie.year != null) _MetaPill(label: '${movie.year}'),
-                                _MetaPill(label: badge, accent: true),
-                                if (movie.sources.isNotEmpty)
-                                  _MetaPill(
-                                    label: formatDurationMs(movie.sources.first.durationMs),
-                                  ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+            Icon(
+              Icons.search_rounded,
+              size: 16,
+              color: Colors.white.withValues(alpha: 0.68),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 16, 24, 28),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      FilledButton.icon(
-                        onPressed: movie.sources.isEmpty
-                            ? null
-                            : () {
-                                Navigator.of(ctx).pop();
-                                _launchPlayer(
-                                  title: movie.title,
-                                  source: movie.sources.first,
-                                  movieId: movie.id,
-                                );
-                              },
-                        icon: const Icon(Icons.play_arrow_rounded),
-                        label: Text(
-                          movie.watchProgress != null && !movie.watchProgress!.isWatched
-                              ? 'Resume Movie'
-                              : 'Play Movie',
-                        ),
-                      ),
-                      if (movie.sources.isNotEmpty) ...[
-                        const SizedBox(width: 12),
-                        OutlinedButton.icon(
-                          onPressed: () {
-                            Navigator.of(ctx).pop();
-                            _openSourceSheet(
-                              title: movie.title,
-                              sources: movie.sources,
-                              movieId: movie.id,
-                            );
-                          },
-                          icon: const Icon(Icons.tune),
-                          label: Text(
-                            movie.sources.length == 1
-                                ? 'Version & Quality'
-                                : 'Versions (${movie.sources.length})',
-                          ),
-                        ),
-                      ],
-                    ],
+            const SizedBox(width: 10),
+            Expanded(
+              child: TextField(
+                key: const Key('cinema-search-input'),
+                controller: _searchController,
+                onChanged: (value) => setState(() => _searchQuery = value),
+                style: const TextStyle(
+                  fontFamily: 'Figtree',
+                  fontSize: 14,
+                  color: Colors.white,
+                ),
+                decoration: InputDecoration(
+                  isCollapsed: true,
+                  filled: false,
+                  contentPadding: EdgeInsets.zero,
+                  hintText: 'Search titles, genres, cast...',
+                  hintStyle: TextStyle(
+                    fontFamily: 'Figtree',
+                    fontSize: 14,
+                    color: Colors.white.withValues(alpha: 0.5),
                   ),
-                  if (movie.overview != null && movie.overview!.trim().isNotEmpty) ...[
-                    const SizedBox(height: 18),
-                    Text(
-                      movie.overview!,
-                      style: TextStyle(
-                        color: tokens.textSecondary,
-                        height: 1.5,
-                        fontSize: 14,
-                      ),
-                    ),
-                  ],
-                  if (movie.sources.isNotEmpty) ...[
-                    const SizedBox(height: 20),
-                    Text(
-                      'Available Streams',
-                      style: Theme.of(ctx).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
-                    ),
-                    const SizedBox(height: 8),
-                    ...movie.sources.map(
-                      (src) => Card(
-                        color: tokens.bgPrimary,
-                        margin: const EdgeInsets.only(bottom: 8),
-                        child: ListTile(
-                          leading: Icon(Icons.high_quality_outlined, color: tokens.accentPrimary),
-                          title: Text(src.sourceLabel),
-                          subtitle: Text(
-                            '${src.videoCodec.toUpperCase()} • ${src.audioCodec.toUpperCase()} • ${src.audioStreams.length} audio, ${src.subtitleStreams.length} subtitles',
-                          ),
-                          trailing: FilledButton.tonal(
-                            onPressed: () {
-                              Navigator.of(ctx).pop();
-                              _launchPlayer(
-                                title: movie.title,
-                                source: src,
-                                movieId: movie.id,
-                              );
-                            },
-                            child: const Text('Play'),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                ),
               ),
             ),
+            if (_searchQuery.isNotEmpty)
+              InkWell(
+                key: const Key('cinema-search-clear'),
+                onTap: () {
+                  _searchController.clear();
+                  setState(() => _searchQuery = '');
+                },
+                child: Icon(
+                  Icons.close_rounded,
+                  size: 16,
+                  color: Colors.white.withValues(alpha: 0.72),
+                ),
+              ),
           ],
         ),
       ),
     );
-  }
 
-  void _openSeriesDetail(TvSeriesSummary show) {
-    final tokens = HermesThemeTokens.of(context);
-    var selectedSeasonIndex = 0;
-    final backdropUri = widget.cinemaService.buildArtworkUri(
-      show.backdropHash ?? show.artworkHash,
-      variant: show.backdropHash != null ? 'backdrop_1280' : 'poster_800',
-    );
-    final posterUri = widget.cinemaService.buildArtworkUri(show.artworkHash, variant: 'poster_800');
-
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: tokens.bgElevated,
-      constraints: BoxConstraints(
-        maxWidth: 820,
-        maxHeight: MediaQuery.sizeOf(context).height * 0.9,
-      ),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
-      ),
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setModalState) {
-          final activeSeason = show.seasons.isEmpty
-              ? null
-              : show.seasons[selectedSeasonIndex.clamp(0, show.seasons.length - 1)];
-
-          return SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Stack(
-                  children: [
-                    HermesArtworkImage(
-                      uri: backdropUri,
-                      fallbackTitle: show.title,
-                      fallbackIcon: Icons.tv_outlined,
-                      width: double.infinity,
-                      height: 220,
-                      borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
-                      showFallbackLabel: false,
-                    ),
-                    Positioned.fill(
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
-                          gradient: LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            colors: [
-                              Colors.black.withValues(alpha: 0.14),
-                              tokens.bgElevated,
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                    Positioned(
-                      right: 12,
-                      top: 12,
-                      child: IconButton.filledTonal(
-                        onPressed: () => Navigator.of(ctx).pop(),
-                        icon: const Icon(Icons.close),
-                      ),
-                    ),
-                    Positioned(
-                      left: 24,
-                      right: 24,
-                      bottom: 14,
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          HermesArtworkImage(
-                            uri: posterUri,
-                            fallbackTitle: show.title,
-                            fallbackIcon: Icons.tv_outlined,
-                            width: 88,
-                            height: 132,
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          const SizedBox(width: 16),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  show.title,
-                                  style: Theme.of(ctx).textTheme.headlineSmall?.copyWith(
-                                        fontWeight: FontWeight.w800,
-                                      ),
-                                ),
-                                const SizedBox(height: 6),
-                                Wrap(
-                                  spacing: 8,
-                                  runSpacing: 6,
-                                  children: [
-                                    if (show.year != null) _MetaPill(label: '${show.year}'),
-                                    _MetaPill(
-                                      label: '${show.seasons.length} Season(s)',
-                                      accent: true,
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 14, 24, 28),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (show.overview != null && show.overview!.trim().isNotEmpty) ...[
-                        Text(
-                          show.overview!,
-                          style: TextStyle(color: tokens.textSecondary, height: 1.5, fontSize: 14),
-                        ),
-                        const SizedBox(height: 16),
-                      ],
-                      if (show.seasons.isNotEmpty) ...[
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: show.seasons.asMap().entries.map((entry) {
-                            final idx = entry.key;
-                            final season = entry.value;
-                            return ChoiceChip(
-                              label: Text('Season ${season.seasonNumber}'),
-                              selected: selectedSeasonIndex == idx,
-                              onSelected: (_) => setModalState(() => selectedSeasonIndex = idx),
-                            );
-                          }).toList(),
-                        ),
-                        const SizedBox(height: 14),
-                      ],
-                      if (activeSeason != null)
-                        ...activeSeason.episodes.map((ep) {
-                          final firstSource = ep.sources.firstOrNull;
-                          final wp = ep.watchProgress;
-                          return Card(
-                            color: tokens.bgPrimary,
-                            margin: const EdgeInsets.only(bottom: 8),
-                            child: ListTile(
-                              contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                              leading: CircleAvatar(
-                                backgroundColor: tokens.accentPrimary.withValues(alpha: 0.16),
-                                child: Text(
-                                  'E${ep.episodeNumber}',
-                                  style: TextStyle(
-                                    color: tokens.accentPrimary,
-                                    fontWeight: FontWeight.w700,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ),
-                              title: Text(
-                                ep.title,
-                                style: const TextStyle(fontWeight: FontWeight.w600),
-                              ),
-                              subtitle: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    firstSource == null
-                                        ? 'No streams indexed'
-                                        : '${firstSource.sourceLabel} • ${formatDurationMs(firstSource.durationMs)}',
-                                    style: TextStyle(color: tokens.textSecondary, fontSize: 12),
-                                  ),
-                                  if (wp != null && wp.positionMs > 0) ...[
-                                    const SizedBox(height: 6),
-                                    LinearProgressIndicator(value: wp.completionRatio),
-                                  ],
-                                ],
-                              ),
-                              trailing: Wrap(
-                                spacing: 6,
-                                children: [
-                                  if (ep.sources.isNotEmpty)
-                                    IconButton(
-                                      tooltip: 'Version & Quality',
-                                      icon: const Icon(Icons.tune),
-                                      onPressed: () {
-                                        Navigator.of(ctx).pop();
-                                        _openSourceSheet(
-                                          title:
-                                              '${show.title} • S${activeSeason.seasonNumber}E${ep.episodeNumber}',
-                                          sources: ep.sources,
-                                          episodeId: ep.id,
-                                        );
-                                      },
-                                    ),
-                                  FilledButton.tonalIcon(
-                                    onPressed: firstSource == null
-                                        ? null
-                                        : () {
-                                            Navigator.of(ctx).pop();
-                                            _launchPlayer(
-                                              title:
-                                                  '${show.title} • S${activeSeason.seasonNumber}E${ep.episodeNumber}',
-                                              source: firstSource,
-                                              episodeId: ep.id,
-                                            );
-                                          },
-                                    icon: const Icon(Icons.play_arrow_rounded),
-                                    label: const Text('Play'),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        }),
-                    ],
-                  ),
-                ),
-              ],
+    if (isDesktop) {
+      return Row(
+        children: [
+          Expanded(child: tabs),
+          const SizedBox(width: 16),
+          searchBox,
+          const SizedBox(width: 8),
+          IconButton(
+            tooltip: 'Refresh catalog',
+            onPressed: _loadCatalog,
+            icon: Icon(
+              Icons.refresh_rounded,
+              size: 20,
+              color: Colors.white.withValues(alpha: 0.72),
             ),
-          );
-        },
-      ),
+          ),
+        ],
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Expanded(child: tabs),
+            IconButton(
+              tooltip: 'Refresh catalog',
+              onPressed: _loadCatalog,
+              icon: Icon(
+                Icons.refresh_rounded,
+                size: 20,
+                color: Colors.white.withValues(alpha: 0.72),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        searchBox,
+      ],
     );
   }
 
-  Widget _buildHeroBanner(
+  Widget _buildImmersiveHero(
     BuildContext context,
     HermesThemeTokens tokens,
-    MovieSummary? heroMovie,
-    TvSeriesSummary? heroSeries,
+    _HeroSelection hero,
+    bool isDesktop,
+    double horizontalPad,
   ) {
-    final title = heroMovie?.title ?? heroSeries?.title ?? '';
-    final year = heroMovie?.year ?? heroSeries?.year;
-    final overview = heroMovie?.overview ?? heroSeries?.overview;
-    final artworkHash = heroMovie != null
-        ? (heroMovie.backdropHash ?? heroMovie.artworkHash)
-        : (heroSeries?.backdropHash ?? heroSeries?.artworkHash);
-    final isBackdrop = heroMovie != null
-        ? heroMovie.backdropHash != null
-        : heroSeries?.backdropHash != null;
+    final movie = hero.movie;
+    final show = hero.series;
+    final resume = movie != null ? movie.resumePoint : show!.resumePoint;
+
+    final backdropHash = movie != null
+        ? (movie.backdropHash ?? movie.artworkHash)
+        : (show?.backdropHash ?? show?.artworkHash);
+    final isBackdrop = movie != null
+        ? movie.backdropHash != null
+        : show?.backdropHash != null;
     final heroUri = widget.cinemaService.buildArtworkUri(
-      artworkHash,
+      backdropHash,
       variant: isBackdrop ? 'backdrop_1280' : 'poster_800',
     );
-    final badge = heroMovie != null
-        ? _qualityBadgeFor(heroMovie.sources)
-        : '${heroSeries?.seasons.length ?? 0} Season(s)';
 
-    final firstSource = heroMovie != null
-        ? heroMovie.sources.firstOrNull
-        : heroSeries?.seasons.firstOrNull?.episodes.firstOrNull?.sources.firstOrNull;
-    final firstEpisode = heroSeries?.seasons.firstOrNull?.episodes.firstOrNull;
+    final primarySource = movie != null
+        ? movie.sources.firstOrNull
+        : resume?.episodeEntry?.episode.sources.firstOrNull ??
+            show?.seasons.firstOrNull?.episodes.firstOrNull?.sources.firstOrNull;
+    final playInitialPos = movie != null
+        ? (movie.isWatched ? 0 : (movie.watchProgress?.positionMs ?? 0))
+        : (resume?.episodeEntry?.episode.watchProgress?.isWatched == true
+            ? 0
+            : (resume?.episodeEntry?.episode.watchProgress?.positionMs ?? 0));
 
-    return Container(
-      height: 300,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0x1FFFFFFF)),
-      ),
+    final lengthLabel = movie != null
+        ? (movie.durationMinutes > 0
+            ? formatCinemaMinutes(movie.durationMinutes)
+            : '')
+        : '${show!.seasons.length} ${show.seasons.length == 1 ? 'Season' : 'Seasons'}';
+
+    final heroMinHeight = isDesktop ? 500.0 : 420.0;
+
+    return ConstrainedBox(
+      constraints: BoxConstraints(minHeight: heroMinHeight),
       child: Stack(
-        fit: StackFit.expand,
         children: [
-          HermesArtworkImage(
-            uri: heroUri,
-            fallbackTitle: title,
-            fallbackIcon: heroMovie != null ? Icons.movie_outlined : Icons.tv_outlined,
-            borderRadius: BorderRadius.circular(20),
-            showFallbackLabel: false,
+          Positioned.fill(
+            child: HermesArtworkImage(
+              uri: heroUri,
+              fallbackTitle: hero.title,
+              fallbackIcon:
+                  movie != null ? Icons.movie_outlined : Icons.tv_outlined,
+              borderRadius: BorderRadius.zero,
+              showFallbackLabel: false,
+            ),
           ),
-          DecoratedBox(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(20),
-              gradient: LinearGradient(
-                begin: Alignment.centerRight,
-                end: Alignment.centerLeft,
-                colors: [
-                  Colors.black.withValues(alpha: 0.15),
-                  tokens.bgPrimary.withValues(alpha: 0.78),
-                  tokens.bgPrimary.withValues(alpha: 0.96),
-                ],
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
+                  stops: const [0.0, 0.34, 0.70],
+                  colors: [
+                    tokens.pageWash,
+                    tokens.pageWash.withValues(alpha: 0.78),
+                    Colors.transparent,
+                  ],
+                ),
+              ),
+            ),
+          ),
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.bottomCenter,
+                  end: Alignment.topCenter,
+                  stops: const [0.0, 0.42, 0.80, 1.0],
+                  colors: [
+                    tokens.bg,
+                    Colors.transparent,
+                    Colors.transparent,
+                    Colors.black.withValues(alpha: 0.45),
+                  ],
+                ),
               ),
             ),
           ),
           Padding(
-            padding: const EdgeInsets.all(28),
+            padding: EdgeInsets.fromLTRB(
+              horizontalPad,
+              22,
+              horizontalPad,
+              44,
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.end,
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 6,
-                  children: [
-                    _MetaPill(label: heroMovie != null ? 'FEATURED MOVIE' : 'FEATURED SERIES', accent: true),
-                    if (year != null) _MetaPill(label: '$year'),
-                    _MetaPill(label: badge),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                        fontWeight: FontWeight.w800,
+                _buildTopbar(tokens, isDesktop, darkGlass: true),
+                SizedBox(height: isDesktop ? 90 : 44),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 560),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        hero.title,
+                        style: TextStyle(
+                          fontFamily: 'Figtree',
+                          fontSize: isDesktop ? 48 : 34,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: -1.1,
+                          height: 1.03,
+                          color: Colors.white,
+                        ),
                       ),
-                ),
-                if (overview != null && overview.trim().isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 620),
-                    child: Text(
-                      overview,
-                      maxLines: 3,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: tokens.textSecondary, height: 1.4),
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 18),
-                Wrap(
-                  spacing: 12,
-                  runSpacing: 8,
-                  children: [
-                    FilledButton.icon(
-                      onPressed: firstSource == null
-                          ? null
-                          : () {
-                              if (heroMovie != null) {
-                                _launchPlayer(
-                                  title: heroMovie.title,
-                                  source: firstSource,
-                                  movieId: heroMovie.id,
-                                );
-                              } else if (heroSeries != null && firstEpisode != null) {
-                                _launchPlayer(
-                                  title: '${heroSeries.title} • S1E${firstEpisode.episodeNumber}',
-                                  source: firstSource,
-                                  episodeId: firstEpisode.id,
-                                );
+                      const SizedBox(height: 14),
+                      CinemaHeroMetaLine(
+                        rating: hero.rating,
+                        year: hero.year,
+                        lengthLabel: lengthLabel,
+                        genres: hero.genres,
+                        qualityTag: primarySource?.shortTag,
+                      ),
+                      if (hero.overview != null &&
+                          hero.overview!.trim().isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        Text(
+                          hero.overview!,
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontFamily: 'Figtree',
+                            fontSize: 15,
+                            height: 1.55,
+                            color: Colors.white.withValues(alpha: 0.8),
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 24),
+                      Wrap(
+                        spacing: 12,
+                        runSpacing: 10,
+                        children: [
+                          CinemaPlayPillButton(
+                            label: resume?.playLabel ?? 'Play',
+                            onPressed: primarySource == null
+                                ? null
+                                : () => _launchPlayback(
+                                      primarySource,
+                                      widget.defaultQuality,
+                                      movie: movie,
+                                      series: show,
+                                      episodeEntry: resume?.episodeEntry,
+                                      initialPositionMs: playInitialPos,
+                                    ),
+                          ),
+                          CinemaGlassButton(
+                            key: const Key('hero-watchlist-btn'),
+                            icon: HermesBookmarkIcon(
+                              size: 18,
+                              filled: hero.isInWatchlist,
+                              color: hero.isInWatchlist
+                                  ? tokens.accent
+                                  : Colors.white,
+                            ),
+                            label: hero.isInWatchlist
+                                ? 'In Watchlist'
+                                : 'Watchlist',
+                            onPressed: () {
+                              if (movie != null) {
+                                unawaited(_toggleMovieWatchlist(movie));
+                              } else if (show != null) {
+                                unawaited(_toggleSeriesWatchlist(show));
                               }
                             },
-                      icon: const Icon(Icons.play_arrow_rounded),
-                      label: const Text('Watch Now'),
-                    ),
-                    OutlinedButton.icon(
-                      onPressed: () {
-                        if (heroMovie != null) {
-                          _openMovieDetail(heroMovie);
-                        } else if (heroSeries != null) {
-                          _openSeriesDetail(heroSeries);
-                        }
-                      },
-                      icon: const Icon(Icons.info_outline),
-                      label: const Text('Details'),
-                    ),
-                  ],
+                          ),
+                          CinemaGlassButton(
+                            key: const Key('hero-details-btn'),
+                            icon: const Icon(
+                              Icons.info_outline_rounded,
+                              size: 18,
+                              color: Colors.white,
+                            ),
+                            label: 'Details',
+                            onPressed: () => setState(() {
+                              _selectedMovieId = movie?.id;
+                              _selectedSeriesId = show?.id;
+                            }),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -768,366 +1000,566 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final tokens = HermesThemeTokens.of(context);
+  Widget _buildHomeRows(
+    BuildContext context,
+    HermesThemeTokens tokens,
+    List<MovieSummary> poolMovies,
+    List<TvSeriesSummary> poolSeries,
+    List<_ContinueWatchingEntry> continueWatching,
+    double horizontalPad,
+  ) {
+    final watchlistMovies =
+        poolMovies.where((m) => m.isInWatchlist).toList(growable: false);
+    final watchlistSeries =
+        poolSeries.where((s) => s.isInWatchlist).toList(growable: false);
 
-    return FutureBuilder<(List<MovieSummary>, List<TvSeriesSummary>)>(
-      future: _catalogFuture,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        if (snapshot.hasError) {
-          return Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text('Failed to load Cinema catalog: ${snapshot.error}'),
-                const SizedBox(height: 12),
-                FilledButton(
-                  onPressed: _refreshCatalog,
-                  child: const Text('Retry'),
-                ),
-              ],
-            ),
-          );
-        }
+    final combinedRecent = <(DateTime?, MovieSummary?, TvSeriesSummary?)>[
+      ...poolMovies.map((m) => (m.addedAtUtc, m, null)),
+      ...poolSeries.map((s) => (s.addedAtUtc, null, s)),
+    ]..sort((a, b) {
+        final da = a.$1 ?? DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+        final db = b.$1 ?? DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+        return db.compareTo(da);
+      });
 
-        final (movies, series) = snapshot.data ?? (<MovieSummary>[], <TvSeriesSummary>[]);
-        if (movies.isEmpty && series.isEmpty) {
-          return Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.movie_filter_outlined, size: 52, color: tokens.textSecondary),
-                const SizedBox(height: 12),
-                Text(
-                  'No movies or series scanned yet. Open Admin Dashboard to scan a library.',
-                  style: TextStyle(color: tokens.textSecondary),
-                ),
-                const SizedBox(height: 12),
-                OutlinedButton.icon(
-                  onPressed: _refreshCatalog,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Refresh Catalog'),
-                ),
-              ],
-            ),
-          );
-        }
+    // "Because you watched" based on latest in-progress item's genres
+    final seedEntry = continueWatching.firstOrNull;
+    final seedTitle = seedEntry?.movie?.title ?? seedEntry?.series?.title;
+    final seedGenres =
+        seedEntry?.movie?.genres ?? seedEntry?.series?.genres ?? const <String>[];
+    final similarMovies = seedGenres.isEmpty
+        ? const <MovieSummary>[]
+        : poolMovies
+            .where(
+              (m) =>
+                  m.id != seedEntry?.movie?.id &&
+                  m.genres.any((g) => seedGenres.contains(g)),
+            )
+            .toList(growable: false);
+    final similarSeries = seedGenres.isEmpty
+        ? const <TvSeriesSummary>[]
+        : poolSeries
+            .where(
+              (s) =>
+                  s.id != seedEntry?.series?.id &&
+                  s.genres.any((g) => seedGenres.contains(g)),
+            )
+            .toList(growable: false);
 
-        final continueWatching = _buildContinueWatching(movies, series);
-        final showMovies = _filter != _CinemaFilter.series && movies.isNotEmpty;
-        final showSeries = _filter != _CinemaFilter.movies && series.isNotEmpty;
-        final heroMovie = _filter == _CinemaFilter.series ? null : movies.firstOrNull;
-        final heroSeries = heroMovie == null ? series.firstOrNull : null;
-
-        return ListView(
-          padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: _CinemaFilter.values.map((filter) {
-                      return ChoiceChip(
-                        label: Text(filter.label),
-                        selected: _filter == filter,
-                        onSelected: (_) => setState(() => _filter = filter),
-                      );
-                    }).toList(),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (continueWatching.isNotEmpty) ...[
+          _RowHeader(title: 'Continue Watching', horizontalPad: horizontalPad),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 224,
+            child: ListView.separated(
+              padding: EdgeInsets.symmetric(horizontal: horizontalPad),
+              scrollDirection: Axis.horizontal,
+              itemCount: continueWatching.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 14),
+              itemBuilder: (_, idx) {
+                final item = continueWatching[idx];
+                return CinemaLandscapeCard(
+                  title: item.title,
+                  subtitle: item.subtitle,
+                  artworkUri: item.artworkUri,
+                  progress: item.progress,
+                  isUpNext: item.isUpNext,
+                  reduceMotion: widget.reduceMotion,
+                  onTap: () => _launchPlayback(
+                    item.source,
+                    widget.defaultQuality,
+                    movie: item.movie,
+                    series: item.series,
+                    episodeEntry: item.episodeEntry,
+                    initialPositionMs: item.initialPositionMs,
                   ),
-                ),
-                IconButton(
-                  tooltip: 'Refresh catalog',
-                  icon: const Icon(Icons.refresh),
-                  onPressed: _refreshCatalog,
-                ),
-              ],
+                );
+              },
             ),
-            const SizedBox(height: 18),
-            if (heroMovie != null || heroSeries != null) ...[
-              _buildHeroBanner(context, tokens, heroMovie, heroSeries),
-              const SizedBox(height: 28),
+          ),
+          const SizedBox(height: 36),
+        ],
+        if (watchlistMovies.isNotEmpty || watchlistSeries.isNotEmpty) ...[
+          _RowHeader(
+            title: 'Watchlist',
+            horizontalPad: horizontalPad,
+            trailing: TextButton(
+              onPressed: () => setState(() => _filter = _CinemaFilter.watchlist),
+              child: const Text('See all'),
+            ),
+          ),
+          const SizedBox(height: 12),
+          _PosterStrip(
+            horizontalPad: horizontalPad,
+            items: [
+              ...watchlistMovies.map((m) => _buildMoviePoster(m)),
+              ...watchlistSeries.map((s) => _buildSeriesPoster(s)),
             ],
-            if (continueWatching.isNotEmpty && _filter == _CinemaFilter.all) ...[
-              Text(
-                'Continue Watching',
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(height: 12),
-              SizedBox(
-                height: 174,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: continueWatching.length,
-                  separatorBuilder: (_, _) => const SizedBox(width: 14),
-                  itemBuilder: (_, idx) {
-                    final item = continueWatching[idx];
-                    return SizedBox(
-                      width: 248,
-                      child: Card(
-                        clipBehavior: Clip.antiAlias,
-                        child: InkWell(
-                          onTap: () => _launchPlayer(
-                            title: item.title,
-                            source: item.sources.first,
-                            movieId: item.movieId,
-                            episodeId: item.episodeId,
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Stack(
-                                alignment: Alignment.bottomCenter,
-                                children: [
-                                  HermesArtworkImage(
-                                    uri: item.artworkUri,
-                                    fallbackTitle: item.title,
-                                    width: 248,
-                                    height: 100,
-                                    borderRadius: BorderRadius.zero,
-                                    showFallbackLabel: false,
-                                  ),
-                                  LinearProgressIndicator(
-                                    value: item.progress.completionRatio,
-                                    minHeight: 4,
-                                  ),
-                                ],
-                              ),
-                              Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      item.title,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(fontWeight: FontWeight.w700),
-                                    ),
-                                    Text(
-                                      item.subtitle,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(color: tokens.textSecondary, fontSize: 12),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-              const SizedBox(height: 28),
+          ),
+          const SizedBox(height: 36),
+        ],
+        if (combinedRecent.isNotEmpty) ...[
+          _RowHeader(title: 'Recently added', horizontalPad: horizontalPad),
+          const SizedBox(height: 12),
+          _PosterStrip(
+            horizontalPad: horizontalPad,
+            items: combinedRecent.map((entry) {
+              if (entry.$2 != null) return _buildMoviePoster(entry.$2!);
+              return _buildSeriesPoster(entry.$3!);
+            }).toList(growable: false),
+          ),
+          const SizedBox(height: 36),
+        ],
+        if (seedTitle != null &&
+            (similarMovies.isNotEmpty || similarSeries.isNotEmpty)) ...[
+          _RowHeader(
+            title: 'Because you watched $seedTitle',
+            horizontalPad: horizontalPad,
+          ),
+          const SizedBox(height: 12),
+          _PosterStrip(
+            horizontalPad: horizontalPad,
+            items: [
+              ...similarMovies.map((m) => _buildMoviePoster(m)),
+              ...similarSeries.map((s) => _buildSeriesPoster(s)),
             ],
-            if (showMovies) ...[
-              Text(
-                'Movies (${movies.length})',
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(height: 14),
-              Wrap(
-                spacing: 18,
-                runSpacing: 22,
-                children: movies.map((movie) {
-                  final badge = _qualityBadgeFor(movie.sources);
-                  final posterUri = widget.cinemaService.buildArtworkUri(
-                    movie.artworkHash,
-                    variant: 'poster_800',
-                  );
-                  return _PosterCard(
-                    title: movie.title,
-                    subtitle: movie.year?.toString() ?? 'Movie',
-                    badge: badge,
-                    artworkUri: posterUri,
-                    fallbackIcon: Icons.movie_outlined,
-                    progress: movie.watchProgress?.completionRatio,
-                    onTap: () => _openMovieDetail(movie),
-                  );
-                }).toList(),
-              ),
-              const SizedBox(height: 28),
-            ],
-            if (showSeries) ...[
-              Text(
-                'TV Series (${series.length})',
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(height: 14),
-              Wrap(
-                spacing: 18,
-                runSpacing: 22,
-                children: series.map((show) {
-                  final episodeCount = show.seasons.fold<int>(
-                    0,
-                    (sum, season) => sum + season.episodes.length,
-                  );
-                  final posterUri = widget.cinemaService.buildArtworkUri(
-                    show.artworkHash,
-                    variant: 'poster_800',
-                  );
-                  return _PosterCard(
-                    title: show.title,
-                    subtitle: show.year != null
-                        ? '${show.year} • $episodeCount eps'
-                        : '$episodeCount episode(s)',
-                    badge: '${show.seasons.length}S',
-                    artworkUri: posterUri,
-                    fallbackIcon: Icons.tv_outlined,
-                    onTap: () => _openSeriesDetail(show),
-                  );
-                }).toList(),
-              ),
-            ],
-          ],
-        );
-      },
+          ),
+          const SizedBox(height: 36),
+        ],
+        if (poolMovies.isNotEmpty && _filter != _CinemaFilter.series) ...[
+          _RowHeader(title: 'Movies', horizontalPad: horizontalPad),
+          const SizedBox(height: 12),
+          _PosterStrip(
+            horizontalPad: horizontalPad,
+            items: poolMovies.map(_buildMoviePoster).toList(growable: false),
+          ),
+          const SizedBox(height: 36),
+        ],
+        if (poolSeries.isNotEmpty && _filter != _CinemaFilter.movies) ...[
+          _RowHeader(title: 'TV Shows', horizontalPad: horizontalPad),
+          const SizedBox(height: 12),
+          _PosterStrip(
+            horizontalPad: horizontalPad,
+            items: poolSeries.map(_buildSeriesPoster).toList(growable: false),
+          ),
+        ],
+      ],
     );
   }
-}
 
-class _PosterCard extends StatelessWidget {
-  const _PosterCard({
-    required this.title,
-    required this.subtitle,
-    required this.badge,
-    required this.artworkUri,
-    required this.fallbackIcon,
-    this.progress,
-    required this.onTap,
-  });
+  Widget _buildWatchlistView(
+    BuildContext context,
+    HermesThemeTokens tokens,
+    String query,
+    double horizontalPad,
+  ) {
+    final savedMovies = _movies.where((m) => m.isInWatchlist).toList();
+    final savedSeries = _series.where((s) => s.isInWatchlist).toList();
 
-  final String title;
-  final String subtitle;
-  final String badge;
-  final Uri? artworkUri;
-  final IconData fallbackIcon;
-  final double? progress;
-  final VoidCallback onTap;
+    final filteredMovies = query.isEmpty
+        ? savedMovies
+        : savedMovies
+            .where((m) => _matchesMovieQuery(m, query))
+            .toList(growable: false);
+    final filteredSeries = query.isEmpty
+        ? savedSeries
+        : savedSeries
+            .where((s) => _matchesSeriesQuery(s, query))
+            .toList(growable: false);
 
-  @override
-  Widget build(BuildContext context) {
-    final tokens = HermesThemeTokens.of(context);
+    final parts = <String>[
+      if (savedMovies.isNotEmpty)
+        '${savedMovies.length} ${savedMovies.length == 1 ? 'movie' : 'movies'}',
+      if (savedSeries.isNotEmpty)
+        '${savedSeries.length} ${savedSeries.length == 1 ? 'show' : 'shows'}',
+    ];
+    final summary = parts.isEmpty ? 'No saved titles yet' : parts.join(' · ');
 
-    return SizedBox(
-      width: 172,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(14),
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: horizontalPad),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.end,
+            spacing: 16,
+            runSpacing: 8,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Watchlist',
+                    style: TextStyle(
+                      fontFamily: 'Figtree',
+                      fontSize: 32,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -0.64,
+                      color: tokens.text,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    summary,
+                    style: TextStyle(
+                      fontFamily: 'Figtree',
+                      fontSize: 13,
+                      color: tokens.text2,
+                    ),
+                  ),
+                ],
+              ),
+              Text(
+                'Custom lists planned',
+                style: TextStyle(
+                  fontFamily: 'Figtree',
+                  fontSize: 13,
+                  color: tokens.text3,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+          if (savedMovies.isEmpty && savedSeries.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 48),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Your Watchlist is empty',
+                    style: TextStyle(
+                      fontFamily: 'Figtree',
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                      color: tokens.text,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Bookmark movies and shows to save them here for later.',
+                    style: TextStyle(
+                      fontFamily: 'Figtree',
+                      fontSize: 14,
+                      color: tokens.text2,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  OutlinedButton(
+                    onPressed: () => setState(() => _filter = _CinemaFilter.all),
+                    child: const Text('Browse Cinema'),
+                  ),
+                ],
+              ),
+            )
+          else if (filteredMovies.isEmpty && filteredSeries.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 48),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'No Watchlist matches for "${_searchQuery.trim()}"',
+                    style: TextStyle(
+                      fontFamily: 'Figtree',
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: tokens.text,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Try another search or clear the filter.',
+                    style: TextStyle(color: tokens.text2, fontSize: 14),
+                  ),
+                ],
+              ),
+            )
+          else
+            _ResponsivePosterGrid(
+              children: [
+                ...filteredMovies.map(_buildMoviePoster),
+                ...filteredSeries.map(_buildSeriesPoster),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSearchResults(
+    BuildContext context,
+    HermesThemeTokens tokens,
+    List<MovieSummary> poolMovies,
+    List<TvSeriesSummary> poolSeries,
+    String query,
+    double horizontalPad,
+  ) {
+    final matchedMovies = poolMovies
+        .where((m) => _matchesMovieQuery(m, query))
+        .toList(growable: false);
+    final matchedSeries = poolSeries
+        .where((s) => _matchesSeriesQuery(s, query))
+        .toList(growable: false);
+
+    final matchedEpisodes = <(TvSeriesSummary, CinemaEpisodeEntry)>[];
+    for (final s in poolSeries) {
+      for (final entry in s.allEpisodes) {
+        if (entry.episode.title.toLowerCase().contains(query)) {
+          matchedEpisodes.add((s, entry));
+        }
+      }
+    }
+
+    if (matchedMovies.isEmpty &&
+        matchedSeries.isEmpty &&
+        matchedEpisodes.isEmpty) {
+      return Padding(
+        padding: EdgeInsets.symmetric(horizontal: horizontalPad, vertical: 48),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Container(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: const Color(0x1FFFFFFF)),
-              ),
-              child: Stack(
-                children: [
-                  HermesArtworkImage(
-                    uri: artworkUri,
-                    fallbackTitle: title,
-                    fallbackIcon: fallbackIcon,
-                    width: 172,
-                    height: 254,
-                    borderRadius: BorderRadius.circular(13),
-                  ),
-                  Positioned(
-                    top: 10,
-                    right: 10,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.72),
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(color: const Color(0x33FFFFFF)),
-                      ),
-                      child: Text(
-                        badge,
-                        style: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ),
-                  if (progress != null && progress! > 0)
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      child: ClipRRect(
-                        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(13)),
-                        child: LinearProgressIndicator(
-                          value: progress,
-                          minHeight: 4,
-                        ),
-                      ),
-                    ),
-                ],
+            Text(
+              'No results for "${_searchQuery.trim()}"',
+              style: TextStyle(
+                fontFamily: 'Figtree',
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+                color: tokens.text,
               ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 6),
             Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              subtitle,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: tokens.textSecondary, fontSize: 12),
+              'Nothing in your library matches. Try a title, genre, or actor.',
+              style: TextStyle(color: tokens.text2, fontSize: 14),
             ),
           ],
         ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (matchedMovies.isNotEmpty || matchedSeries.isNotEmpty) ...[
+          _RowHeader(title: 'Movies & TV Shows', horizontalPad: horizontalPad),
+          const SizedBox(height: 14),
+          Padding(
+            padding: EdgeInsets.symmetric(horizontal: horizontalPad),
+            child: _ResponsivePosterGrid(
+              children: [
+                ...matchedMovies.map(_buildMoviePoster),
+                ...matchedSeries.map(_buildSeriesPoster),
+              ],
+            ),
+          ),
+          const SizedBox(height: 36),
+        ],
+        if (matchedEpisodes.isNotEmpty) ...[
+          _RowHeader(title: 'Episodes', horizontalPad: horizontalPad),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 224,
+            child: ListView.separated(
+              padding: EdgeInsets.symmetric(horizontal: horizontalPad),
+              scrollDirection: Axis.horizontal,
+              itemCount: matchedEpisodes.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 14),
+              itemBuilder: (_, idx) {
+                final (show, entry) = matchedEpisodes[idx];
+                final src = entry.episode.sources.firstOrNull;
+                final stillUri = widget.cinemaService.buildArtworkUri(
+                  entry.episode.stillArtworkHash ??
+                      show.backdropHash ??
+                      show.artworkHash,
+                  variant: (entry.episode.stillArtworkHash != null ||
+                          show.backdropHash != null)
+                      ? 'backdrop_1280'
+                      : 'poster_800',
+                );
+                return CinemaLandscapeCard(
+                  title: entry.episode.title,
+                  subtitle:
+                      '${show.title} · ${entry.code} · ${entry.episode.durationMinutes}m',
+                  artworkUri: stillUri,
+                  progress: entry.episode.watchProgress?.isWatched == true
+                      ? 0
+                      : (entry.episode.watchProgress?.completionRatio ?? 0),
+                  reduceMotion: widget.reduceMotion,
+                  onTap: src == null
+                      ? () => setState(() => _selectedSeriesId = show.id)
+                      : () => _launchPlayback(
+                            src,
+                            widget.defaultQuality,
+                            series: show,
+                            episodeEntry: entry,
+                            initialPositionMs:
+                                entry.episode.watchProgress?.positionMs ?? 0,
+                          ),
+                );
+              },
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  bool _matchesMovieQuery(MovieSummary m, String query) {
+    return [
+      m.title,
+      if (m.year != null) '${m.year}',
+      ...m.genres,
+      ...m.cast.map((c) => c.name),
+    ].any((field) => field.toLowerCase().contains(query));
+  }
+
+  bool _matchesSeriesQuery(TvSeriesSummary s, String query) {
+    return [
+      s.title,
+      if (s.year != null) '${s.year}',
+      ...s.genres,
+      ...s.cast.map((c) => c.name),
+    ].any((field) => field.toLowerCase().contains(query));
+  }
+
+  Widget _buildMoviePoster(MovieSummary movie) {
+    final posterUri = widget.cinemaService.buildArtworkUri(
+      movie.artworkHash,
+      variant: 'poster_800',
+    );
+    final durationLabel = movie.durationMinutes > 0
+        ? formatCinemaMinutes(movie.durationMinutes)
+        : (movie.sources.firstOrNull?.shortTag ?? 'Movie');
+    final sub = movie.year == null
+        ? durationLabel
+        : '${movie.year} · $durationLabel';
+
+    return CinemaPosterCard(
+      itemKey: movie.id,
+      title: movie.title,
+      subtitle: sub,
+      artworkUri: posterUri,
+      fallbackIcon: Icons.movie_outlined,
+      inWatchlist: movie.isInWatchlist,
+      isWatched: movie.isWatched,
+      isNew: movie.isNew,
+      progress: movie.resumePoint.progress,
+      reduceMotion: widget.reduceMotion,
+      onToggleWatchlist: () => unawaited(_toggleMovieWatchlist(movie)),
+      onTap: () => setState(() {
+        _selectedMovieId = movie.id;
+        _selectedSeriesId = null;
+      }),
+    );
+  }
+
+  Widget _buildSeriesPoster(TvSeriesSummary show) {
+    final posterUri = widget.cinemaService.buildArtworkUri(
+      show.artworkHash,
+      variant: 'poster_800',
+    );
+    final sub = show.year == null ? 'Series' : '${show.year} · Series';
+
+    return CinemaPosterCard(
+      itemKey: show.id,
+      title: show.title,
+      subtitle: sub,
+      artworkUri: posterUri,
+      fallbackIcon: Icons.tv_outlined,
+      inWatchlist: show.isInWatchlist,
+      isWatched: show.isWatched,
+      isNew: show.isNew,
+      isPartial: show.isPartial,
+      reduceMotion: widget.reduceMotion,
+      onToggleWatchlist: () => unawaited(_toggleSeriesWatchlist(show)),
+      onTap: () => setState(() {
+        _selectedSeriesId = show.id;
+        _selectedMovieId = null;
+      }),
+    );
+  }
+}
+
+class _RowHeader extends StatelessWidget {
+  const _RowHeader({
+    required this.title,
+    required this.horizontalPad,
+    this.trailing,
+  });
+
+  final String title;
+  final double horizontalPad;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = HermesThemeTokens.of(context);
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: horizontalPad),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Flexible(
+            child: Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontFamily: 'Figtree',
+                fontSize: 20,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -0.2,
+                color: tokens.text,
+              ),
+            ),
+          ),
+          ?trailing,
+        ],
       ),
     );
   }
 }
 
-class _MetaPill extends StatelessWidget {
-  const _MetaPill({
-    required this.label,
-    this.accent = false,
+class _PosterStrip extends StatelessWidget {
+  const _PosterStrip({
+    required this.horizontalPad,
+    required this.items,
   });
 
-  final String label;
-  final bool accent;
+  final double horizontalPad;
+  final List<Widget> items;
 
   @override
   Widget build(BuildContext context) {
-    final tokens = HermesThemeTokens.of(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: accent
-            ? tokens.accentPrimary.withValues(alpha: 0.22)
-            : Colors.black.withValues(alpha: 0.52),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(
-          color: accent ? tokens.accentPrimary.withValues(alpha: 0.6) : const Color(0x2EFFFFFF),
-        ),
+    return SizedBox(
+      height: 318,
+      child: ListView.separated(
+        padding: EdgeInsets.symmetric(horizontal: horizontalPad),
+        scrollDirection: Axis.horizontal,
+        itemCount: items.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 14),
+        itemBuilder: (_, idx) => items[idx],
       ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.w700,
-          color: accent ? tokens.accentHover : tokens.textPrimary,
-        ),
-      ),
+    );
+  }
+}
+
+class _ResponsivePosterGrid extends StatelessWidget {
+  const _ResponsivePosterGrid({required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 14,
+      runSpacing: 28,
+      children: children,
     );
   }
 }

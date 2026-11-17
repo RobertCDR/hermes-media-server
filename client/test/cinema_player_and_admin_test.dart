@@ -447,12 +447,14 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Continue Watching'), findsOneWidget);
-      expect(find.text('Watch Now'), findsOneWidget);
+      expect(find.text('Resume'), findsOneWidget);
+      expect(find.text('Watchlist'), findsWidgets);
+      expect(find.text('Details'), findsOneWidget);
       expect(find.text('Primal Fear'), findsWidgets);
 
-      await tester.tap(find.text('TV Series'));
+      await tester.tap(find.byKey(const Key('cinema-tab-series')));
       await tester.pumpAndSettle();
-      expect(find.text('TV Series (1)'), findsOneWidget);
+      expect(find.text('TV Shows'), findsWidgets);
       expect(find.text('Dark'), findsWidgets);
     });
 

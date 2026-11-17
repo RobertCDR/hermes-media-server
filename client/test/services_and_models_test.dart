@@ -349,29 +349,28 @@ void main() {
       expect(find.text('OpenGL HDR'), findsOneWidget);
       expect(find.textContaining('WebVTT Subtitles Ready'), findsOneWidget);
 
-      // Toggle play/pause
-      await tester.tap(find.byIcon(Icons.pause));
+      // Toggle play/pause via centered optical button
+      await tester.tap(find.byKey(const Key('vp-center-play-btn')));
       await tester.pump();
-      expect(find.byIcon(Icons.play_arrow), findsOneWidget);
+      expect(find.bySemanticsLabel('Play'), findsWidgets);
 
-      // Change quality dropdown to 720p
-      await tester.tap(find.text('Direct Play'));
+      // Open Tracks & Quality panel
+      await tester.tap(find.byKey(const Key('vp-tracks-btn')));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('720p').last);
+      expect(find.byKey(const Key('vp-panel')), findsOneWidget);
+
+      // Change quality to 720p
+      await tester.tap(find.text('720p'));
       await tester.pumpAndSettle();
       expect(find.textContaining('quality=720p'), findsOneWidget);
 
-      // Change audio stream dropdown
-      await tester.tap(find.text('Audio: ENG (aac)'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Audio: JPN (ac3)').last);
+      // Change audio stream to JPN (ac3)
+      await tester.tap(find.text('JPN (ac3)'));
       await tester.pumpAndSettle();
       expect(find.textContaining('audioStreamIndex=2'), findsOneWidget);
 
-      // Turn off subtitles via dropdown
-      await tester.tap(find.text('Sub: ENG (SDH)'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Subtitles: Off').last);
+      // Turn off subtitles via panel
+      await tester.tap(find.text('Off'));
       await tester.pumpAndSettle();
       expect(find.textContaining('WebVTT Subtitles Ready'), findsNothing);
     });

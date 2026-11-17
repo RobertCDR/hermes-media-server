@@ -422,6 +422,8 @@ class _HermesAppState extends State<HermesApp> {
                     cinemaService: cinemaService,
                     playerConfig: playerConfig,
                     defaultQuality: _defaultVideoQuality,
+                    accountPreferences: _accountPrefs,
+                    reduceMotion: _devicePrefs.reduceMotion,
                   ),
                   musicBuilder: (_) => MusicWorldScreen(
                     musicService: musicService,
