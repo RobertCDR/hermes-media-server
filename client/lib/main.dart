@@ -5,11 +5,13 @@ import 'package:flutter/foundation.dart'
 import 'package:http/http.dart' as http;
 import 'package:material_ui/material_ui.dart';
 import 'src/core/auth/auth_service.dart';
+import 'src/core/auth/authenticated_http_client.dart';
 import 'src/core/auth/session_store.dart';
 import 'src/core/network/endpoint_resolver.dart';
 import 'src/core/settings/hermes_preferences.dart';
 import 'src/core/theme/hermes_theme_tokens.dart';
 import 'src/core/widgets/hermes_artwork_image.dart';
+import 'src/core/widgets/hermes_icons.dart';
 import 'src/core/widgets/hermes_search_pill.dart';
 import 'src/features/admin/admin_dashboard_screen.dart';
 import 'src/features/admin/admin_service.dart';
@@ -34,23 +36,37 @@ void main() {
 }
 
 class HermesApp extends StatefulWidget {
-  const HermesApp({super.key});
+  const HermesApp({
+    super.key,
+    this.sessionStore,
+    this.preferencesStore,
+    this.httpClient,
+  });
+
+  final SessionStore? sessionStore;
+  final DevicePreferencesStore? preferencesStore;
+  final http.Client? httpClient;
 
   @override
   State<HermesApp> createState() => _HermesAppState();
 }
 
 class _HermesAppState extends State<HermesApp> {
-  final _httpClient = http.Client();
-  final _sessionStore = InMemorySessionStore();
+  late final http.Client _rawHttpClient;
+  late final bool _ownsHttpClient;
+  late final SessionStore _sessionStore;
+  late final DevicePreferencesStore _preferencesStore;
   final _mediaBridge = InMemoryPlatformMediaBridge();
   final _audioEngine = NoOpAudioEngineAdapter();
-  late final _endpointResolver = EndpointResolver(httpClient: _httpClient);
-  late final _authService = AuthService(httpClient: _httpClient, sessionStore: _sessionStore);
+  late final EndpointResolver _endpointResolver;
+  late final AuthService _authService;
+  late final AuthenticatedHttpClient _apiHttpClient;
+  late final AccountPreferencesService _accountPreferencesService;
 
-  late final _accountPreferencesService =
-      AccountPreferencesService(httpClient: _httpClient);
-
+  bool _bootstrapping = true;
+  String _deviceId = 'hermes-${kIsWeb ? 'web' : Platform.operatingSystem}';
+  String _initialPrimaryUrl = 'http://localhost:5258';
+  String _initialLanUrl = '';
   HermesDevicePreferences _devicePrefs = const HermesDevicePreferences();
   HermesAccountPreferences _accountPrefs = const HermesAccountPreferences();
   HermesThemeTokens _tokens = HermesThemeTokens.resolve();
@@ -70,10 +86,123 @@ class _HermesAppState extends State<HermesApp> {
   List<OnlineDeviceModel> _connectDevices = const [];
 
   @override
+  void initState() {
+    super.initState();
+    _rawHttpClient = widget.httpClient ?? http.Client();
+    _ownsHttpClient = widget.httpClient == null;
+    _sessionStore = widget.sessionStore ?? SharedPrefsSessionStore();
+    _preferencesStore =
+        widget.preferencesStore ?? SharedPrefsDevicePreferencesStore();
+    _endpointResolver = EndpointResolver(httpClient: _rawHttpClient);
+    _authService = AuthService(
+      httpClient: _rawHttpClient,
+      sessionStore: _sessionStore,
+    );
+    _apiHttpClient = AuthenticatedHttpClient(
+      inner: _rawHttpClient,
+      getAccessToken: () => _session?.accessToken,
+      refreshAccessToken: _refreshActiveAccessToken,
+      onSessionExpired: _signOut,
+    );
+    _accountPreferencesService =
+        AccountPreferencesService(httpClient: _apiHttpClient);
+
+    unawaited(_bootstrapApp());
+  }
+
+  Future<String?> _refreshActiveAccessToken() async {
+    final endpoint = _endpoint;
+    if (endpoint == null) return null;
+    try {
+      final refreshed =
+          await _authService.refreshSession(endpoint.baseUri.toString());
+      if (mounted) {
+        setState(() {
+          _session = refreshed;
+        });
+      }
+      return refreshed.accessToken;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _bootstrapApp() async {
+    try {
+      final osTag = kIsWeb ? 'web' : Platform.operatingSystem;
+      final loadedDeviceId =
+          await _preferencesStore.getOrCreateDeviceId(osTag);
+      final loadedPrefs = await _preferencesStore.load();
+      SavedServerEndpoints? savedEndpoints;
+      if (_sessionStore case final EndpointHistoryStore endpointHistory) {
+        savedEndpoints = await endpointHistory.loadLastEndpoints();
+      }
+      final savedSession = await _sessionStore.load();
+
+      if (!mounted) return;
+      _applyDevicePreferencesState(loadedPrefs, persist: false);
+      setState(() {
+        _deviceId = loadedDeviceId;
+        if (savedEndpoints != null) {
+          _initialPrimaryUrl = savedEndpoints.primaryUrl;
+          _initialLanUrl = savedEndpoints.lanFallbackUrl ?? '';
+        }
+      });
+
+      if (savedSession != null) {
+        try {
+          final resolved = await _endpointResolver.resolve(
+            primaryUrl: savedSession.serverPrimaryUrl,
+            lanFallbackUrl: savedSession.serverLanFallbackUrl,
+            expectedServerId: savedSession.serverId,
+          );
+          final refreshed = await _authService.refreshSession(
+            resolved.baseUri.toString(),
+          );
+          if (!mounted) return;
+          _onAuthenticated(refreshed, resolved);
+          return;
+        } on AuthException catch (authErr) {
+          // Clear stale tokens only when the server explicitly rejects the refresh token.
+          if (authErr.statusCode == 401 || authErr.statusCode == 403) {
+            await _sessionStore.clear();
+          }
+        } catch (_) {
+          // Server temporarily unreachable: show Connect screen with pre-filled URLs.
+        }
+      }
+    } catch (_) {
+      // Fall back to default interactive onboarding if persistence is unavailable.
+    } finally {
+      if (mounted) {
+        setState(() => _bootstrapping = false);
+      }
+    }
+  }
+
+  void _applyDevicePreferencesState(
+    HermesDevicePreferences next, {
+    bool persist = true,
+  }) {
+    setState(() {
+      _devicePrefs = next;
+      _tokens = next.toThemeTokens();
+      _rendererBackend = next.rendererBackend;
+      _defaultVideoQuality = next.defaultVideoQuality;
+    });
+    _musicCoordinator?.updateQualityPolicy(next.toAudioQualityPolicy());
+    if (persist) {
+      unawaited(_preferencesStore.save(next));
+    }
+  }
+
+  @override
   void dispose() {
     _worldNotifier.dispose();
     _musicCoordinator?.dispose();
-    _httpClient.close();
+    if (_ownsHttpClient) {
+      _rawHttpClient.close();
+    }
     super.dispose();
   }
 
@@ -163,7 +292,7 @@ class _HermesAppState extends State<HermesApp> {
     final musicService = MusicService(
       baseUri: nextEndpoint.baseUri,
       accessToken: nextSession.accessToken,
-      httpClient: _httpClient,
+      httpClient: _apiHttpClient,
     );
     final coordinator = MusicPlaybackCoordinator(
       localDeviceId: nextSession.deviceId,
@@ -176,8 +305,11 @@ class _HermesAppState extends State<HermesApp> {
 
     setState(() {
       _musicCoordinator?.dispose();
+      _bootstrapping = false;
       _session = nextSession;
       _endpoint = nextEndpoint;
+      _initialPrimaryUrl = nextSession.serverPrimaryUrl;
+      _initialLanUrl = nextSession.serverLanFallbackUrl ?? '';
       _switchingServer = false;
       _musicService = musicService;
       _musicCoordinator = coordinator;
@@ -290,89 +422,114 @@ class _HermesAppState extends State<HermesApp> {
           ),
         );
       },
-      home: _switchingServer ||
-              session == null ||
-              endpoint == null ||
-              musicService == null ||
-              musicCoordinator == null
-          ? SetupAndLoginScreen(
-              endpointResolver: _endpointResolver,
-              authService: _authService,
-              deviceId: 'hermes-${Platform.operatingSystem}',
-              deviceName: Platform.localHostname,
-              initialPrimaryUrl: endpoint?.baseUri.toString() ?? 'http://localhost:5000',
-              onAuthenticated: _onAuthenticated,
-              onCancel: session != null && endpoint != null
-                  ? () => setState(() => _switchingServer = false)
-                  : null,
+      home: _bootstrapping
+          ? Scaffold(
+              backgroundColor: _tokens.bgSunken,
+              body: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    HermesMarkIcon(size: 38, color: _tokens.accent),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Hermes',
+                      style: TextStyle(
+                        fontFamily: 'Figtree',
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.3,
+                        color: _tokens.text,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             )
-          : Builder(
-              builder: (navContext) {
-                final cinemaService = CinemaService(
-                  baseUri: endpoint.baseUri,
-                  accessToken: session.accessToken,
-                  httpClient: _httpClient,
-                );
-                final adminService = AdminService(
-                  baseUri: endpoint.baseUri,
-                  accessToken: session.accessToken,
-                  httpClient: _httpClient,
-                );
-                final playerConfig = HermesVideoPlayerConfig.hdrSafeDefault(
-                  tokens: _tokens,
-                  rendererBackend: _rendererBackend,
-                );
+          : (_switchingServer ||
+                  session == null ||
+                  endpoint == null ||
+                  musicService == null ||
+                  musicCoordinator == null)
+              ? SetupAndLoginScreen(
+                  endpointResolver: _endpointResolver,
+                  authService: _authService,
+                  deviceId: _deviceId,
+                  deviceName: kIsWeb ? 'Web Browser' : Platform.localHostname,
+                  initialPrimaryUrl:
+                      session?.serverPrimaryUrl ?? _initialPrimaryUrl,
+                  initialLanUrl:
+                      session?.serverLanFallbackUrl ?? _initialLanUrl,
+                  onAuthenticated: _onAuthenticated,
+                  onCancel: session != null && endpoint != null
+                      ? () => setState(() => _switchingServer = false)
+                      : null,
+                )
+              : Builder(
+                  builder: (navContext) {
+                    final cinemaService = CinemaService(
+                      baseUri: endpoint.baseUri,
+                      accessToken: session.accessToken,
+                      httpClient: _apiHttpClient,
+                    );
+                    final adminService = AdminService(
+                      baseUri: endpoint.baseUri,
+                      accessToken: session.accessToken,
+                      httpClient: _apiHttpClient,
+                    );
+                    final playerConfig = HermesVideoPlayerConfig.hdrSafeDefault(
+                      tokens: _tokens,
+                      rendererBackend: _rendererBackend,
+                    );
 
-                return DualWorldShell(
-                  worldNotifier: _worldNotifier,
-                  username: session.username,
-                  isAdmin: session.isAdmin,
-                  serverName: endpoint.info.serverName,
-                  endpointLabel: endpoint.usedFallback ? 'LAN fallback' : 'Tailscale',
-                  onOpenSearch: () => unawaited(
-                    _openLibrarySearchDialog(navContext, musicService, musicCoordinator),
-                  ),
-                  onOpenSettings: () => setState(
-                    () => _settingsInitialTab = SettingsTabKind.device,
-                  ),
-                  onOpenAccountSettings: () => setState(
-                    () => _settingsInitialTab = SettingsTabKind.account,
-                  ),
-                  onSwitchServer: () => setState(() => _switchingServer = true),
-                  onSignOut: () => unawaited(_signOut()),
-                  adminBuilder: (_) => AdminDashboardScreen(adminService: adminService),
-                  settingsBuilder: (_) => PlayerAndThemeSettingsScreen(
-                    tokens: _tokens,
-                    rendererBackend: _rendererBackend,
-                    defaultVideoQuality: _defaultVideoQuality,
-                    networkMode: musicCoordinator.networkMode,
-                    audioQualityPolicy: musicCoordinator.audioQualityPolicy,
-                    devicePreferences: _devicePrefs,
-                    accountPreferences: _accountPrefs,
-                    username: session.username,
-                    deviceName: Platform.localHostname,
-                    initialTab: _settingsInitialTab,
-                    onThemeChanged: (next) => setState(() => _tokens = next),
-                    onRendererChanged: (next) =>
-                        setState(() => _rendererBackend = next),
-                    onDefaultVideoQualityChanged: (next) =>
-                        setState(() => _defaultVideoQuality = next),
-                    onNetworkModeChanged: musicCoordinator.setNetworkMode,
-                    onAudioQualityPolicyChanged: musicCoordinator.updateQualityPolicy,
-                    onDevicePreferencesChanged: (next) {
-                      setState(() {
-                        _devicePrefs = next;
-                        _tokens = next.toThemeTokens();
-                        _rendererBackend = next.rendererBackend;
-                        _defaultVideoQuality = next.defaultVideoQuality;
-                      });
-                    },
-                    onAccountPreferencesChanged: (next) =>
-                        unawaited(_syncAccountPreferences(next)),
-                    onChangePassword: _changePassword,
-                    onSwitchServer: () => setState(() => _switchingServer = true),
-                    onSignOut: () => unawaited(_signOut()),
-                  ),
+                    return DualWorldShell(
+                      worldNotifier: _worldNotifier,
+                      username: session.username,
+                      isAdmin: session.isAdmin,
+                      serverName: endpoint.info.serverName,
+                      endpointLabel: endpoint.usedFallback ? 'LAN fallback' : 'Tailscale',
+                      onOpenSearch: () => unawaited(
+                        _openLibrarySearchDialog(navContext, musicService, musicCoordinator),
+                      ),
+                      onOpenSettings: () => setState(
+                        () => _settingsInitialTab = SettingsTabKind.device,
+                      ),
+                      onOpenAccountSettings: () => setState(
+                        () => _settingsInitialTab = SettingsTabKind.account,
+                      ),
+                      onSwitchServer: () => setState(() => _switchingServer = true),
+                      onSignOut: () => unawaited(_signOut()),
+                      adminBuilder: (_) => AdminDashboardScreen(adminService: adminService),
+                      settingsBuilder: (_) => PlayerAndThemeSettingsScreen(
+                        tokens: _tokens,
+                        rendererBackend: _rendererBackend,
+                        defaultVideoQuality: _defaultVideoQuality,
+                        networkMode: musicCoordinator.networkMode,
+                        audioQualityPolicy: musicCoordinator.audioQualityPolicy,
+                        devicePreferences: _devicePrefs,
+                        accountPreferences: _accountPrefs,
+                        username: session.username,
+                        deviceName: kIsWeb ? 'Web Browser' : Platform.localHostname,
+                        initialTab: _settingsInitialTab,
+                        onThemeChanged: (next) => setState(() => _tokens = next),
+                        onRendererChanged: (next) =>
+                            setState(() => _rendererBackend = next),
+                        onDefaultVideoQualityChanged: (next) =>
+                            setState(() => _defaultVideoQuality = next),
+                        onNetworkModeChanged: musicCoordinator.setNetworkMode,
+                        onAudioQualityPolicyChanged: (policy) =>
+                            _applyDevicePreferencesState(
+                          _devicePrefs.copyWith(
+                            wifiAudioPreset: policy.wifiPreset,
+                            cellularAudioPreset: policy.cellularPreset,
+                          ),
+                        ),
+                        onDevicePreferencesChanged: _applyDevicePreferencesState,
+                        onAccountPreferencesChanged: (next) =>
+                            unawaited(_syncAccountPreferences(next)),
+                        onChangePassword: _changePassword,
+                        onSwitchServer: () => setState(() => _switchingServer = true),
+                        onSignOut: () => unawaited(_signOut()),
+                      ),
                   cinemaBuilder: (_) => CinemaCatalogScreen(
                     cinemaService: cinemaService,
                     playerConfig: playerConfig,

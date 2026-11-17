@@ -6,6 +6,8 @@ import 'package:flutter/foundation.dart'
 import 'package:flutter/gestures.dart' show kSecondaryMouseButton;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_client/main.dart' show HermesApp;
+import 'package:hermes_client/src/core/auth/session_store.dart';
+import 'package:hermes_client/src/core/settings/hermes_preferences.dart';
 import 'package:hermes_client/src/core/theme/hermes_theme_tokens.dart';
 import 'package:hermes_client/src/features/admin/admin_dashboard_screen.dart';
 import 'package:hermes_client/src/features/admin/admin_models.dart';
@@ -862,7 +864,12 @@ void main() {
         expect(find.bySemanticsLabel('Add to Watchlist'), findsOneWidget);
 
         // Verify root HermesApp wraps Navigator with TooltipVisibility(visible: false) on Windows
-        await tester.pumpWidget(const HermesApp());
+        await tester.pumpWidget(
+          HermesApp(
+            sessionStore: InMemorySessionStore(),
+            preferencesStore: InMemoryDevicePreferencesStore(),
+          ),
+        );
         await tester.pumpAndSettle();
         final visibilityFinder = find.byType(TooltipVisibility);
         expect(visibilityFinder, findsWidgets);
