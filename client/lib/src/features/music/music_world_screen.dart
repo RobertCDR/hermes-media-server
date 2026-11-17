@@ -2010,6 +2010,7 @@ class _HomeShortcutTileState extends State<_HomeShortcutTile> {
 
     return Semantics(
       container: true,
+      explicitChildNodes: true,
       child: MouseRegion(
         onEnter: (_) {
           setState(() => _hovered = true);
@@ -2043,41 +2044,56 @@ class _HomeShortcutTileState extends State<_HomeShortcutTile> {
                   : Colors.white.withValues(alpha: 0.08),
               borderRadius: BorderRadius.circular(4),
             ),
-            child: Row(
+            child: Stack(
+              alignment: Alignment.centerLeft,
               children: [
-                MusicArtworkTile(
-                  size: 56,
-                  title: data.title,
-                  uri: data.artworkUri,
-                  borderRadius: 0,
-                  isLikedCollection: data.isLiked,
-                  isPlaylist: data.isPlaylist,
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    data.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: tokens.text,
+                Row(
+                  children: [
+                    MusicArtworkTile(
+                      size: 56,
+                      title: data.title,
+                      uri: data.artworkUri,
+                      borderRadius: 0,
+                      isLikedCollection: data.isLiked,
+                      isPlaylist: data.isPlaylist,
                     ),
-                  ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Padding(
+                        padding: EdgeInsets.only(right: _hovered ? 52 : 10),
+                        child: Text(
+                          data.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: tokens.text,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                if (_hovered)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: ExcludeSemantics(
-                      child: HermesCircularPlayButton(
-                        size: 38,
-                        iconSize: 15,
-                        onPressed: data.onPlay,
-                        tooltip: 'Play ${data.title}',
+                Positioned(
+                  right: 8,
+                  child: ExcludeSemantics(
+                    child: IgnorePointer(
+                      ignoring: !_hovered,
+                      child: AnimatedOpacity(
+                        alwaysIncludeSemantics: true,
+                        opacity: _hovered ? 1.0 : 0.0,
+                        duration: const Duration(milliseconds: 120),
+                        child: HermesCircularPlayButton(
+                          size: 38,
+                          iconSize: 15,
+                          onPressed: data.onPlay,
+                          tooltip: 'Play ${data.title}',
+                        ),
                       ),
                     ),
                   ),
+                ),
               ],
             ),
           ),

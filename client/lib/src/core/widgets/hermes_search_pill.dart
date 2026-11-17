@@ -110,6 +110,7 @@ class _HermesSearchPillState extends State<HermesSearchPill> {
 
     return Semantics(
       container: true,
+      explicitChildNodes: true,
       child: Theme(
         data: Theme.of(context).copyWith(
         inputDecorationTheme: const InputDecorationTheme(
@@ -178,19 +179,25 @@ class _HermesSearchPillState extends State<HermesSearchPill> {
             if (widget.hasQuery && widget.onClear != null)
               Tooltip(
                 message: 'Clear search',
-                child: InkWell(
-                  key: widget.clearKey,
-                  borderRadius: BorderRadius.circular(99),
-                  onTap: () {
-                    widget.onClear!();
-                    _effectiveFocusNode.requestFocus();
-                  },
-                  child: Padding(
-                    padding: const EdgeInsets.all(2),
-                    child: Icon(
-                      Icons.close_rounded,
-                      size: widget.iconSize - 1,
-                      color: mutedColor,
+                child: Semantics(
+                  container: true,
+                  button: true,
+                  excludeSemantics: true,
+                  label: 'Clear search',
+                  child: InkWell(
+                    key: widget.clearKey,
+                    borderRadius: BorderRadius.circular(99),
+                    onTap: () {
+                      widget.onClear!();
+                      _effectiveFocusNode.requestFocus();
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.all(2),
+                      child: Icon(
+                        Icons.close_rounded,
+                        size: widget.iconSize - 1,
+                        color: mutedColor,
+                      ),
                     ),
                   ),
                 ),

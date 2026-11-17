@@ -556,28 +556,35 @@ class _CircularTransportPlayButtonState
   @override
   Widget build(BuildContext context) {
     final tokens = HermesThemeTokens.of(context);
+    final label = widget.isPlaying ? 'Pause' : 'Play';
     return Tooltip(
-      message: widget.isPlaying ? 'Pause' : 'Play',
-      child: MouseRegion(
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
-        child: AnimatedScale(
-          scale: _hovered ? 1.06 : 1.0,
-          duration: const Duration(milliseconds: 100),
-          child: Material(
-            color: tokens.text,
-            shape: const CircleBorder(),
-            clipBehavior: Clip.antiAlias,
-            child: InkWell(
-              onTap: widget.onPressed,
-              customBorder: const CircleBorder(),
-              child: SizedBox(
-                width: 34,
-                height: 34,
-                child: Center(
-                  child: widget.isPlaying
-                      ? HermesPauseIcon(size: 16, color: tokens.bgSunken)
-                      : HermesPlayIcon(size: 16, color: tokens.bgSunken),
+      message: label,
+      child: Semantics(
+        container: true,
+        button: true,
+        excludeSemantics: true,
+        label: label,
+        child: MouseRegion(
+          onEnter: (_) => setState(() => _hovered = true),
+          onExit: (_) => setState(() => _hovered = false),
+          child: AnimatedScale(
+            scale: _hovered ? 1.06 : 1.0,
+            duration: const Duration(milliseconds: 100),
+            child: Material(
+              color: tokens.text,
+              shape: const CircleBorder(),
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                onTap: widget.onPressed,
+                customBorder: const CircleBorder(),
+                child: SizedBox(
+                  width: 34,
+                  height: 34,
+                  child: Center(
+                    child: widget.isPlaying
+                        ? HermesPauseIcon(size: 16, color: tokens.bgSunken)
+                        : HermesPlayIcon(size: 16, color: tokens.bgSunken),
+                  ),
                 ),
               ),
             ),
@@ -609,33 +616,41 @@ class _CompactIconSlot extends StatelessWidget {
   Widget build(BuildContext context) {
     return Tooltip(
       message: tooltip,
-      child: InkWell(
-        onTap: onPressed,
-        borderRadius: BorderRadius.circular(16),
-        child: SizedBox(
-          width: 32,
-          height: 34,
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              Icon(
-                icon,
-                size: size,
-                color: onPressed == null ? color.withValues(alpha: 0.4) : color,
-              ),
-              if (showActiveDot)
-                Positioned(
-                  bottom: 2,
-                  child: Container(
-                    width: 4,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: color,
-                      shape: BoxShape.circle,
+      child: Semantics(
+        container: true,
+        button: true,
+        enabled: onPressed != null,
+        selected: showActiveDot,
+        excludeSemantics: true,
+        label: tooltip,
+        child: InkWell(
+          onTap: onPressed,
+          borderRadius: BorderRadius.circular(16),
+          child: SizedBox(
+            width: 32,
+            height: 34,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Icon(
+                  icon,
+                  size: size,
+                  color: onPressed == null ? color.withValues(alpha: 0.4) : color,
+                ),
+                if (showActiveDot)
+                  Positioned(
+                    bottom: 2,
+                    child: Container(
+                      width: 4,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: color,
+                        shape: BoxShape.circle,
+                      ),
                     ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -662,47 +677,55 @@ class _RepeatModeSlot extends StatelessWidget {
 
     return Tooltip(
       message: tooltip,
-      child: InkWell(
-        onTap: onPressed,
-        borderRadius: BorderRadius.circular(16),
-        child: SizedBox(
-          width: 32,
-          height: 34,
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              Icon(
-                Icons.repeat_rounded,
-                size: 18,
-                color: onPressed == null ? color.withValues(alpha: 0.4) : color,
-              ),
-              if (mode == HermesRepeatMode.one)
-                Positioned(
-                  top: 3,
-                  right: 3,
-                  child: Text(
-                    '1',
-                    style: TextStyle(
-                      fontSize: 9,
-                      fontWeight: FontWeight.w900,
-                      color: tokens.accent,
-                      height: 1.0,
+      child: Semantics(
+        container: true,
+        button: true,
+        enabled: onPressed != null,
+        selected: active,
+        excludeSemantics: true,
+        label: tooltip,
+        child: InkWell(
+          onTap: onPressed,
+          borderRadius: BorderRadius.circular(16),
+          child: SizedBox(
+            width: 32,
+            height: 34,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Icon(
+                  Icons.repeat_rounded,
+                  size: 18,
+                  color: onPressed == null ? color.withValues(alpha: 0.4) : color,
+                ),
+                if (mode == HermesRepeatMode.one)
+                  Positioned(
+                    top: 3,
+                    right: 3,
+                    child: Text(
+                      '1',
+                      style: TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w900,
+                        color: tokens.accent,
+                        height: 1.0,
+                      ),
                     ),
                   ),
-                ),
-              if (active)
-                Positioned(
-                  bottom: 2,
-                  child: Container(
-                    width: 4,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: color,
-                      shape: BoxShape.circle,
+                if (active)
+                  Positioned(
+                    bottom: 2,
+                    child: Container(
+                      width: 4,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: color,
+                        shape: BoxShape.circle,
+                      ),
                     ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

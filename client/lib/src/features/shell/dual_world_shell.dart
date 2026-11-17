@@ -437,38 +437,45 @@ class _RailDestinationButtonState extends State<_RailDestinationButton> {
         ? tokens.accent
         : (_hovered ? tokens.text : tokens.text3);
 
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: widget.onTap,
-        child: SizedBox(
-          width: 64,
-          child: Padding(
-            padding: const EdgeInsets.only(top: 10, bottom: 8),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  widget.selected ? widget.selectedIcon : widget.icon,
-                  size: 22,
-                  color: iconColor,
-                ),
-                const SizedBox(height: 5),
-                Text(
-                  widget.label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontFamily: 'Figtree',
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: textColor,
+    return Semantics(
+      container: true,
+      button: true,
+      selected: widget.selected,
+      excludeSemantics: true,
+      label: widget.label,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onTap,
+          child: SizedBox(
+            width: 64,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 10, bottom: 8),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    widget.selected ? widget.selectedIcon : widget.icon,
+                    size: 22,
+                    color: iconColor,
                   ),
-                ),
-              ],
+                  const SizedBox(height: 5),
+                  Text(
+                    widget.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontFamily: 'Figtree',
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: textColor,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),

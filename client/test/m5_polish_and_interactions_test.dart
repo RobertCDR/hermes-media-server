@@ -1,8 +1,11 @@
 import 'dart:convert';
 import 'dart:ui' show PointerDeviceKind;
 
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, debugDefaultTargetPlatformOverride;
 import 'package:flutter/gestures.dart' show kSecondaryMouseButton;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_client/main.dart' show HermesApp;
 import 'package:hermes_client/src/core/theme/hermes_theme_tokens.dart';
 import 'package:hermes_client/src/features/admin/admin_dashboard_screen.dart';
 import 'package:hermes_client/src/features/admin/admin_models.dart';
@@ -10,6 +13,7 @@ import 'package:hermes_client/src/features/admin/admin_service.dart';
 import 'package:hermes_client/src/features/cinema/cinema_catalog_screen.dart';
 import 'package:hermes_client/src/features/cinema/cinema_models.dart';
 import 'package:hermes_client/src/features/cinema/cinema_service.dart';
+import 'package:hermes_client/src/features/cinema/cinema_shared_widgets.dart';
 import 'package:hermes_client/src/features/cinema/hermes_video_player.dart';
 import 'package:hermes_client/src/features/music/music_models.dart';
 import 'package:hermes_client/src/features/music/music_playback_coordinator.dart';
@@ -756,22 +760,31 @@ void main() {
         await tester.pumpWidget(
           MaterialApp(
             theme: tokens.toThemeData(),
-            home: Scaffold(
-              body: MusicWorldScreen(
-                musicService: service,
-                coordinator: coordinator,
+            home: TooltipVisibility(
+              visible: false,
+              child: Scaffold(
+                body: MusicWorldScreen(
+                  musicService: service,
+                  coordinator: coordinator,
+                ),
               ),
             ),
           ),
         );
         await tester.pumpAndSettle();
 
-        await tester.tap(find.text('Songs').first);
-        await tester.pumpAndSettle();
-
+        // Hover Home shortcut tiles & browse cards rapidly first
         final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
         await gesture.addPointer(location: Offset.zero);
         addTearDown(gesture.removePointer);
+
+        await gesture.moveTo(tester.getCenter(find.text('Album One').first));
+        await tester.pump(const Duration(milliseconds: 50));
+        await gesture.moveTo(tester.getCenter(find.byType(MusicBrowseCard).first));
+        await tester.pump(const Duration(milliseconds: 50));
+
+        await tester.tap(find.text('Songs').first);
+        await tester.pumpAndSettle();
 
         for (var i = 0; i < 6; i++) {
           final trackFinder = find.text('Track $i').first;
@@ -781,6 +794,9 @@ void main() {
           await tester.pump(const Duration(milliseconds: 40));
         }
 
+        // Verify semantic button labels survive TooltipVisibility(visible: false)
+        expect(find.bySemanticsLabel('Save to Liked Songs'), findsWidgets);
+
         await tester.tap(find.byKey(const Key('music-search-input')));
         await tester.pump();
         await tester.enterText(find.byKey(const Key('music-search-input')), 'Track 42');
@@ -788,6 +804,73 @@ void main() {
 
         expect(find.text('Track 42'), findsWidgets);
       } finally {
+        semanticsHandle.dispose();
+      }
+    });
+
+    testWidgets('Cinema poster & landscape cards keep stable Semantics on hover and HermesApp suppresses Windows Tooltip OverlayPortal', (tester) async {
+      final semanticsHandle = tester.ensureSemantics();
+      debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+      try {
+        final tokens = HermesThemeTokens.resolve(themeId: HermesThemeId.crimson);
+        var watchlisted = false;
+
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: tokens.toThemeData(),
+            home: TooltipVisibility(
+              visible: false,
+              child: Scaffold(
+                body: Row(
+                  children: [
+                    CinemaPosterCard(
+                      itemKey: 'mov-1',
+                      title: 'Dune',
+                      subtitle: '2021',
+                      artworkUri: Uri.parse('http://localhost:5258/api/v1/artwork/hash/poster'),
+                      fallbackIcon: Icons.movie_outlined,
+                      inWatchlist: watchlisted,
+                      onTap: () {},
+                      onToggleWatchlist: () => watchlisted = !watchlisted,
+                    ),
+                    const SizedBox(width: 16),
+                    CinemaLandscapeCard(
+                      title: 'Severance',
+                      subtitle: 'S01E01 · Good News',
+                      artworkUri: Uri.parse('http://localhost:5258/api/v1/artwork/hash2/thumb'),
+                      progress: 0.45,
+                      onTap: () {},
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+        await gesture.addPointer(location: Offset.zero);
+        addTearDown(gesture.removePointer);
+
+        await gesture.moveTo(tester.getCenter(find.byType(CinemaPosterCard)));
+        await tester.pump(const Duration(milliseconds: 60));
+        await gesture.moveTo(tester.getCenter(find.byType(CinemaLandscapeCard)));
+        await tester.pump(const Duration(milliseconds: 60));
+
+        expect(find.bySemanticsLabel('Add to Watchlist'), findsOneWidget);
+
+        // Verify root HermesApp wraps Navigator with TooltipVisibility(visible: false) on Windows
+        await tester.pumpWidget(const HermesApp());
+        await tester.pumpAndSettle();
+        final visibilityFinder = find.byType(TooltipVisibility);
+        expect(visibilityFinder, findsWidgets);
+        expect(
+          tester.widgetList<TooltipVisibility>(visibilityFinder).any((w) => !w.visible),
+          isTrue,
+        );
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
         semanticsHandle.dispose();
       }
     });

@@ -207,26 +207,33 @@ class _HermesCircularPlayButtonState extends State<HermesCircularPlayButton> {
     final iconSz = widget.iconSize ?? (widget.size * 0.44);
     final enabled = widget.onPressed != null;
 
-    final child = MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      child: AnimatedScale(
-        scale: (_hovered && enabled) ? 1.05 : 1.0,
-        duration: const Duration(milliseconds: 110),
-        child: Material(
-          color: enabled ? bg : bg.withValues(alpha: 0.4),
-          shape: const CircleBorder(),
-          clipBehavior: Clip.antiAlias,
-          child: InkWell(
-            onTap: widget.onPressed,
-            customBorder: const CircleBorder(),
-            child: SizedBox(
-              width: widget.size,
-              height: widget.size,
-              child: Center(
-                child: widget.isPlaying
-                    ? HermesPauseIcon(size: iconSz, color: fg)
-                    : HermesPlayIcon(size: iconSz, color: fg),
+    final child = Semantics(
+      container: true,
+      button: true,
+      enabled: enabled,
+      excludeSemantics: true,
+      label: widget.tooltip ?? (widget.isPlaying ? 'Pause' : 'Play'),
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: AnimatedScale(
+          scale: (_hovered && enabled) ? 1.05 : 1.0,
+          duration: const Duration(milliseconds: 110),
+          child: Material(
+            color: enabled ? bg : bg.withValues(alpha: 0.4),
+            shape: const CircleBorder(),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: widget.onPressed,
+              customBorder: const CircleBorder(),
+              child: SizedBox(
+                width: widget.size,
+                height: widget.size,
+                child: Center(
+                  child: widget.isPlaying
+                      ? HermesPauseIcon(size: iconSz, color: fg)
+                      : HermesPlayIcon(size: iconSz, color: fg),
+                ),
               ),
             ),
           ),
@@ -272,26 +279,28 @@ class MusicArtworkTile extends StatelessWidget {
         : BorderRadius.circular(borderRadius);
 
     if (isLikedCollection) {
-      return ClipRRect(
-        borderRadius: radius,
-        child: Container(
-          width: size,
-          height: size,
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                tokens.accent.withValues(alpha: 0.55),
-                tokens.accent,
-              ],
+      return ExcludeSemantics(
+        child: ClipRRect(
+          borderRadius: radius,
+          child: Container(
+            width: size,
+            height: size,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  tokens.accent.withValues(alpha: 0.55),
+                  tokens.accent,
+                ],
+              ),
             ),
-          ),
-          child: Center(
-            child: Icon(
-              Icons.favorite_rounded,
-              color: Colors.white,
-              size: (size * 0.42).clamp(16.0, 72.0),
+            child: Center(
+              child: Icon(
+                Icons.favorite_rounded,
+                color: Colors.white,
+                size: (size * 0.42).clamp(16.0, 72.0),
+              ),
             ),
           ),
         ),
@@ -304,17 +313,19 @@ class MusicArtworkTile extends StatelessWidget {
         SmartPlaylistKind.losslessMasters => Icons.graphic_eq_rounded,
         SmartPlaylistKind.freshMix => Icons.shuffle_rounded,
       };
-      return ClipRRect(
-        borderRadius: radius,
-        child: Container(
-          width: size,
-          height: size,
-          color: tokens.surface3,
-          child: Center(
-            child: Icon(
-              icon,
-              color: tokens.accent,
-              size: (size * 0.42).clamp(16.0, 72.0),
+      return ExcludeSemantics(
+        child: ClipRRect(
+          borderRadius: radius,
+          child: Container(
+            width: size,
+            height: size,
+            color: tokens.surface3,
+            child: Center(
+              child: Icon(
+                icon,
+                color: tokens.accent,
+                size: (size * 0.42).clamp(16.0, 72.0),
+              ),
             ),
           ),
         ),
@@ -432,32 +443,39 @@ class _DotIconToggle extends StatelessWidget {
     final tokens = HermesThemeTokens.of(context);
     return Tooltip(
       message: tooltip,
-      child: InkWell(
-        onTap: onPressed,
-        borderRadius: BorderRadius.circular(18),
-        child: SizedBox(
-          width: 36,
-          height: 36,
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                icon,
-                size: 20,
-                color: active ? tokens.accent : tokens.text2,
-              ),
-              if (active) ...[
-                const SizedBox(height: 2),
-                Container(
-                  width: 4,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: tokens.accent,
-                    shape: BoxShape.circle,
-                  ),
+      child: Semantics(
+        container: true,
+        button: true,
+        selected: active,
+        excludeSemantics: true,
+        label: tooltip,
+        child: InkWell(
+          onTap: onPressed,
+          borderRadius: BorderRadius.circular(18),
+          child: SizedBox(
+            width: 36,
+            height: 36,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  icon,
+                  size: 20,
+                  color: active ? tokens.accent : tokens.text2,
                 ),
+                if (active) ...[
+                  const SizedBox(height: 2),
+                  Container(
+                    width: 4,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: tokens.accent,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),
@@ -772,6 +790,7 @@ class _TrackTableRowState extends State<_TrackTableRow> {
 
     return Semantics(
       container: true,
+      explicitChildNodes: true,
       child: MouseRegion(
         onEnter: (_) => setState(() => _hovered = true),
         onExit: (_) => setState(() => _hovered = false),
@@ -871,19 +890,27 @@ class _TrackTableRowState extends State<_TrackTableRow> {
                 ),
               SizedBox(
                 width: 40,
-                child: Opacity(
-                  alwaysIncludeSemantics: true,
-                  opacity: (song.isLiked || _hovered || !widget.wide) ? 1.0 : 0.0,
-                  child: IconButton(
-                    tooltip: song.isLiked ? 'Remove from Liked Songs' : 'Save to Liked Songs',
-                    padding: EdgeInsets.zero,
-                    visualDensity: VisualDensity.compact,
-                    icon: Icon(
-                      song.isLiked ? Icons.favorite_rounded : Icons.favorite_border_rounded,
-                      size: 17,
-                      color: song.isLiked ? tokens.accent : tokens.text2,
+                child: Semantics(
+                  container: true,
+                  button: true,
+                  toggled: song.isLiked,
+                  excludeSemantics: true,
+                  label: song.isLiked ? 'Remove from Liked Songs' : 'Save to Liked Songs',
+                  onTap: widget.onToggleLike,
+                  child: Opacity(
+                    alwaysIncludeSemantics: true,
+                    opacity: (song.isLiked || _hovered || !widget.wide) ? 1.0 : 0.0,
+                    child: IconButton(
+                      tooltip: song.isLiked ? 'Remove from Liked Songs' : 'Save to Liked Songs',
+                      padding: EdgeInsets.zero,
+                      visualDensity: VisualDensity.compact,
+                      icon: Icon(
+                        song.isLiked ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+                        size: 17,
+                        color: song.isLiked ? tokens.accent : tokens.text2,
+                      ),
+                      onPressed: widget.onToggleLike,
                     ),
-                    onPressed: widget.onToggleLike,
                   ),
                 ),
               ),
@@ -997,6 +1024,7 @@ class _MusicBrowseCardState extends State<MusicBrowseCard> {
 
     return Semantics(
       container: true,
+      explicitChildNodes: true,
       child: MouseRegion(
         onEnter: (_) => setState(() => _hovered = true),
         onExit: (_) => setState(() => _hovered = false),
@@ -1040,9 +1068,9 @@ class _MusicBrowseCardState extends State<MusicBrowseCard> {
                             Positioned(
                               right: 8,
                               bottom: 8,
-                              child: IgnorePointer(
-                                ignoring: !_hovered,
-                                child: ExcludeSemantics(
+                              child: ExcludeSemantics(
+                                child: IgnorePointer(
+                                  ignoring: !_hovered,
                                   child: AnimatedOpacity(
                                     alwaysIncludeSemantics: true,
                                     opacity: _hovered ? 1.0 : 0.0,

@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:http/http.dart' as http;
 import 'package:material_ui/material_ui.dart';
 import 'src/core/auth/auth_service.dart';
@@ -273,12 +275,19 @@ class _HermesAppState extends State<HermesApp> {
       theme: _tokens.toThemeData(),
       builder: (context, child) {
         final media = MediaQuery.of(context);
+        final suppressDesktopTooltips =
+            !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
+        // Disable Material Tooltip OverlayPortal mounting on Windows desktop to
+        // prevent Flutter #182444 AXTree desync across scrolling/hovering UIs.
         return MediaQuery(
           data: media.copyWith(
             textScaler: TextScaler.linear(_devicePrefs.textSize.scaleFactor),
             disableAnimations: _devicePrefs.reduceMotion,
           ),
-          child: child ?? const SizedBox.shrink(),
+          child: TooltipVisibility(
+            visible: !suppressDesktopTooltips,
+            child: child ?? const SizedBox.shrink(),
+          ),
         );
       },
       home: _switchingServer ||
