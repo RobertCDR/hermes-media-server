@@ -7,6 +7,7 @@ import 'package:material_ui/material_ui.dart';
 import 'src/core/auth/auth_service.dart';
 import 'src/core/auth/authenticated_http_client.dart';
 import 'src/core/auth/session_store.dart';
+import 'src/core/media/hermes_media_runtime.dart';
 import 'src/core/network/endpoint_resolver.dart';
 import 'src/core/network/hermes_sync_client.dart';
 import 'src/core/settings/hermes_preferences.dart';
@@ -33,6 +34,8 @@ import 'src/features/settings/player_and_theme_settings_screen.dart';
 import 'src/features/shell/dual_world_shell.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  HermesMediaRuntime.ensureInitialized();
   runApp(const HermesApp());
 }
 
