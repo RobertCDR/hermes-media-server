@@ -17,6 +17,8 @@ public sealed record AlbumSummaryDto(
     string? ArtworkHash,
     int SongCount);
 
+public sealed record SongArtistCreditDto(Guid ArtistId, string Name);
+
 public sealed record SongDto(
     Guid Id,
     Guid ArtistId,
@@ -34,7 +36,8 @@ public sealed record SongDto(
     string? ArtworkHash,
     bool IsLiked,
     bool IsMissing,
-    DateTimeOffset FileLastWriteUtc = default);
+    DateTimeOffset FileLastWriteUtc = default,
+    IReadOnlyList<SongArtistCreditDto>? ArtistCredits = null);
 
 public sealed record AlbumDetailDto(
     Guid Id,
@@ -129,3 +132,24 @@ public sealed record RemoteTransportCommand(
 public sealed record TransferOutputCommand(string TargetDeviceId);
 
 public sealed record ProgressHeartbeatCommand(long PositionMs);
+
+public sealed record RecordListenRequest(
+    Guid SongId,
+    long PositionMs,
+    long DurationMs,
+    string? DeviceId = null,
+    string? ContextLabel = null,
+    DateTimeOffset? ListenedAtUtc = null);
+
+public sealed record RecordListenResponse(
+    Guid Id,
+    Guid SongId,
+    DateTimeOffset ListenedAtUtc,
+    bool Deduped);
+
+public sealed record ListeningHistoryItemDto(
+    Guid Id,
+    DateTimeOffset ListenedAtUtc,
+    string? DeviceId,
+    string? ContextLabel,
+    SongDto Song);

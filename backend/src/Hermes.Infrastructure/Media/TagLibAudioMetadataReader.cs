@@ -1,3 +1,4 @@
+using Hermes.Domain.Common;
 using Hermes.Domain.Ports;
 
 namespace Hermes.Infrastructure.Media;
@@ -19,10 +20,18 @@ public sealed class TagLibAudioMetadataReader : IAudioMetadataReader
                 ? Path.GetFileNameWithoutExtension(filePath)
                 : tagFile.Tag.Title.Trim();
 
-            var rawArtist = !string.IsNullOrWhiteSpace(tagFile.Tag.FirstPerformer)
-                ? tagFile.Tag.FirstPerformer
-                : tagFile.Tag.FirstAlbumArtist;
-            var artist = string.IsNullOrWhiteSpace(rawArtist) ? "Unknown Artist" : rawArtist.Trim();
+            var performerCredits = ArtistCreditParser.FromPerformerTags(tagFile.Tag.Performers);
+            if (performerCredits.Count == 0 && !string.IsNullOrWhiteSpace(tagFile.Tag.FirstAlbumArtist))
+            {
+                performerCredits = ArtistCreditParser.FromPerformerTags([tagFile.Tag.FirstAlbumArtist]);
+            }
+
+            if (performerCredits.Count == 0)
+            {
+                performerCredits = ["Unknown Artist"];
+            }
+
+            var artist = performerCredits[0];
 
             var album = string.IsNullOrWhiteSpace(tagFile.Tag.Album)
                 ? "Unknown Album"
@@ -40,7 +49,7 @@ public sealed class TagLibAudioMetadataReader : IAudioMetadataReader
 
             return new ProbedAudioTrackMetadata(
                 title,
-                artist.Trim(),
+                artist,
                 album,
                 year,
                 track,
@@ -50,7 +59,8 @@ public sealed class TagLibAudioMetadataReader : IAudioMetadataReader
                 bitrateBps,
                 sampleRate,
                 bitDepth,
-                artwork is { Length: > 0 } ? artwork : null);
+                artwork is { Length: > 0 } ? artwork : null,
+                performerCredits);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

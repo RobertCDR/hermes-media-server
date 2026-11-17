@@ -23,6 +23,8 @@ public static class MusicEndpoints
         music.MapGet("/songs/{id:guid}/lyrics", GetSongLyricsAsync).WithName("GetSongLyrics");
         music.MapGet("/songs/liked", ListLikedSongsAsync).WithName("ListLikedSongs");
         music.MapPost("/songs/{id:guid}/like", ToggleLikeSongAsync).WithName("ToggleLikeSong");
+        music.MapGet("/history", ListListeningHistoryAsync).WithName("ListListeningHistory");
+        music.MapPost("/history", RecordListeningHistoryAsync).WithName("RecordListeningHistory");
         music.MapGet("/session", GetCurrentPlaybackSessionAsync).WithName("GetPlaybackSession");
         music.MapGet("/devices", GetOnlineDevicesAsync).WithName("GetOnlineDevices");
 
@@ -67,9 +69,8 @@ public static class MusicEndpoints
 
         var songs = await db.Songs
             .AsNoTracking()
-            .Include(s => s.Artist)
-            .Include(s => s.Album)
-            .Where(s => s.ArtistId == id)
+            .IncludeSongDetails()
+            .Where(s => s.ArtistId == id || s.SongArtists.Any(sa => sa.ArtistId == id))
             .OrderBy(s => s.Album.Title)
             .ThenBy(s => s.DiscNumber)
             .ThenBy(s => s.TrackNumber)
@@ -79,12 +80,14 @@ public static class MusicEndpoints
         var likedSet = await LoadLikedSongIdsAsync(db, userId, cancellationToken);
 
         var albumDtos = artist.Albums
+            .Concat(songs.Select(s => s.Album))
+            .DistinctBy(a => a.Id)
             .OrderBy(a => a.Year ?? int.MaxValue)
             .ThenBy(a => a.Title)
             .Select(a => new AlbumSummaryDto(
                 a.Id,
-                artist.Id,
-                artist.Name,
+                a.ArtistId,
+                a.Artist?.Name ?? artist.Name,
                 a.Title,
                 a.Year,
                 a.ArtworkHash,
@@ -141,8 +144,7 @@ public static class MusicEndpoints
 
         var songs = await db.Songs
             .AsNoTracking()
-            .Include(s => s.Artist)
-            .Include(s => s.Album)
+            .IncludeSongDetails()
             .Where(s => s.AlbumId == id)
             .OrderBy(s => s.DiscNumber)
             .ThenBy(s => s.TrackNumber)
@@ -173,8 +175,7 @@ public static class MusicEndpoints
 
         var songs = await db.Songs
             .AsNoTracking()
-            .Include(s => s.Artist)
-            .Include(s => s.Album)
+            .IncludeSongDetails()
             .OrderBy(s => s.Artist.Name)
             .ThenBy(s => s.Album.Title)
             .ThenBy(s => s.DiscNumber)
@@ -201,13 +202,158 @@ public static class MusicEndpoints
             .Where(l => l.UserId == userId)
             .OrderByDescending(l => l.LikedAtUtc)
             .Join(
-                db.Songs.AsNoTracking().Include(s => s.Artist).Include(s => s.Album),
+                db.Songs.AsNoTracking().IncludeSongDetails(),
                 l => l.SongId,
                 s => s.Id,
                 (_, s) => s)
             .ToListAsync(cancellationToken);
 
         return Results.Ok(likedRows.Select(s => MapSong(s, isLiked: true)).ToList());
+    }
+
+    private static async Task<IResult> ListListeningHistoryAsync(
+        ClaimsPrincipal principal,
+        HermesDbContext db,
+        CancellationToken cancellationToken,
+        int limit = 40)
+    {
+        if (!principal.TryGetUserId(out var userId))
+        {
+            return Results.Unauthorized();
+        }
+
+        var clampedLimit = Math.Clamp(limit, 1, 100);
+        var recentBySong = await db.ListeningHistoryEntries
+            .AsNoTracking()
+            .Where(h => h.UserId == userId && h.Song.MissingSinceUtc == null)
+            .GroupBy(h => h.SongId)
+            .Select(g => new
+            {
+                SongId = g.Key,
+                LastListenedAtUtc = g.Max(h => h.ListenedAtUtc)
+            })
+            .OrderByDescending(x => x.LastListenedAtUtc)
+            .Take(clampedLimit)
+            .ToListAsync(cancellationToken);
+
+        if (recentBySong.Count == 0)
+        {
+            return Results.Ok(Array.Empty<ListeningHistoryItemDto>());
+        }
+
+        var songIds = recentBySong.Select(x => x.SongId).ToList();
+        var latestEntries = await db.ListeningHistoryEntries
+            .AsNoTracking()
+            .Where(h => h.UserId == userId && songIds.Contains(h.SongId))
+            .OrderByDescending(h => h.ListenedAtUtc)
+            .ToListAsync(cancellationToken);
+
+        var entryBySong = latestEntries
+            .GroupBy(h => h.SongId)
+            .ToDictionary(g => g.Key, g => g.First());
+
+        var songsById = await db.Songs
+            .AsNoTracking()
+            .IncludeSongDetails()
+            .Where(s => songIds.Contains(s.Id))
+            .ToDictionaryAsync(s => s.Id, cancellationToken);
+
+        var likedSet = await LoadLikedSongIdsAsync(db, userId, cancellationToken);
+        var results = new List<ListeningHistoryItemDto>(recentBySong.Count);
+
+        foreach (var row in recentBySong)
+        {
+            if (!songsById.TryGetValue(row.SongId, out var song) ||
+                !entryBySong.TryGetValue(row.SongId, out var entry))
+            {
+                continue;
+            }
+
+            results.Add(new ListeningHistoryItemDto(
+                entry.Id,
+                entry.ListenedAtUtc,
+                entry.DeviceId,
+                entry.ContextLabel,
+                MapSong(song, likedSet.Contains(song.Id))));
+        }
+
+        return Results.Ok(results);
+    }
+
+    private static async Task<IResult> RecordListeningHistoryAsync(
+        RecordListenRequest request,
+        ClaimsPrincipal principal,
+        HermesDbContext db,
+        TimeProvider timeProvider,
+        CancellationToken cancellationToken)
+    {
+        if (!principal.TryGetUserId(out var userId))
+        {
+            return Results.Unauthorized();
+        }
+
+        if (request.SongId == Guid.Empty)
+        {
+            return Results.BadRequest(new { error = "song_id_required" });
+        }
+
+        var song = await db.Songs
+            .AsNoTracking()
+            .SingleOrDefaultAsync(s => s.Id == request.SongId, cancellationToken);
+        if (song is null)
+        {
+            return Results.NotFound(new { error = "song_not_found" });
+        }
+
+        var effectiveDurationMs = song.DurationMs > 0 ? song.DurationMs : Math.Max(0L, request.DurationMs);
+        var thresholdMs = ListeningHistoryEntry.GetListenThresholdMs(effectiveDurationMs);
+        var safePositionMs = Math.Max(0L, request.PositionMs);
+        if (safePositionMs < thresholdMs)
+        {
+            return Results.BadRequest(new { error = "listen_below_threshold" });
+        }
+
+        var utcNow = timeProvider.GetUtcNow();
+        var listenedAtUtc = request.ListenedAtUtc is { } explicitTs && explicitTs <= utcNow.AddMinutes(5)
+            ? explicitTs.ToUniversalTime()
+            : utcNow;
+
+        var windowStart = listenedAtUtc.Subtract(ListeningHistoryEntry.DuplicateWindow);
+        var normalizedDevice = string.IsNullOrWhiteSpace(request.DeviceId) ? null : request.DeviceId.Trim();
+
+        var existingQuery = db.ListeningHistoryEntries
+            .AsNoTracking()
+            .Where(h => h.UserId == userId && h.SongId == request.SongId && h.ListenedAtUtc >= windowStart);
+
+        if (normalizedDevice is not null)
+        {
+            existingQuery = existingQuery.Where(h => h.DeviceId == normalizedDevice);
+        }
+
+        var duplicate = await existingQuery
+            .OrderByDescending(h => h.ListenedAtUtc)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (duplicate is not null)
+        {
+            return Results.Ok(new RecordListenResponse(duplicate.Id, duplicate.SongId, duplicate.ListenedAtUtc, Deduped: true));
+        }
+
+        var entry = new ListeningHistoryEntry(
+            userId,
+            request.SongId,
+            safePositionMs,
+            effectiveDurationMs,
+            normalizedDevice,
+            request.ContextLabel,
+            listenedAtUtc);
+
+        db.ListeningHistoryEntries.Add(entry);
+        await db.SaveChangesAsync(cancellationToken);
+
+        return Results.Created(
+            "/api/v1/music/history",
+            new RecordListenResponse(entry.Id, entry.SongId, entry.ListenedAtUtc, Deduped: false));
     }
 
     private static async Task<IResult> ToggleLikeSongAsync(
@@ -331,8 +477,7 @@ public static class MusicEndpoints
 
         var songs = await db.Songs
             .AsNoTracking()
-            .Include(s => s.Artist)
-            .Include(s => s.Album)
+            .IncludeSongDetails()
             .Where(s => EF.Functions.ILike(s.Title, pattern, "\\"))
             .OrderBy(s => s.Title)
             .Take(25)
@@ -349,6 +494,13 @@ public static class MusicEndpoints
             songs.Select(s => MapSong(s, likedSet.Contains(s.Id))).ToList()));
     }
 
+    internal static IQueryable<Song> IncludeSongDetails(this IQueryable<Song> query) =>
+        query
+            .Include(s => s.Artist)
+            .Include(s => s.Album)
+            .Include(s => s.SongArtists)
+            .ThenInclude(sa => sa.Artist);
+
     internal static async Task<HashSet<Guid>> LoadLikedSongIdsAsync(
         HermesDbContext db,
         Guid userId,
@@ -363,11 +515,24 @@ public static class MusicEndpoints
         return [.. ids];
     }
 
-    internal static SongDto MapSong(Song song, bool isLiked) =>
-        new(
+    internal static SongDto MapSong(Song song, bool isLiked)
+    {
+        var credits = song.SongArtists
+            .OrderBy(sa => sa.Position)
+            .Select(sa => new SongArtistCreditDto(sa.ArtistId, sa.Artist.Name))
+            .ToList();
+
+        if (credits.Count == 0)
+        {
+            credits.Add(new SongArtistCreditDto(song.ArtistId, song.Artist.Name));
+        }
+
+        var displayArtist = string.Join(", ", credits.Select(c => c.Name));
+
+        return new SongDto(
             song.Id,
             song.ArtistId,
-            song.Artist.Name,
+            displayArtist,
             song.AlbumId,
             song.Album.Title,
             song.Title,
@@ -381,7 +546,9 @@ public static class MusicEndpoints
             song.Album.ArtworkHash,
             isLiked,
             song.MissingSinceUtc is not null,
-            song.FileLastWriteUtc);
+            song.FileLastWriteUtc,
+            credits);
+    }
 
     private static async Task<IResult> GetSongLyricsAsync(
         Guid id,

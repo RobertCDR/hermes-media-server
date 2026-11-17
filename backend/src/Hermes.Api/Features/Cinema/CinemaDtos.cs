@@ -109,3 +109,29 @@ public sealed record WatchlistResponse(bool InWatchlist);
 public sealed record MarkSeriesWatchedRequest(bool Watched);
 
 public sealed record SeriesWatchedResponse(Guid SeriesId, bool Watched, int EpisodesUpdated);
+
+public sealed record CustomListItemDto(
+    Guid Id,
+    Guid? MovieId,
+    Guid? TvSeriesId,
+    string MediaKind,
+    string Title,
+    int? Year,
+    string? ArtworkHash,
+    double? Rating,
+    int Position,
+    DateTimeOffset AddedAtUtc);
+
+public sealed record CustomListDto(
+    Guid Id,
+    string Name,
+    string? Description,
+    DateTimeOffset CreatedAtUtc,
+    DateTimeOffset UpdatedAtUtc,
+    List<CustomListItemDto> Items);
+
+public sealed record CreateCustomListRequest(string Name, string? Description = null);
+
+public sealed record UpdateCustomListRequest(string Name, string? Description = null);
+
+public sealed record AddCustomListItemRequest(Guid? MovieId, Guid? TvSeriesId);

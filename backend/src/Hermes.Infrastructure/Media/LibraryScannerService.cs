@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Hermes.Domain.Common;
 using Hermes.Domain.Entities;
 using Hermes.Domain.Enums;
 using Hermes.Domain.Ports;
@@ -325,6 +326,7 @@ public sealed partial class LibraryScannerService(
         var discoveredSet = new HashSet<string>(files, StringComparer.Ordinal);
 
         var existingSongs = await db.Songs
+            .Include(s => s.SongArtists)
             .Where(s => s.LibraryRootId == root.Id)
             .ToListAsync(cancellationToken);
         var songsByPath = existingSongs.ToDictionary(s => s.FilePath, StringComparer.Ordinal);
@@ -341,6 +343,27 @@ public sealed partial class LibraryScannerService(
                 var existingInfo = new FileInfo(filePath);
                 var existingWriteUtc = new DateTimeOffset(existingInfo.LastWriteTimeUtc, TimeSpan.Zero);
                 existingSong.UpdateFileFingerprint(existingInfo.Length, existingWriteUtc);
+                if (existingSong.SongArtists.Count == 0)
+                {
+                    var refreshedMeta = audioMetadataReader.ReadMetadata(filePath);
+                    if (refreshedMeta is not null)
+                    {
+                        var refreshedCredits = ResolveArtistCredits(refreshedMeta);
+                        var creditArtists = EnsureArtistsExist(artistsByName, refreshedCredits);
+                        for (var pos = 0; pos < creditArtists.Count; pos++)
+                        {
+                            var sa = new SongArtist(existingSong.Id, creditArtists[pos].Id, pos);
+                            existingSong.SongArtists.Add(sa);
+                            db.SongArtists.Add(sa);
+                        }
+                    }
+                    else
+                    {
+                        var fallbackSa = new SongArtist(existingSong.Id, existingSong.ArtistId, 0);
+                        existingSong.SongArtists.Add(fallbackSa);
+                        db.SongArtists.Add(fallbackSa);
+                    }
+                }
                 continue;
             }
 
@@ -350,13 +373,9 @@ public sealed partial class LibraryScannerService(
                 continue;
             }
 
-            var artistKey = NormalizeKey(meta.ArtistName);
-            if (!artistsByName.TryGetValue(artistKey, out var artist))
-            {
-                artist = new Artist(meta.ArtistName);
-                db.Artists.Add(artist);
-                artistsByName[artistKey] = artist;
-            }
+            var creditNames = ResolveArtistCredits(meta);
+            var creditedArtists = EnsureArtistsExist(artistsByName, creditNames);
+            var artist = creditedArtists[0];
 
             var album = artist.Albums.FirstOrDefault(
                 a => string.Equals(a.Title, meta.AlbumTitle, StringComparison.OrdinalIgnoreCase));
@@ -399,8 +418,41 @@ public sealed partial class LibraryScannerService(
                 lastWriteUtc);
 
             db.Songs.Add(song);
+            for (var pos = 0; pos < creditedArtists.Count; pos++)
+            {
+                var link = new SongArtist(song.Id, creditedArtists[pos].Id, pos);
+                song.SongArtists.Add(link);
+                db.SongArtists.Add(link);
+            }
+
             songsByPath[filePath] = song;
             upserted++;
+        }
+
+        List<Artist> EnsureArtistsExist(Dictionary<string, Artist> lookup, IReadOnlyList<string> names)
+        {
+            var resolved = new List<Artist>(names.Count);
+            foreach (var name in names)
+            {
+                var key = NormalizeKey(name);
+                if (!lookup.TryGetValue(key, out var found))
+                {
+                    found = new Artist(name);
+                    db.Artists.Add(found);
+                    lookup[key] = found;
+                }
+                resolved.Add(found);
+            }
+            return resolved;
+        }
+
+        static IReadOnlyList<string> ResolveArtistCredits(ProbedAudioTrackMetadata meta)
+        {
+            var raw = meta.ArtistCredits is { Count: > 0 }
+                ? meta.ArtistCredits
+                : ArtistCreditParser.FromPerformerTags([meta.ArtistName]);
+            var normalized = ArtistCreditParser.NormalizeArtistNames(raw);
+            return normalized.Count > 0 ? normalized : ["Unknown Artist"];
         }
 
         var utcNow = timeProvider.GetUtcNow();

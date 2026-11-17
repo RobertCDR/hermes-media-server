@@ -222,6 +222,7 @@ app.MapIdentifyEndpoints();
 app.MapAdminSessionEndpoints();
 app.MapArtworkEndpoints();
 app.MapCinemaEndpoints();
+app.MapCustomListEndpoints();
 app.MapWatchProgressEndpoints();
 app.MapStreamEndpoints();
 app.MapMusicEndpoints();
