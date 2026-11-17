@@ -33,7 +33,8 @@ public sealed record SongDto(
     int BitDepth,
     string? ArtworkHash,
     bool IsLiked,
-    bool IsMissing);
+    bool IsMissing,
+    DateTimeOffset FileLastWriteUtc = default);
 
 public sealed record AlbumDetailDto(
     Guid Id,
@@ -73,7 +74,13 @@ public sealed record PlaylistDetailDto(
 
 public sealed record CreatePlaylistRequest(string Name, string? Description = null);
 
+public sealed record RenamePlaylistRequest(string Name, string? Description = null);
+
 public sealed record AddPlaylistTrackRequest(Guid SongId);
+
+public sealed record SongLyricLineDto(long? TimestampMs, string Text);
+
+public sealed record SongLyricsDto(Guid SongId, bool IsSynced, string Source, IReadOnlyList<SongLyricLineDto> Lines);
 
 public sealed record UnifiedSearchMovieHit(Guid Id, string Title, int? Year, string? ArtworkHash);
 

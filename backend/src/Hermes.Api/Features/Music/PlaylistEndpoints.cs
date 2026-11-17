@@ -16,6 +16,8 @@ public static class PlaylistEndpoints
         playlists.MapGet("/", ListPlaylistsAsync).WithName("ListPlaylists");
         playlists.MapGet("/{id:guid}", GetPlaylistAsync).WithName("GetPlaylist");
         playlists.MapPost("/", CreatePlaylistAsync).WithName("CreatePlaylist");
+        playlists.MapPut("/{id:guid}", RenamePlaylistAsync).WithName("RenamePlaylist");
+        playlists.MapDelete("/{id:guid}", DeletePlaylistAsync).WithName("DeletePlaylist");
         playlists.MapPost("/{id:guid}/tracks", AddTrackAsync).WithName("AddPlaylistTrack");
         playlists.MapDelete("/{id:guid}/tracks/{position:int}", RemoveTrackAsync).WithName("RemovePlaylistTrack");
 
@@ -96,6 +98,68 @@ public static class PlaylistEndpoints
             []);
 
         return Results.Created($"/api/v1/music/playlists/{playlist.Id}", detail);
+    }
+
+    private static async Task<IResult> RenamePlaylistAsync(
+        Guid id,
+        RenamePlaylistRequest request,
+        ClaimsPrincipal principal,
+        HermesDbContext db,
+        TimeProvider timeProvider,
+        CancellationToken cancellationToken)
+    {
+        if (!principal.TryGetUserId(out var userId))
+        {
+            return Results.Unauthorized();
+        }
+
+        var name = request.Name?.Trim() ?? string.Empty;
+        if (name.Length == 0)
+        {
+            return Results.BadRequest(new { error = "playlist_name_required" });
+        }
+
+        var playlist = await db.Playlists
+            .SingleOrDefaultAsync(p => p.Id == id && p.OwnerUserId == userId, cancellationToken);
+        if (playlist is null)
+        {
+            return Results.NotFound(new { error = "playlist_not_found" });
+        }
+
+        var utcNow = timeProvider.GetUtcNow();
+        playlist.Rename(name, utcNow);
+        if (request.Description is not null)
+        {
+            playlist.UpdateDescription(request.Description, utcNow);
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+
+        var detail = await LoadPlaylistDetailAsync(db, id, userId, cancellationToken);
+        return Results.Ok(detail);
+    }
+
+    private static async Task<IResult> DeletePlaylistAsync(
+        Guid id,
+        ClaimsPrincipal principal,
+        HermesDbContext db,
+        CancellationToken cancellationToken)
+    {
+        if (!principal.TryGetUserId(out var userId))
+        {
+            return Results.Unauthorized();
+        }
+
+        var playlist = await db.Playlists
+            .SingleOrDefaultAsync(p => p.Id == id && p.OwnerUserId == userId, cancellationToken);
+        if (playlist is null)
+        {
+            return Results.NotFound(new { error = "playlist_not_found" });
+        }
+
+        db.Playlists.Remove(playlist);
+        await db.SaveChangesAsync(cancellationToken);
+        return Results.NoContent();
     }
 
     private static async Task<IResult> AddTrackAsync(

@@ -279,6 +279,55 @@ public class TmdbAndSubtitleUnitTests
         }
     }
 
+    [Fact]
+    public async Task LrcLyricsService_ParsesSyncedSidecarTimestamps_MultiTimestamps_Offset_AndPlainFallback()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"hermes-lrc-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            var songPath = Path.Combine(tempDir, "Midnight City.mp3");
+            File.WriteAllBytes(songPath, [0x01, 0x02]);
+            var lrcPath = Path.Combine(tempDir, "Midnight City.lrc");
+            await File.WriteAllTextAsync(lrcPath, """
+                [ti:Midnight City]
+                [ar:M83]
+                [offset:500]
+                [00:12.50][00:45.2]Waiting in a car
+                [00:20.00]Waiting for a ride in the dark
+                """, CancellationToken.None);
+
+            var service = new LrcLyricsService();
+            var result = await service.ReadLyricsAsync(songPath, CancellationToken.None);
+
+            result.IsSynced.Should().BeTrue();
+            result.Source.Should().Be("sidecar");
+            result.Lines.Should().HaveCount(3);
+            result.Lines[0].TimestampMs.Should().Be(12_000L);
+            result.Lines[0].Text.Should().Be("Waiting in a car");
+            result.Lines[1].TimestampMs.Should().Be(19_500L);
+            result.Lines[2].TimestampMs.Should().Be(44_700L);
+
+            var plain = LrcLyricsService.ParseLrcText("First plain line\nSecond plain line\n");
+            plain.IsSynced.Should().BeFalse();
+            plain.Source.Should().Be("plain");
+            plain.Lines.Select(l => l.TimestampMs).Should().AllBeEquivalentTo((long?)null);
+            plain.Lines.Select(l => l.Text).Should().Equal("First plain line", "Second plain line");
+
+            var missing = await service.ReadLyricsAsync(Path.Combine(tempDir, "absent.flac"), CancellationToken.None);
+            missing.Lines.Should().BeEmpty();
+            missing.Source.Should().Be("none");
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, recursive: true);
+            }
+        }
+    }
+
     private static HttpResponseMessage JsonOk(string json) =>
         new(HttpStatusCode.OK)
         {

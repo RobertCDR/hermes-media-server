@@ -265,6 +265,24 @@ public class ExtendedApiCoverageTests
                 .Content.ReadFromJsonAsync<PlaylistDetailDto>();
             detailAfterDelete!.Tracks.Should().ContainSingle(t => t.Position == 0 && t.Song.Id == song2Id);
 
+            // Rename + Delete playlist + Song lyrics endpoint
+            (await bobClient.PutAsJsonAsync($"/api/v1/music/playlists/{createdPlaylist.Id}", new RenamePlaylistRequest("   ")))
+                .StatusCode.Should().Be(HttpStatusCode.BadRequest);
+            var renamedPlaylist = await (await bobClient.PutAsJsonAsync(
+                $"/api/v1/music/playlists/{createdPlaylist.Id}",
+                new RenamePlaylistRequest("After Hours")))
+                .Content.ReadFromJsonAsync<PlaylistDetailDto>();
+            renamedPlaylist!.Name.Should().Be("After Hours");
+
+            var lyricsResp = await bobClient.GetFromJsonAsync<SongLyricsDto>($"/api/v1/music/songs/{song1Id}/lyrics");
+            lyricsResp.Should().NotBeNull();
+            lyricsResp!.SongId.Should().Be(song1Id);
+
+            (await bobClient.DeleteAsync($"/api/v1/music/playlists/{createdPlaylist.Id}"))
+                .StatusCode.Should().Be(HttpStatusCode.NoContent);
+            (await bobClient.GetAsync($"/api/v1/music/playlists/{createdPlaylist.Id}"))
+                .StatusCode.Should().Be(HttpStatusCode.NotFound);
+
             // 6. DirectPlay video master.m3u8 + audio bitrate alias checks + missing files scan
             var videoSourceId = movieDetail.Sources.Single().Id;
             var videoTicket = (await (await bobClient.PostAsJsonAsync(

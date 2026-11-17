@@ -167,4 +167,25 @@ public class CinemaAndIdentityDomainTests
         registry.IsDeviceConnected(userId, "d1").Should().BeFalse();
         registry.RemoveConnection("unknown").Should().BeNull();
     }
+
+    [Fact]
+    public void Playlist_Rename_And_UpdateDescription_ShouldTrimAndUpdateTimestamp()
+    {
+        var t0 = DateTimeOffset.Parse("2026-11-16T10:00:00Z");
+        var t1 = DateTimeOffset.Parse("2026-11-17T12:00:00Z");
+        var playlist = new Playlist(Guid.NewGuid(), "Initial Mix", "Original notes", t0);
+
+        playlist.Rename("  Late Night Synth  ", t1);
+        playlist.Name.Should().Be("Late Night Synth");
+        playlist.Description.Should().Be("Original notes");
+        playlist.UpdatedAtUtc.Should().Be(t1);
+
+        var t2 = t1.AddMinutes(5);
+        playlist.UpdateDescription("   ", t2);
+        playlist.Description.Should().BeNull();
+        playlist.UpdatedAtUtc.Should().Be(t2);
+
+        var invalidRename = () => playlist.Rename("   ", t2);
+        invalidRename.Should().Throw<ArgumentException>();
+    }
 }
