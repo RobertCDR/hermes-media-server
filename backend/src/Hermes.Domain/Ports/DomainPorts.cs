@@ -99,6 +99,13 @@ public interface IArtworkStore
 
 public sealed record TranscodeSessionLease(Guid SessionId, string PlaylistFilePath, string SegmentDirectory);
 
+public sealed record ActiveTranscodeSessionInfo(
+    Guid SessionId,
+    Guid UserId,
+    Guid MediaSourceId,
+    string QualityLabel,
+    DateTimeOffset StartedAtUtc);
+
 public interface ITranscodeSessionManager
 {
     Task<TranscodeSessionLease?> TryStartVideoHlsSessionAsync(
@@ -113,6 +120,7 @@ public interface ITranscodeSessionManager
 
     Task StopSessionAsync(Guid sessionId, CancellationToken cancellationToken);
     string? ResolveHlsAssetPath(Guid sessionId, string fileName);
+    IReadOnlyList<ActiveTranscodeSessionInfo> GetActiveSessions() => [];
 }
 
 public sealed record OnlineDeviceInfo(string DeviceId, string DeviceName, string Platform, DateTimeOffset ConnectedAtUtc);

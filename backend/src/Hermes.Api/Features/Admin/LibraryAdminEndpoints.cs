@@ -54,22 +54,59 @@ public static class LibraryAdminEndpoints
 
     private static async Task<IResult> ListLibraryRootsAsync(
         HermesDbContext db,
+        LibraryScanProgressTracker scanProgress,
         CancellationToken cancellationToken)
     {
         var roots = await db.MediaLibraryRoots
             .AsNoTracking()
             .OrderBy(r => r.Name)
-            .Select(r => new LibraryRootResponse(
+            .ToListAsync(cancellationToken);
+
+        var responses = new List<LibraryRootResponse>(roots.Count);
+        foreach (var r in roots)
+        {
+            int count;
+            long bytes;
+            switch (r.MediaType)
+            {
+                case Domain.Enums.LibraryMediaType.Movies:
+                    count = await db.Movies.CountAsync(m => m.LibraryRootId == r.Id, cancellationToken);
+                    bytes = await db.MediaSources
+                        .Where(s => s.Movie != null && s.Movie.LibraryRootId == r.Id && s.MissingSinceUtc == null)
+                        .SumAsync(s => (long?)s.FileSizeBytes, cancellationToken) ?? 0L;
+                    break;
+                case Domain.Enums.LibraryMediaType.Series:
+                    count = await db.TvSeries.CountAsync(s => s.LibraryRootId == r.Id, cancellationToken);
+                    bytes = await db.MediaSources
+                        .Where(s => s.Episode != null && s.Episode.TvSeason.TvSeries.LibraryRootId == r.Id && s.MissingSinceUtc == null)
+                        .SumAsync(s => (long?)s.FileSizeBytes, cancellationToken) ?? 0L;
+                    break;
+                case Domain.Enums.LibraryMediaType.Music:
+                default:
+                    count = await db.Songs.CountAsync(s => s.LibraryRootId == r.Id && s.MissingSinceUtc == null, cancellationToken);
+                    bytes = await db.Songs
+                        .Where(s => s.LibraryRootId == r.Id && s.MissingSinceUtc == null)
+                        .SumAsync(s => (long?)s.FileSizeBytes, cancellationToken) ?? 0L;
+                    break;
+            }
+
+            var live = scanProgress.GetProgress(r.Id);
+            responses.Add(new LibraryRootResponse(
                 r.Id,
                 r.Name,
                 r.MediaType,
                 r.RootPath,
                 r.WatchEnabled,
                 r.CreatedAtUtc,
-                r.LastScanCompletedAtUtc))
-            .ToListAsync(cancellationToken);
+                r.LastScanCompletedAtUtc,
+                count,
+                bytes,
+                live?.IsScanning ?? false,
+                live?.ProcessedFiles ?? 0,
+                live?.TotalFiles ?? 0));
+        }
 
-        return Results.Ok(roots);
+        return Results.Ok(responses);
     }
 
     private static async Task<IResult> ScanLibraryNowAsync(

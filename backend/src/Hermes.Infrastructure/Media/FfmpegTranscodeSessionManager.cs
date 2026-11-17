@@ -44,7 +44,14 @@ public sealed class FfmpegTranscodeSessionManager : ITranscodeSessionManager, IA
                 return null;
             }
 
-            _sessions[sessionId] = new ActiveSession(sessionId, userId, mediaSourceId, segmentDir, null);
+            _sessions[sessionId] = new ActiveSession(
+                sessionId,
+                userId,
+                mediaSourceId,
+                segmentDir,
+                quality.ToString(),
+                DateTimeOffset.UtcNow,
+                null);
         }
 
         try
@@ -327,10 +334,27 @@ public sealed class FfmpegTranscodeSessionManager : ITranscodeSessionManager, IA
         }
     }
 
+    public IReadOnlyList<ActiveTranscodeSessionInfo> GetActiveSessions()
+    {
+        lock (_gate)
+        {
+            return _sessions.Values
+                .Select(s => new ActiveTranscodeSessionInfo(
+                    s.SessionId,
+                    s.UserId,
+                    s.MediaSourceId,
+                    s.QualityLabel,
+                    s.StartedAtUtc))
+                .ToList();
+        }
+    }
+
     private sealed record ActiveSession(
         Guid SessionId,
         Guid UserId,
         Guid MediaSourceId,
         string SegmentDirectory,
+        string QualityLabel,
+        DateTimeOffset StartedAtUtc,
         Process? Process);
 }

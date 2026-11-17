@@ -20,7 +20,8 @@ public sealed partial class LibraryScannerService(
     IAudioMetadataReader audioMetadataReader,
     ITmdbClient tmdbClient,
     IArtworkStore artworkStore,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    LibraryScanProgressTracker? scanProgress = null)
 {
     private static readonly HashSet<string> VideoExtensions =
         new([".mkv", ".mp4", ".avi", ".mov", ".m4v", ".webm", ".ts"], StringComparer.OrdinalIgnoreCase);
@@ -43,22 +44,30 @@ public sealed partial class LibraryScannerService(
             return new LibraryScanResult(root.Id, 0, 0, 0, timeProvider.GetUtcNow());
         }
 
-        var result = root.MediaType switch
+        try
         {
-            LibraryMediaType.Movies => await ScanMoviesAsync(root, cancellationToken),
-            LibraryMediaType.Series => await ScanSeriesAsync(root, cancellationToken),
-            LibraryMediaType.Music => await ScanMusicAsync(root, cancellationToken),
-            _ => throw new InvalidOperationException($"Unsupported library type: {root.MediaType}")
-        };
+            var result = root.MediaType switch
+            {
+                LibraryMediaType.Movies => await ScanMoviesAsync(root, cancellationToken),
+                LibraryMediaType.Series => await ScanSeriesAsync(root, cancellationToken),
+                LibraryMediaType.Music => await ScanMusicAsync(root, cancellationToken),
+                _ => throw new InvalidOperationException($"Unsupported library type: {root.MediaType}")
+            };
 
-        root.MarkScanCompleted(result.CompletedAtUtc);
-        await db.SaveChangesAsync(cancellationToken);
-        return result;
+            root.MarkScanCompleted(result.CompletedAtUtc);
+            await db.SaveChangesAsync(cancellationToken);
+            return result;
+        }
+        finally
+        {
+            scanProgress?.Complete(root.Id);
+        }
     }
 
     private async Task<LibraryScanResult> ScanMoviesAsync(MediaLibraryRoot root, CancellationToken cancellationToken)
     {
         var files = EnumerateSupportedFiles(root.RootPath, VideoExtensions);
+        scanProgress?.BeginScan(root.Id, files.Count, timeProvider.GetUtcNow());
         var discoveredSet = new HashSet<string>(files, StringComparer.Ordinal);
         var existingMovies = await db.Movies
             .Where(m => m.LibraryRootId == root.Id)
@@ -80,6 +89,7 @@ public sealed partial class LibraryScannerService(
         var upserted = 0;
         foreach (var filePath in files)
         {
+            scanProgress?.Advance(root.Id);
             var fileInfo = new FileInfo(filePath);
             var lastWriteUtc = new DateTimeOffset(fileInfo.LastWriteTimeUtc, TimeSpan.Zero);
 
@@ -156,6 +166,7 @@ public sealed partial class LibraryScannerService(
     private async Task<LibraryScanResult> ScanSeriesAsync(MediaLibraryRoot root, CancellationToken cancellationToken)
     {
         var files = EnumerateSupportedFiles(root.RootPath, VideoExtensions);
+        scanProgress?.BeginScan(root.Id, files.Count, timeProvider.GetUtcNow());
         var discoveredSet = new HashSet<string>(files, StringComparer.Ordinal);
         var existingSeries = await db.TvSeries
             .Where(s => s.LibraryRootId == root.Id)
@@ -174,6 +185,7 @@ public sealed partial class LibraryScannerService(
         var upserted = 0;
         foreach (var filePath in files)
         {
+            scanProgress?.Advance(root.Id);
             var fileInfo = new FileInfo(filePath);
             var lastWriteUtc = new DateTimeOffset(fileInfo.LastWriteTimeUtc, TimeSpan.Zero);
 
@@ -274,6 +286,7 @@ public sealed partial class LibraryScannerService(
     private async Task<LibraryScanResult> ScanMusicAsync(MediaLibraryRoot root, CancellationToken cancellationToken)
     {
         var files = EnumerateSupportedFiles(root.RootPath, AudioExtensions);
+        scanProgress?.BeginScan(root.Id, files.Count, timeProvider.GetUtcNow());
         var discoveredSet = new HashSet<string>(files, StringComparer.Ordinal);
 
         var existingSongs = await db.Songs
@@ -287,6 +300,7 @@ public sealed partial class LibraryScannerService(
         var upserted = 0;
         foreach (var filePath in files)
         {
+            scanProgress?.Advance(root.Id);
             if (songsByPath.TryGetValue(filePath, out var existingSong))
             {
                 existingSong.MarkPresent();

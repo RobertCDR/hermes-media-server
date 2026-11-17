@@ -18,3 +18,18 @@ public sealed record UserSummaryDto(
     string Role,
     bool IsActive,
     DateTimeOffset CreatedAtUtc);
+
+public sealed record ActiveStreamSessionDto(
+    string SessionId,
+    string Kind,
+    Guid UserId,
+    string Username,
+    string DeviceName,
+    string Title,
+    string Subtitle,
+    double Progress,
+    string Mode,
+    string Bitrate,
+    bool IsPaused,
+    bool CanStop,
+    string? ArtworkHash = null);

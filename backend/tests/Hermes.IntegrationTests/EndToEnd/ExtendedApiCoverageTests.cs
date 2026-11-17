@@ -304,6 +304,28 @@ public class ExtendedApiCoverageTests
                 .Content.ReadFromJsonAsync<LibraryScanSummaryDto>();
             missingMusicScan!.SourcesMarkedMissing.Should().Be(1);
 
+            // Verify M4 Admin Server endpoints: library counts/sizes, unmatched, tmdb-search, sessions, revoke invite, deactivate user
+            var enrichedLibs = await adminClient.GetFromJsonAsync<List<LibraryRootResponse>>("/api/v1/admin/libraries");
+            enrichedLibs.Should().Contain(l => l.Id == moviesLib.Id && l.ItemCount >= 1 && l.TotalSizeBytes > 0);
+
+            var unmatched = await adminClient.GetFromJsonAsync<List<UnmatchedMediaDto>>("/api/v1/admin/media/unmatched");
+            unmatched.Should().NotBeNull();
+
+            var tmdbHits = await adminClient.GetFromJsonAsync<List<TmdbCandidateDto>>("/api/v1/admin/media/tmdb-search?query=Blade&mediaType=0");
+            tmdbHits.Should().NotBeNull();
+
+            var adminSessions = await adminClient.GetFromJsonAsync<List<ActiveStreamSessionDto>>("/api/v1/admin/sessions");
+            adminSessions.Should().NotBeNull();
+
+            var revokedInvite = await (await adminClient.PostAsync($"/api/v1/admin/invites/{invite!.Id}/revoke", null))
+                .Content.ReadFromJsonAsync<InviteResponse>();
+            revokedInvite!.IsRevoked.Should().BeTrue();
+
+            (await adminClient.DeleteAsync($"/api/v1/admin/users/{regDto.UserId}"))
+                .StatusCode.Should().Be(HttpStatusCode.NoContent);
+            (await adminClient.DeleteAsync($"/api/v1/admin/users/{adminLogin.UserId}"))
+                .StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
             // Also cover LibraryScanWorker reading once cleanly via service scope
             using var scope = factory.Services.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<HermesDbContext>();

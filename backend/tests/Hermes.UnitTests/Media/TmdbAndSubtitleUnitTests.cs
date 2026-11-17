@@ -328,6 +328,57 @@ public class TmdbAndSubtitleUnitTests
         }
     }
 
+    [Fact]
+    public async Task LibraryScanProgressTracker_And_TranscodeGetActiveSessions_TrackLiveLifecycle()
+    {
+        var tracker = new LibraryScanProgressTracker();
+        var libId = Guid.NewGuid();
+        tracker.GetProgress(libId).Should().BeNull();
+
+        tracker.BeginScan(libId, 10);
+        tracker.Advance(libId);
+        tracker.Advance(libId);
+        var snap = tracker.GetProgress(libId);
+        snap.Should().NotBeNull();
+        snap!.IsScanning.Should().BeTrue();
+        snap.ProcessedFiles.Should().Be(2);
+        snap.TotalFiles.Should().Be(10);
+
+        tracker.Complete(libId);
+        tracker.GetProgress(libId).Should().BeNull();
+
+        var tempDir = Path.Combine(Path.GetTempPath(), $"hermes-tr-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var fakeMedia = Path.Combine(tempDir, "sample.mp4");
+            File.WriteAllBytes(fakeMedia, [0x00, 0x01]);
+            await using var manager = new FfmpegTranscodeSessionManager(tempDir);
+            var lease = await manager.TryStartVideoHlsSessionAsync(
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                fakeMedia,
+                VideoQualityPreset.P720,
+                1,
+                0,
+                2,
+                CancellationToken.None);
+            lease.Should().NotBeNull();
+            var active = manager.GetActiveSessions();
+            active.Should().ContainSingle(s => s.SessionId == lease!.SessionId && s.QualityLabel == nameof(VideoQualityPreset.P720));
+
+            await manager.StopSessionAsync(lease!.SessionId, CancellationToken.None);
+            manager.GetActiveSessions().Should().BeEmpty();
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, recursive: true);
+            }
+        }
+    }
+
     private static HttpResponseMessage JsonOk(string json) =>
         new(HttpStatusCode.OK)
         {

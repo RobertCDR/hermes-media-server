@@ -15,7 +15,12 @@ public sealed record LibraryRootResponse(
     string RootPath,
     bool WatchEnabled,
     DateTimeOffset CreatedAtUtc,
-    DateTimeOffset? LastScanCompletedAtUtc);
+    DateTimeOffset? LastScanCompletedAtUtc,
+    int ItemCount = 0,
+    long TotalSizeBytes = 0,
+    bool IsScanning = false,
+    int ScanProcessedFiles = 0,
+    int ScanTotalFiles = 0);
 
 public sealed record LibraryScanSummaryDto(
     Guid LibraryRootId,
@@ -23,6 +28,20 @@ public sealed record LibraryScanSummaryDto(
     int SourcesUpserted,
     int SourcesMarkedMissing,
     DateTimeOffset CompletedAtUtc);
+
+public sealed record UnmatchedMediaDto(
+    Guid Id,
+    LibraryMediaType MediaType,
+    string Title,
+    int? Year,
+    string LibraryName,
+    string FilePath);
+
+public sealed record TmdbCandidateDto(
+    int TmdbId,
+    string Title,
+    int? Year,
+    string? Overview);
 
 public sealed record IdentifyMediaRequest(
     int TmdbId,
