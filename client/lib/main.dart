@@ -30,6 +30,7 @@ import 'src/features/music/music_playback_coordinator.dart';
 import 'src/features/music/music_service.dart';
 import 'src/features/music/music_world_screen.dart';
 import 'src/features/music/now_playing_panel.dart';
+import 'src/features/music/os_media_bridge.dart';
 import 'src/features/music/platform_media_bridge.dart';
 import 'src/features/settings/player_and_theme_settings_screen.dart';
 import 'src/features/shell/dual_world_shell.dart';
@@ -57,6 +58,7 @@ class HermesApp extends StatefulWidget {
     this.httpClient,
     this.syncClientFactory,
     this.audioEngine,
+    this.mediaBridge,
   });
 
   final SessionStore? sessionStore;
@@ -64,6 +66,7 @@ class HermesApp extends StatefulWidget {
   final http.Client? httpClient;
   final HermesSyncClientFactory? syncClientFactory;
   final AudioEngineAdapter? audioEngine;
+  final PlatformMediaBridge? mediaBridge;
 
   @override
   State<HermesApp> createState() => _HermesAppState();
@@ -74,7 +77,8 @@ class _HermesAppState extends State<HermesApp> {
   late final bool _ownsHttpClient;
   late final SessionStore _sessionStore;
   late final DevicePreferencesStore _preferencesStore;
-  final _mediaBridge = InMemoryPlatformMediaBridge();
+  late final PlatformMediaBridge _mediaBridge;
+  late final bool _ownsMediaBridge;
   late final AudioEngineAdapter _audioEngine;
   late final bool _ownsAudioEngine;
   late final EndpointResolver _endpointResolver;
@@ -128,6 +132,16 @@ class _HermesAppState extends State<HermesApp> {
     super.initState();
     _rawHttpClient = widget.httpClient ?? http.Client();
     _ownsHttpClient = widget.httpClient == null;
+    if (widget.mediaBridge != null) {
+      _mediaBridge = widget.mediaBridge!;
+      _ownsMediaBridge = false;
+    } else if (HermesMediaRuntime.isInitialized) {
+      _mediaBridge = createDefaultPlatformMediaBridge();
+      _ownsMediaBridge = true;
+    } else {
+      _mediaBridge = InMemoryPlatformMediaBridge();
+      _ownsMediaBridge = true;
+    }
     if (widget.audioEngine != null) {
       _audioEngine = widget.audioEngine!;
       _ownsAudioEngine = false;
@@ -253,6 +267,10 @@ class _HermesAppState extends State<HermesApp> {
     final audioEngine = _audioEngine;
     if (_ownsAudioEngine && audioEngine is MediaKitAudioEngineAdapter) {
       unawaited(audioEngine.dispose());
+    }
+    final mediaBridge = _mediaBridge;
+    if (_ownsMediaBridge && mediaBridge is DisposableMediaBridge) {
+      unawaited(mediaBridge.dispose());
     }
     if (_ownsHttpClient) {
       _rawHttpClient.close();
@@ -507,6 +525,7 @@ class _HermesAppState extends State<HermesApp> {
     await _stopSyncClient();
     await _authService.signOut();
     unawaited(_audioEngine.stop());
+    unawaited(_mediaBridge.clearState());
     _musicCoordinator?.dispose();
     if (!mounted) return;
     setState(() {
