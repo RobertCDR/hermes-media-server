@@ -859,42 +859,47 @@ class _EpisodeTileCardState extends State<_EpisodeTileCard> {
         ? '${formatCinemaMinutes(wp.remainingMinutes)} left'
         : '${widget.episode.durationMinutes}m';
 
-    return MouseRegion(
-      cursor: widget.onPlay != null
-          ? SystemMouseCursors.click
-          : SystemMouseCursors.basic,
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      child: GestureDetector(
-        onTap: widget.onPlay,
-        child: SizedBox(
-          width: 308,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: SizedBox(
-                  width: 308,
-                  height: 173,
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      AnimatedScale(
-                        scale: (_hovered && !widget.reduceMotion) ? 1.04 : 1.0,
-                        duration: widget.reduceMotion
-                            ? Duration.zero
-                            : const Duration(milliseconds: 280),
-                        curve: Curves.easeOutCubic,
-                        child: HermesArtworkImage(
-                          uri: widget.stillUri,
-                          fallbackTitle: widget.episode.title,
-                          width: 308,
-                          height: 173,
-                          borderRadius: BorderRadius.zero,
-                          showFallbackLabel: false,
+    return Semantics(
+      container: true,
+      explicitChildNodes: true,
+      child: MouseRegion(
+        cursor: widget.onPlay != null
+            ? SystemMouseCursors.click
+            : SystemMouseCursors.basic,
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: GestureDetector(
+          onTap: widget.onPlay,
+          child: SizedBox(
+            width: 308,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: SizedBox(
+                    width: 308,
+                    height: 173,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        ExcludeSemantics(
+                          child: AnimatedScale(
+                            scale: (_hovered && !widget.reduceMotion) ? 1.04 : 1.0,
+                            duration: widget.reduceMotion
+                                ? Duration.zero
+                                : const Duration(milliseconds: 280),
+                            curve: Curves.easeOutCubic,
+                            child: HermesArtworkImage(
+                              uri: widget.stillUri,
+                              fallbackTitle: widget.episode.title,
+                              width: 308,
+                              height: 173,
+                              borderRadius: BorderRadius.zero,
+                              showFallbackLabel: false,
+                            ),
+                          ),
                         ),
-                      ),
                       if (widget.onPlay != null)
                         ExcludeSemantics(
                           child: AnimatedOpacity(
@@ -941,21 +946,27 @@ class _EpisodeTileCardState extends State<_EpisodeTileCard> {
                         Positioned(
                           top: 8,
                           right: 8,
-                          child: InkWell(
-                            customBorder: const CircleBorder(),
-                            onTap: widget.onPickVersion,
-                            child: Container(
-                              width: 30,
-                              height: 30,
-                              alignment: Alignment.center,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: Colors.black.withValues(alpha: 0.68),
-                              ),
-                              child: const Icon(
-                                Icons.tune_rounded,
-                                size: 15,
-                                color: Colors.white,
+                          child: Semantics(
+                            container: true,
+                            button: true,
+                            excludeSemantics: true,
+                            label: 'Select version',
+                            child: InkWell(
+                              customBorder: const CircleBorder(),
+                              onTap: widget.onPickVersion,
+                              child: Container(
+                                width: 30,
+                                height: 30,
+                                alignment: Alignment.center,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: Colors.black.withValues(alpha: 0.68),
+                                ),
+                                child: const Icon(
+                                  Icons.tune_rounded,
+                                  size: 15,
+                                  color: Colors.white,
+                                ),
                               ),
                             ),
                           ),
@@ -965,12 +976,14 @@ class _EpisodeTileCardState extends State<_EpisodeTileCard> {
                           left: 0,
                           right: 0,
                           bottom: 0,
-                          child: LinearProgressIndicator(
-                            value: wp.completionRatio,
-                            minHeight: 4,
-                            color: widget.tokens.accent,
-                            backgroundColor:
-                                Colors.white.withValues(alpha: 0.22),
+                          child: ExcludeSemantics(
+                            child: LinearProgressIndicator(
+                              value: wp.completionRatio,
+                              minHeight: 4,
+                              color: widget.tokens.accent,
+                              backgroundColor:
+                                  Colors.white.withValues(alpha: 0.22),
+                            ),
                           ),
                         ),
                     ],
@@ -1020,6 +1033,7 @@ class _EpisodeTileCardState extends State<_EpisodeTileCard> {
           ),
         ),
       ),
+    ),
     );
   }
 }
@@ -1040,6 +1054,7 @@ class _MissingEpisodePlaceholderCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Opacity(
+      alwaysIncludeSemantics: true,
       opacity: 0.8,
       child: SizedBox(
         width: 308,

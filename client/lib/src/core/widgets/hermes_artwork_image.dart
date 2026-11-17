@@ -99,12 +99,16 @@ class HermesArtworkImage extends StatelessWidget {
             },
           );
 
-    return ClipRRect(
-      borderRadius: borderRadius,
-      child: SizedBox(
-        width: width,
-        height: height,
-        child: image,
+    // Exclude async image placeholder/raw-image swaps from Semantics so network loads
+    // never churn AXTree nodes during scrolling or hover on Windows desktop.
+    return ExcludeSemantics(
+      child: ClipRRect(
+        borderRadius: borderRadius,
+        child: SizedBox(
+          width: width,
+          height: height,
+          child: image,
+        ),
       ),
     );
   }

@@ -349,6 +349,7 @@ class _CinemaPosterCardState extends State<CinemaPosterCard> {
 
     return Semantics(
       container: true,
+      explicitChildNodes: true,
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
         onEnter: (_) => setState(() => _hovered = true),
@@ -368,19 +369,21 @@ class _CinemaPosterCardState extends State<CinemaPosterCard> {
                   child: Stack(
                     fit: StackFit.expand,
                     children: [
-                      AnimatedScale(
-                        scale: (_hovered && !widget.reduceMotion) ? 1.04 : 1.0,
-                        duration: widget.reduceMotion
-                            ? Duration.zero
-                            : const Duration(milliseconds: 280),
-                        curve: Curves.easeOutCubic,
-                        child: HermesArtworkImage(
-                          uri: widget.artworkUri,
-                          fallbackTitle: widget.title,
-                          fallbackIcon: widget.fallbackIcon,
-                          width: widget.width,
-                          height: posterHeight,
-                          borderRadius: BorderRadius.zero,
+                      ExcludeSemantics(
+                        child: AnimatedScale(
+                          scale: (_hovered && !widget.reduceMotion) ? 1.04 : 1.0,
+                          duration: widget.reduceMotion
+                              ? Duration.zero
+                              : const Duration(milliseconds: 280),
+                          curve: Curves.easeOutCubic,
+                          child: HermesArtworkImage(
+                            uri: widget.artworkUri,
+                            fallbackTitle: widget.title,
+                            fallbackIcon: widget.fallbackIcon,
+                            width: widget.width,
+                            height: posterHeight,
+                            borderRadius: BorderRadius.zero,
+                          ),
                         ),
                       ),
                       if (widget.isNew || widget.isPartial)
@@ -415,21 +418,22 @@ class _CinemaPosterCardState extends State<CinemaPosterCard> {
                         Positioned(
                           top: 8,
                           right: 8,
-                          child: IgnorePointer(
-                            ignoring: !showBookmark,
-                            child: AnimatedOpacity(
-                              alwaysIncludeSemantics: true,
-                              opacity: showBookmark ? 1.0 : 0.0,
-                              duration: widget.reduceMotion
-                                  ? Duration.zero
-                                  : const Duration(milliseconds: 150),
-                              child: Semantics(
-                                container: true,
-                                button: true,
-                                excludeSemantics: true,
-                                label: widget.inWatchlist
-                                    ? 'Remove from Watchlist'
-                                    : 'Add to Watchlist',
+                          child: Semantics(
+                            container: true,
+                            button: true,
+                            excludeSemantics: true,
+                            label: widget.inWatchlist
+                                ? 'Remove from Watchlist'
+                                : 'Add to Watchlist',
+                            onTap: widget.onToggleWatchlist,
+                            child: IgnorePointer(
+                              ignoring: !showBookmark,
+                              child: AnimatedOpacity(
+                                alwaysIncludeSemantics: true,
+                                opacity: showBookmark ? 1.0 : 0.0,
+                                duration: widget.reduceMotion
+                                    ? Duration.zero
+                                    : const Duration(milliseconds: 150),
                                 child: InkWell(
                                   key: Key('poster-bookmark-${widget.itemKey}'),
                                   customBorder: const CircleBorder(),
@@ -486,12 +490,14 @@ class _CinemaPosterCardState extends State<CinemaPosterCard> {
                           left: 0,
                           right: 0,
                           bottom: 0,
-                          child: LinearProgressIndicator(
-                            value: widget.progress,
-                            minHeight: 4,
-                            color: tokens.accent,
-                            backgroundColor:
-                                Colors.white.withValues(alpha: 0.22),
+                          child: ExcludeSemantics(
+                            child: LinearProgressIndicator(
+                              value: widget.progress,
+                              minHeight: 4,
+                              color: tokens.accent,
+                              backgroundColor:
+                                  Colors.white.withValues(alpha: 0.22),
+                            ),
                           ),
                         ),
                     ],
@@ -563,6 +569,7 @@ class _CinemaLandscapeCardState extends State<CinemaLandscapeCard> {
 
     return Semantics(
       container: true,
+      explicitChildNodes: true,
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
         onEnter: (_) => setState(() => _hovered = true),
@@ -582,19 +589,21 @@ class _CinemaLandscapeCardState extends State<CinemaLandscapeCard> {
                   child: Stack(
                     fit: StackFit.expand,
                     children: [
-                      AnimatedScale(
-                        scale: (_hovered && !widget.reduceMotion) ? 1.04 : 1.0,
-                        duration: widget.reduceMotion
-                            ? Duration.zero
-                            : const Duration(milliseconds: 280),
-                        curve: Curves.easeOutCubic,
-                        child: HermesArtworkImage(
-                          uri: widget.artworkUri,
-                          fallbackTitle: widget.title,
-                          width: 300,
-                          height: 168.75,
-                          borderRadius: BorderRadius.zero,
-                          showFallbackLabel: false,
+                      ExcludeSemantics(
+                        child: AnimatedScale(
+                          scale: (_hovered && !widget.reduceMotion) ? 1.04 : 1.0,
+                          duration: widget.reduceMotion
+                              ? Duration.zero
+                              : const Duration(milliseconds: 280),
+                          curve: Curves.easeOutCubic,
+                          child: HermesArtworkImage(
+                            uri: widget.artworkUri,
+                            fallbackTitle: widget.title,
+                            width: 300,
+                            height: 168.75,
+                            borderRadius: BorderRadius.zero,
+                            showFallbackLabel: false,
+                          ),
                         ),
                       ),
                       ExcludeSemantics(
@@ -643,12 +652,14 @@ class _CinemaLandscapeCardState extends State<CinemaLandscapeCard> {
                           left: 0,
                           right: 0,
                           bottom: 0,
-                          child: LinearProgressIndicator(
-                            value: widget.progress,
-                            minHeight: 4,
-                            color: tokens.accent,
-                            backgroundColor:
-                                Colors.white.withValues(alpha: 0.22),
+                          child: ExcludeSemantics(
+                            child: LinearProgressIndicator(
+                              value: widget.progress,
+                              minHeight: 4,
+                              color: tokens.accent,
+                              backgroundColor:
+                                  Colors.white.withValues(alpha: 0.22),
+                            ),
                           ),
                         ),
                     ],
