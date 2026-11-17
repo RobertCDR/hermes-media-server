@@ -21,10 +21,14 @@ public sealed class HermesDbContext(DbContextOptions<HermesDbContext> options) :
     public DbSet<Artist> Artists => Set<Artist>();
     public DbSet<Album> Albums => Set<Album>();
     public DbSet<Song> Songs => Set<Song>();
+    public DbSet<SongArtist> SongArtists => Set<SongArtist>();
+    public DbSet<ListeningHistoryEntry> ListeningHistoryEntries => Set<ListeningHistoryEntry>();
     public DbSet<Playlist> Playlists => Set<Playlist>();
     public DbSet<PlaylistTrack> PlaylistTracks => Set<PlaylistTrack>();
     public DbSet<LikedSong> LikedSongs => Set<LikedSong>();
     public DbSet<PlaybackSession> PlaybackSessions => Set<PlaybackSession>();
+    public DbSet<CustomList> CustomLists => Set<CustomList>();
+    public DbSet<CustomListItem> CustomListItems => Set<CustomListItem>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -202,6 +206,37 @@ public sealed class HermesDbContext(DbContextOptions<HermesDbContext> options) :
                 .IsUnique()
                 .HasFilter("\"TvSeriesId\" IS NOT NULL");
         });
+
+        modelBuilder.Entity<CustomList>(b =>
+        {
+            b.HasKey(c => c.Id);
+            b.Property(c => c.Name).HasMaxLength(128).IsRequired();
+            b.Property(c => c.Description).HasMaxLength(512);
+            b.HasIndex(c => c.OwnerUserId);
+            b.HasMany(c => c.Items)
+                .WithOne(i => i.CustomList)
+                .HasForeignKey(i => i.CustomListId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<CustomListItem>(b =>
+        {
+            b.HasKey(i => i.Id);
+            b.HasIndex(i => new { i.CustomListId, i.MovieId })
+                .IsUnique()
+                .HasFilter("\"MovieId\" IS NOT NULL");
+            b.HasIndex(i => new { i.CustomListId, i.TvSeriesId })
+                .IsUnique()
+                .HasFilter("\"TvSeriesId\" IS NOT NULL");
+            b.HasOne(i => i.Movie)
+                .WithMany()
+                .HasForeignKey(i => i.MovieId)
+                .OnDelete(DeleteBehavior.Cascade);
+            b.HasOne(i => i.TvSeries)
+                .WithMany()
+                .HasForeignKey(i => i.TvSeriesId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
     }
 
     private static void ConfigureMusicAndPlayback(ModelBuilder modelBuilder)
@@ -278,6 +313,32 @@ public sealed class HermesDbContext(DbContextOptions<HermesDbContext> options) :
             b.Property(s => s.ActiveRendererDeviceId).HasMaxLength(128);
             b.Property(s => s.ActiveRendererDeviceName).HasMaxLength(128);
             b.HasIndex(s => s.UserId).IsUnique();
+        });
+
+        modelBuilder.Entity<SongArtist>(b =>
+        {
+            b.HasKey(sa => new { sa.SongId, sa.ArtistId });
+            b.HasOne(sa => sa.Song)
+                .WithMany(s => s.SongArtists)
+                .HasForeignKey(sa => sa.SongId)
+                .OnDelete(DeleteBehavior.Cascade);
+            b.HasOne(sa => sa.Artist)
+                .WithMany(a => a.SongArtists)
+                .HasForeignKey(sa => sa.ArtistId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ListeningHistoryEntry>(b =>
+        {
+            b.HasKey(h => h.Id);
+            b.Property(h => h.DeviceId).HasMaxLength(128);
+            b.Property(h => h.ContextLabel).HasMaxLength(256);
+            b.HasIndex(h => new { h.UserId, h.ListenedAtUtc });
+            b.HasIndex(h => new { h.UserId, h.SongId, h.ListenedAtUtc });
+            b.HasOne(h => h.Song)
+                .WithMany()
+                .HasForeignKey(h => h.SongId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

@@ -24,6 +24,7 @@ public sealed class Artist
 
     public ICollection<Album> Albums { get; } = [];
     public ICollection<Song> Songs { get; } = [];
+    public ICollection<SongArtist> SongArtists { get; } = [];
 }
 
 public sealed class Album
@@ -117,6 +118,7 @@ public sealed class Song
 
     public Artist Artist { get; private set; } = null!;
     public Album Album { get; private set; } = null!;
+    public ICollection<SongArtist> SongArtists { get; } = [];
 
     public void MarkMissing(DateTimeOffset utcNow) => MissingSinceUtc ??= utcNow;
 
@@ -336,5 +338,76 @@ public sealed class PlaybackSession
         Version++;
         UpdatedAtUtc = utcNow;
         return true;
+    }
+}
+
+public sealed class SongArtist
+{
+    private SongArtist()
+    {
+    }
+
+    public SongArtist(Guid songId, Guid artistId, int position)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(position, 0);
+        SongId = songId;
+        ArtistId = artistId;
+        Position = position;
+    }
+
+    public Guid SongId { get; private set; }
+    public Guid ArtistId { get; private set; }
+    public int Position { get; private set; }
+
+    public Song Song { get; private set; } = null!;
+    public Artist Artist { get; private set; } = null!;
+}
+
+public sealed class ListeningHistoryEntry
+{
+    public static readonly TimeSpan DuplicateWindow = TimeSpan.FromMinutes(10);
+
+    private ListeningHistoryEntry()
+    {
+    }
+
+    public ListeningHistoryEntry(
+        Guid userId,
+        Guid songId,
+        long positionMs,
+        long durationMs,
+        string? deviceId,
+        string? contextLabel,
+        DateTimeOffset listenedAtUtc)
+    {
+        Id = Guid.NewGuid();
+        UserId = userId;
+        SongId = songId;
+        PositionMs = Math.Max(0, positionMs);
+        DurationMs = Math.Max(0, durationMs);
+        DeviceId = string.IsNullOrWhiteSpace(deviceId) ? null : deviceId.Trim()[..Math.Min(deviceId.Trim().Length, 128)];
+        ContextLabel = string.IsNullOrWhiteSpace(contextLabel) ? null : contextLabel.Trim()[..Math.Min(contextLabel.Trim().Length, 256)];
+        ListenedAtUtc = listenedAtUtc;
+    }
+
+    public Guid Id { get; private set; }
+    public Guid UserId { get; private set; }
+    public Guid SongId { get; private set; }
+    public long PositionMs { get; private set; }
+    public long DurationMs { get; private set; }
+    public string? DeviceId { get; private set; }
+    public string? ContextLabel { get; private set; }
+    public DateTimeOffset ListenedAtUtc { get; private set; }
+
+    public Song Song { get; private set; } = null!;
+
+    public static long GetListenThresholdMs(long durationMs)
+    {
+        if (durationMs <= 0)
+        {
+            return 0;
+        }
+
+        return Math.Min(30_000L, Math.Max(5_000L, durationMs / 3));
     }
 }
