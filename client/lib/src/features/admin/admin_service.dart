@@ -73,6 +73,81 @@ class AdminService {
     return LibraryScanSummaryModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
+  Future<void> queueLibraryScan(String libraryId) async {
+    final response = await httpClient.post(
+      baseUri.resolve('/api/v1/admin/libraries/$libraryId/scan/queue'),
+      headers: _headers,
+    );
+    if (response.statusCode != 202 && response.statusCode != 200) {
+      throw AdminApiException('Queue scan failed', statusCode: response.statusCode);
+    }
+  }
+
+  Future<List<ActiveStreamSessionModel>> listActiveSessions() async {
+    final response = await httpClient.get(
+      baseUri.resolve('/api/v1/admin/sessions'),
+      headers: _headers,
+    );
+    if (response.statusCode != 200) {
+      throw AdminApiException('Failed to load sessions', statusCode: response.statusCode);
+    }
+    final decoded = jsonDecode(response.body) as List<dynamic>;
+    return decoded
+        .map((e) => ActiveStreamSessionModel.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<void> stopSession(String sessionId) async {
+    final response = await httpClient.delete(
+      baseUri.resolve('/api/v1/admin/sessions/${Uri.encodeComponent(sessionId)}'),
+      headers: _headers,
+    );
+    if (response.statusCode != 204 && response.statusCode != 200) {
+      throw AdminApiException('Failed to stop session', statusCode: response.statusCode);
+    }
+  }
+
+  Future<List<UnmatchedMediaModel>> listUnmatchedMedia() async {
+    final response = await httpClient.get(
+      baseUri.resolve('/api/v1/admin/media/unmatched'),
+      headers: _headers,
+    );
+    if (response.statusCode != 200) {
+      throw AdminApiException('Failed to load unmatched media', statusCode: response.statusCode);
+    }
+    final decoded = jsonDecode(response.body) as List<dynamic>;
+    return decoded
+        .map((e) => UnmatchedMediaModel.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<List<TmdbCandidateModel>> searchTmdb({
+    required String query,
+    required int mediaType,
+  }) async {
+    final uri = baseUri.resolve('/api/v1/admin/media/tmdb-search').replace(
+      queryParameters: {
+        'query': query,
+        'mediaType': '$mediaType',
+      },
+    );
+    final response = await httpClient.get(uri, headers: _headers);
+    if (response.statusCode != 200) {
+      throw AdminApiException('TMDb search failed', statusCode: response.statusCode);
+    }
+    final decoded = jsonDecode(response.body) as List<dynamic>;
+    return decoded
+        .map((e) => TmdbCandidateModel.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Uri? buildArtworkUri(String? artworkHash, {String variant = 'thumb_400'}) {
+    if (artworkHash == null || artworkHash.isEmpty) {
+      return null;
+    }
+    return baseUri.resolve('/api/v1/artwork/$artworkHash/$variant.webp');
+  }
+
   Future<List<InviteModel>> listInvites() async {
     final response = await httpClient.get(baseUri.resolve('/api/v1/admin/invites'), headers: _headers);
     if (response.statusCode != 200) {
@@ -99,6 +174,17 @@ class AdminService {
     return InviteModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
+  Future<InviteModel> revokeInvite(String inviteId) async {
+    final response = await httpClient.post(
+      baseUri.resolve('/api/v1/admin/invites/$inviteId/revoke'),
+      headers: _headers,
+    );
+    if (response.statusCode != 200) {
+      throw AdminApiException('Failed to revoke invite', statusCode: response.statusCode);
+    }
+    return InviteModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
   Future<List<UserSummaryModel>> listUsers() async {
     final response = await httpClient.get(baseUri.resolve('/api/v1/admin/users'), headers: _headers);
     if (response.statusCode != 200) {
@@ -119,6 +205,16 @@ class AdminService {
     }
 
     return ResetCodeModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<void> deactivateUser(String userId) async {
+    final response = await httpClient.delete(
+      baseUri.resolve('/api/v1/admin/users/$userId'),
+      headers: _headers,
+    );
+    if (response.statusCode != 204 && response.statusCode != 200) {
+      throw AdminApiException('Failed to remove user', statusCode: response.statusCode);
+    }
   }
 
   Future<IdentifyMediaResult> identifyMedia({
