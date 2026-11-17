@@ -16,6 +16,7 @@ public static class InviteEndpoints
 
         group.MapPost("", CreateInviteAsync).WithName("CreateInvite");
         group.MapGet("", ListInvitesAsync).WithName("ListInvites");
+        group.MapPost("/{id:guid}/revoke", RevokeInviteAsync).WithName("RevokeInvite");
 
         return endpoints;
     }
@@ -60,5 +61,28 @@ public static class InviteEndpoints
             .ToListAsync(cancellationToken);
 
         return Results.Ok(invites);
+    }
+
+    private static async Task<IResult> RevokeInviteAsync(
+        Guid id,
+        HermesDbContext db,
+        CancellationToken cancellationToken)
+    {
+        var invite = await db.InviteCodes.SingleOrDefaultAsync(i => i.Id == id, cancellationToken);
+        if (invite is null)
+        {
+            return Results.NotFound(new { error = "invite_not_found" });
+        }
+
+        invite.Revoke();
+        await db.SaveChangesAsync(cancellationToken);
+
+        return Results.Ok(new InviteResponse(
+            invite.Id,
+            invite.Code,
+            invite.MaxUses,
+            invite.UsedCount,
+            invite.ExpiresAtUtc,
+            invite.IsRevoked));
     }
 }

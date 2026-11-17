@@ -35,7 +35,57 @@ class AdminService {
     }
 
     final decoded = jsonDecode(response.body) as List<dynamic>;
-    return decoded.map((e) => LibraryRootModel.fromJson(e as Map<String, dynamic>)).toList();
+    final roots = decoded
+        .map((e) => LibraryRootModel.fromJson(e as Map<String, dynamic>))
+        .toList();
+    return _enrichMissingLibraryCounts(roots);
+  }
+
+  Future<List<LibraryRootModel>> _enrichMissingLibraryCounts(
+    List<LibraryRootModel> roots,
+  ) async {
+    final missingTypes = roots
+        .where((r) => !r.hasReportedCount && r.lastScanCompletedAtUtc != null)
+        .map((r) => r.mediaType)
+        .toSet();
+    if (missingTypes.isEmpty) {
+      return roots;
+    }
+
+    final countsByType = <int, int>{};
+    for (final mediaType in missingTypes) {
+      // Only attribute catalog totals cleanly when there is a single root of that media type.
+      if (roots.where((r) => r.mediaType == mediaType).length != 1) {
+        continue;
+      }
+      final path = switch (mediaType) {
+        0 => '/api/v1/cinema/movies',
+        1 => '/api/v1/cinema/series',
+        _ => '/api/v1/music/songs',
+      };
+      try {
+        final resp = await httpClient.get(baseUri.resolve(path), headers: _headers);
+        if (resp.statusCode == 200) {
+          final items = jsonDecode(resp.body);
+          if (items is List) {
+            countsByType[mediaType] = items.length;
+          }
+        }
+      } catch (_) {
+        // Leave hasReportedCount false so UI stays accurate ("Scanned") rather than showing 0.
+      }
+    }
+
+    if (countsByType.isEmpty) {
+      return roots;
+    }
+    return roots.map((r) {
+      final fallback = countsByType[r.mediaType];
+      if (!r.hasReportedCount && fallback != null) {
+        return r.copyWith(itemCount: fallback, hasReportedCount: true);
+      }
+      return r;
+    }).toList();
   }
 
   Future<LibraryRootModel> createLibrary({
@@ -73,6 +123,81 @@ class AdminService {
     return LibraryScanSummaryModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
+  Future<void> queueLibraryScan(String libraryId) async {
+    final response = await httpClient.post(
+      baseUri.resolve('/api/v1/admin/libraries/$libraryId/scan/queue'),
+      headers: _headers,
+    );
+    if (response.statusCode != 202 && response.statusCode != 200) {
+      throw AdminApiException('Queue scan failed', statusCode: response.statusCode);
+    }
+  }
+
+  Future<List<ActiveStreamSessionModel>> listActiveSessions() async {
+    final response = await httpClient.get(
+      baseUri.resolve('/api/v1/admin/sessions'),
+      headers: _headers,
+    );
+    if (response.statusCode != 200) {
+      throw AdminApiException('Failed to load sessions', statusCode: response.statusCode);
+    }
+    final decoded = jsonDecode(response.body) as List<dynamic>;
+    return decoded
+        .map((e) => ActiveStreamSessionModel.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<void> stopSession(String sessionId) async {
+    final response = await httpClient.delete(
+      baseUri.resolve('/api/v1/admin/sessions/${Uri.encodeComponent(sessionId)}'),
+      headers: _headers,
+    );
+    if (response.statusCode != 204 && response.statusCode != 200) {
+      throw AdminApiException('Failed to stop session', statusCode: response.statusCode);
+    }
+  }
+
+  Future<List<UnmatchedMediaModel>> listUnmatchedMedia() async {
+    final response = await httpClient.get(
+      baseUri.resolve('/api/v1/admin/media/unmatched'),
+      headers: _headers,
+    );
+    if (response.statusCode != 200) {
+      throw AdminApiException('Failed to load unmatched media', statusCode: response.statusCode);
+    }
+    final decoded = jsonDecode(response.body) as List<dynamic>;
+    return decoded
+        .map((e) => UnmatchedMediaModel.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<List<TmdbCandidateModel>> searchTmdb({
+    required String query,
+    required int mediaType,
+  }) async {
+    final uri = baseUri.resolve('/api/v1/admin/media/tmdb-search').replace(
+      queryParameters: {
+        'query': query,
+        'mediaType': '$mediaType',
+      },
+    );
+    final response = await httpClient.get(uri, headers: _headers);
+    if (response.statusCode != 200) {
+      throw AdminApiException('TMDb search failed', statusCode: response.statusCode);
+    }
+    final decoded = jsonDecode(response.body) as List<dynamic>;
+    return decoded
+        .map((e) => TmdbCandidateModel.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Uri? buildArtworkUri(String? artworkHash, {String variant = 'thumb_400'}) {
+    if (artworkHash == null || artworkHash.isEmpty) {
+      return null;
+    }
+    return baseUri.resolve('/api/v1/artwork/$artworkHash/$variant.webp');
+  }
+
   Future<List<InviteModel>> listInvites() async {
     final response = await httpClient.get(baseUri.resolve('/api/v1/admin/invites'), headers: _headers);
     if (response.statusCode != 200) {
@@ -99,6 +224,17 @@ class AdminService {
     return InviteModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
+  Future<InviteModel> revokeInvite(String inviteId) async {
+    final response = await httpClient.post(
+      baseUri.resolve('/api/v1/admin/invites/$inviteId/revoke'),
+      headers: _headers,
+    );
+    if (response.statusCode != 200) {
+      throw AdminApiException('Failed to revoke invite', statusCode: response.statusCode);
+    }
+    return InviteModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
   Future<List<UserSummaryModel>> listUsers() async {
     final response = await httpClient.get(baseUri.resolve('/api/v1/admin/users'), headers: _headers);
     if (response.statusCode != 200) {
@@ -119,6 +255,16 @@ class AdminService {
     }
 
     return ResetCodeModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<void> deactivateUser(String userId) async {
+    final response = await httpClient.delete(
+      baseUri.resolve('/api/v1/admin/users/$userId'),
+      headers: _headers,
+    );
+    if (response.statusCode != 204 && response.statusCode != 200) {
+      throw AdminApiException('Failed to remove user', statusCode: response.statusCode);
+    }
   }
 
   Future<IdentifyMediaResult> identifyMedia({

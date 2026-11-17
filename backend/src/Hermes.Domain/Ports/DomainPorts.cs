@@ -62,6 +62,17 @@ public sealed record TmdbSearchCandidate(int TmdbId, string Title, int? Year, st
 
 public sealed record TmdbEpisodeCandidate(int EpisodeNumber, string Title, string? Overview, string? StillPath);
 
+public sealed record TmdbCastCandidate(string Name, string Role, string? ProfilePath);
+
+public sealed record TmdbSeasonCountCandidate(int SeasonNumber, int EpisodeCount);
+
+public sealed record TmdbRichDetails(
+    double? Rating,
+    int? RuntimeMinutes,
+    IReadOnlyList<string> Genres,
+    IReadOnlyList<TmdbCastCandidate> Cast,
+    IReadOnlyList<TmdbSeasonCountCandidate> Seasons);
+
 public interface ITmdbClient
 {
     Task<IReadOnlyList<TmdbSearchCandidate>> SearchAsync(LibraryMediaType mediaType, string query, int? year, CancellationToken cancellationToken);
@@ -72,6 +83,12 @@ public interface ITmdbClient
         int seasonNumber,
         CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<TmdbEpisodeCandidate>>([]);
+
+    Task<TmdbRichDetails?> GetRichDetailsAsync(
+        LibraryMediaType mediaType,
+        int tmdbId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<TmdbRichDetails?>(null);
 }
 
 public interface IArtworkStore
@@ -81,6 +98,13 @@ public interface IArtworkStore
 }
 
 public sealed record TranscodeSessionLease(Guid SessionId, string PlaylistFilePath, string SegmentDirectory);
+
+public sealed record ActiveTranscodeSessionInfo(
+    Guid SessionId,
+    Guid UserId,
+    Guid MediaSourceId,
+    string QualityLabel,
+    DateTimeOffset StartedAtUtc);
 
 public interface ITranscodeSessionManager
 {
@@ -96,6 +120,7 @@ public interface ITranscodeSessionManager
 
     Task StopSessionAsync(Guid sessionId, CancellationToken cancellationToken);
     string? ResolveHlsAssetPath(Guid sessionId, string fileName);
+    IReadOnlyList<ActiveTranscodeSessionInfo> GetActiveSessions() => [];
 }
 
 public sealed record OnlineDeviceInfo(string DeviceId, string DeviceName, string Platform, DateTimeOffset ConnectedAtUtc);

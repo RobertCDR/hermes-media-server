@@ -20,7 +20,8 @@ public sealed partial class LibraryScannerService(
     IAudioMetadataReader audioMetadataReader,
     ITmdbClient tmdbClient,
     IArtworkStore artworkStore,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    LibraryScanProgressTracker? scanProgress = null)
 {
     private static readonly HashSet<string> VideoExtensions =
         new([".mkv", ".mp4", ".avi", ".mov", ".m4v", ".webm", ".ts"], StringComparer.OrdinalIgnoreCase);
@@ -32,6 +33,10 @@ public sealed partial class LibraryScannerService(
 
     public async Task<LibraryScanResult?> ScanLibraryAsync(Guid libraryRootId, CancellationToken cancellationToken)
     {
+        using var scanLock = scanProgress is null
+            ? null
+            : await scanProgress.AcquireScanLockAsync(libraryRootId, cancellationToken);
+
         var root = await db.MediaLibraryRoots.SingleOrDefaultAsync(r => r.Id == libraryRootId, cancellationToken);
         if (root is null)
         {
@@ -43,22 +48,30 @@ public sealed partial class LibraryScannerService(
             return new LibraryScanResult(root.Id, 0, 0, 0, timeProvider.GetUtcNow());
         }
 
-        var result = root.MediaType switch
+        try
         {
-            LibraryMediaType.Movies => await ScanMoviesAsync(root, cancellationToken),
-            LibraryMediaType.Series => await ScanSeriesAsync(root, cancellationToken),
-            LibraryMediaType.Music => await ScanMusicAsync(root, cancellationToken),
-            _ => throw new InvalidOperationException($"Unsupported library type: {root.MediaType}")
-        };
+            var result = root.MediaType switch
+            {
+                LibraryMediaType.Movies => await ScanMoviesAsync(root, cancellationToken),
+                LibraryMediaType.Series => await ScanSeriesAsync(root, cancellationToken),
+                LibraryMediaType.Music => await ScanMusicAsync(root, cancellationToken),
+                _ => throw new InvalidOperationException($"Unsupported library type: {root.MediaType}")
+            };
 
-        root.MarkScanCompleted(result.CompletedAtUtc);
-        await db.SaveChangesAsync(cancellationToken);
-        return result;
+            root.MarkScanCompleted(result.CompletedAtUtc);
+            await db.SaveChangesAsync(cancellationToken);
+            return result;
+        }
+        finally
+        {
+            scanProgress?.Complete(root.Id);
+        }
     }
 
     private async Task<LibraryScanResult> ScanMoviesAsync(MediaLibraryRoot root, CancellationToken cancellationToken)
     {
         var files = EnumerateSupportedFiles(root.RootPath, VideoExtensions);
+        scanProgress?.BeginScan(root.Id, files.Count, timeProvider.GetUtcNow());
         var discoveredSet = new HashSet<string>(files, StringComparer.Ordinal);
         var existingMovies = await db.Movies
             .Where(m => m.LibraryRootId == root.Id)
@@ -80,6 +93,7 @@ public sealed partial class LibraryScannerService(
         var upserted = 0;
         foreach (var filePath in files)
         {
+            scanProgress?.Advance(root.Id);
             var fileInfo = new FileInfo(filePath);
             var lastWriteUtc = new DateTimeOffset(fileInfo.LastWriteTimeUtc, TimeSpan.Zero);
 
@@ -131,6 +145,14 @@ public sealed partial class LibraryScannerService(
             upserted++;
         }
 
+        foreach (var movie in moviesByKey.Values)
+        {
+            if (movie.TmdbId is not null && movie.GenresCsv is null && movie.Rating is null)
+            {
+                await CinemaMetadataEnricher.EnrichMovieAsync(tmdbClient, artworkStore, movie, cancellationToken);
+            }
+        }
+
         var utcNow = timeProvider.GetUtcNow();
         var markedMissing = 0;
         foreach (var existingSource in existingSourcesByPath.Values)
@@ -148,6 +170,7 @@ public sealed partial class LibraryScannerService(
     private async Task<LibraryScanResult> ScanSeriesAsync(MediaLibraryRoot root, CancellationToken cancellationToken)
     {
         var files = EnumerateSupportedFiles(root.RootPath, VideoExtensions);
+        scanProgress?.BeginScan(root.Id, files.Count, timeProvider.GetUtcNow());
         var discoveredSet = new HashSet<string>(files, StringComparer.Ordinal);
         var existingSeries = await db.TvSeries
             .Where(s => s.LibraryRootId == root.Id)
@@ -166,6 +189,7 @@ public sealed partial class LibraryScannerService(
         var upserted = 0;
         foreach (var filePath in files)
         {
+            scanProgress?.Advance(root.Id);
             var fileInfo = new FileInfo(filePath);
             var lastWriteUtc = new DateTimeOffset(fileInfo.LastWriteTimeUtc, TimeSpan.Zero);
 
@@ -176,7 +200,7 @@ public sealed partial class LibraryScannerService(
             }
 
             var (seriesTitle, year, seasonNumber, episodeNumber, suffixLabel) =
-                ParseEpisodeFilename(Path.GetFileNameWithoutExtension(filePath));
+                ParseEpisodeWithFolderContext(root.RootPath, filePath);
             var seriesKey = (NormalizeKey(seriesTitle), year);
 
             if (!seriesByKey.TryGetValue(seriesKey, out var series))
@@ -240,6 +264,11 @@ public sealed partial class LibraryScannerService(
             await TryEnrichSeriesFromTmdbAsync(series, series.Title, series.Year, cancellationToken);
             if (series.TmdbId is int seriesTmdbId)
             {
+                if ((series.GenresCsv is null && series.Rating is null) ||
+                    series.Seasons.Any(sn => sn.ExpectedEpisodeCount is null))
+                {
+                    await CinemaMetadataEnricher.EnrichSeriesAsync(tmdbClient, artworkStore, series, cancellationToken);
+                }
                 await TryEnrichSeriesEpisodesFromTmdbAsync(series, seriesTmdbId, cancellationToken);
             }
         }
@@ -261,6 +290,7 @@ public sealed partial class LibraryScannerService(
     private async Task<LibraryScanResult> ScanMusicAsync(MediaLibraryRoot root, CancellationToken cancellationToken)
     {
         var files = EnumerateSupportedFiles(root.RootPath, AudioExtensions);
+        scanProgress?.BeginScan(root.Id, files.Count, timeProvider.GetUtcNow());
         var discoveredSet = new HashSet<string>(files, StringComparer.Ordinal);
 
         var existingSongs = await db.Songs
@@ -274,6 +304,7 @@ public sealed partial class LibraryScannerService(
         var upserted = 0;
         foreach (var filePath in files)
         {
+            scanProgress?.Advance(root.Id);
             if (songsByPath.TryGetValue(filePath, out var existingSong))
             {
                 existingSong.MarkPresent();
@@ -369,6 +400,7 @@ public sealed partial class LibraryScannerService(
         {
             var (match, posterHash, backdropHash) = enriched.Value;
             movie.ApplyScannedMetadata(match.Title, match.Year ?? parsedYear, match.Overview, match.TmdbId, posterHash, backdropHash);
+            await CinemaMetadataEnricher.EnrichMovieAsync(tmdbClient, artworkStore, movie, cancellationToken);
         }
     }
 
@@ -388,6 +420,7 @@ public sealed partial class LibraryScannerService(
         {
             var (match, posterHash, backdropHash) = enriched.Value;
             series.ApplyScannedMetadata(match.Title, match.Year ?? parsedYear, match.Overview, match.TmdbId, posterHash, backdropHash);
+            await CinemaMetadataEnricher.EnrichSeriesAsync(tmdbClient, artworkStore, series, cancellationToken);
         }
     }
 
@@ -559,6 +592,41 @@ public sealed partial class LibraryScannerService(
         return (working.Replace('.', ' ').Replace('_', ' ').Trim(), null, suffixLabel);
     }
 
+    private static (string SeriesTitle, int? Year, int SeasonNumber, int EpisodeNumber, string? SuffixLabel) ParseEpisodeWithFolderContext(
+        string rootPath,
+        string filePath)
+    {
+        var (parsedSeries, parsedYear, season, episode, suffixLabel) =
+            ParseEpisodeFilename(Path.GetFileNameWithoutExtension(filePath));
+
+        var relative = Path.GetRelativePath(rootPath, filePath);
+        var parts = relative.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length <= 1)
+        {
+            return (parsedSeries, parsedYear, season, episode, suffixLabel);
+        }
+
+        // Inspect parent directories bottom-up (skipping Season XX / Specials folders)
+        for (var i = parts.Length - 2; i >= 0; i--)
+        {
+            var folderName = parts[i].Trim();
+            if (SeasonFolderRegex().IsMatch(folderName))
+            {
+                continue;
+            }
+
+            var (folderTitle, folderYear, _) = ParseMovieFilename(folderName);
+            if (!string.IsNullOrWhiteSpace(folderTitle))
+            {
+                var finalTitle = string.IsNullOrWhiteSpace(parsedSeries) ? folderTitle : parsedSeries;
+                var finalYear = parsedYear ?? folderYear;
+                return (finalTitle, finalYear, season, episode, suffixLabel);
+            }
+        }
+
+        return (parsedSeries, parsedYear, season, episode, suffixLabel);
+    }
+
     private static (string SeriesTitle, int? Year, int SeasonNumber, int EpisodeNumber, string? SuffixLabel) ParseEpisodeFilename(string baseName)
     {
         var (working, suffixLabel) = SplitDashSuffix(baseName);
@@ -573,6 +641,14 @@ public sealed partial class LibraryScannerService(
             return (cleanSeries, year, season, episode, suffixLabel);
         }
 
+        var bareMatch = BareEpisodePatternRegex().Match(working);
+        if (bareMatch.Success)
+        {
+            var season = int.Parse(bareMatch.Groups["season"].Value);
+            var episode = int.Parse(bareMatch.Groups["episode"].Value);
+            return (string.Empty, null, season, episode, suffixLabel);
+        }
+
         return (working, null, 1, 1, suffixLabel);
     }
 
@@ -584,4 +660,10 @@ public sealed partial class LibraryScannerService(
 
     [GeneratedRegex(@"^(?<series>.+?)[.\s_-]+[Ss](?<season>\d{1,2})[Ee](?<episode>\d{1,3})")]
     private static partial Regex EpisodePatternRegex();
+
+    [GeneratedRegex(@"^[Ss](?<season>\d{1,2})[Ee](?<episode>\d{1,3})\b")]
+    private static partial Regex BareEpisodePatternRegex();
+
+    [GeneratedRegex(@"^(?:Season\s*\d+|Specials|S\d{1,2})$", RegexOptions.IgnoreCase)]
+    private static partial Regex SeasonFolderRegex();
 }

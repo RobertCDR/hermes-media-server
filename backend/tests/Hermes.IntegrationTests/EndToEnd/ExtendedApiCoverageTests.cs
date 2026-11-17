@@ -152,6 +152,47 @@ public class ExtendedApiCoverageTests
                 new UpdateWatchProgressRequest(null, episodeId, 950, 1000, MarkWatched: true));
             epProgressResp.StatusCode.Should().Be(HttpStatusCode.OK);
 
+            // Watchlist toggle per user (movies & series)
+            (await bobClient.PutAsJsonAsync("/api/v1/cinema/watchlist", new UpdateWatchlistRequest(null, null, true)))
+                .StatusCode.Should().Be(HttpStatusCode.BadRequest);
+            (await bobClient.PutAsJsonAsync("/api/v1/cinema/watchlist", new UpdateWatchlistRequest(Guid.NewGuid(), null, true)))
+                .StatusCode.Should().Be(HttpStatusCode.NotFound);
+            (await bobClient.PutAsJsonAsync("/api/v1/cinema/watchlist", new UpdateWatchlistRequest(movieId, null, true)))
+                .StatusCode.Should().Be(HttpStatusCode.OK);
+            (await bobClient.PutAsJsonAsync("/api/v1/cinema/watchlist", new UpdateWatchlistRequest(null, series.Id, true)))
+                .StatusCode.Should().Be(HttpStatusCode.OK);
+
+            var bobMovieAfterList = await bobClient.GetFromJsonAsync<MovieSummaryDto>($"/api/v1/cinema/movies/{movieId}");
+            bobMovieAfterList!.IsInWatchlist.Should().BeTrue();
+            var adminMovies = await adminClient.GetFromJsonAsync<List<MovieSummaryDto>>("/api/v1/cinema/movies");
+            adminMovies!.Single(m => m.Id == movieId).IsInWatchlist.Should().BeFalse();
+
+            var bobSeriesAfterList = await bobClient.GetFromJsonAsync<List<TvSeriesSummaryDto>>("/api/v1/cinema/series");
+            bobSeriesAfterList!.Single(s => s.Id == series.Id).IsInWatchlist.Should().BeTrue();
+
+            (await bobClient.PutAsJsonAsync("/api/v1/cinema/watchlist", new UpdateWatchlistRequest(movieId, null, false)))
+                .StatusCode.Should().Be(HttpStatusCode.OK);
+            (await bobClient.GetFromJsonAsync<MovieSummaryDto>($"/api/v1/cinema/movies/{movieId}"))!
+                .IsInWatchlist.Should().BeFalse();
+
+            // Mark entire series watched/unwatched
+            (await bobClient.PutAsJsonAsync($"/api/v1/cinema/series/{Guid.NewGuid()}/watched", new MarkSeriesWatchedRequest(true)))
+                .StatusCode.Should().Be(HttpStatusCode.NotFound);
+            var seriesWatchedResp = await bobClient.PutAsJsonAsync(
+                $"/api/v1/cinema/series/{series.Id}/watched",
+                new MarkSeriesWatchedRequest(true));
+            seriesWatchedResp.StatusCode.Should().Be(HttpStatusCode.OK);
+            var markedSeries = await seriesWatchedResp.Content.ReadFromJsonAsync<SeriesWatchedResponse>();
+            markedSeries!.Watched.Should().BeTrue();
+            markedSeries.EpisodesUpdated.Should().Be(1);
+
+            var seriesUnwatchedResp = await bobClient.PutAsJsonAsync(
+                $"/api/v1/cinema/series/{series.Id}/watched",
+                new MarkSeriesWatchedRequest(false));
+            seriesUnwatchedResp.StatusCode.Should().Be(HttpStatusCode.OK);
+            var afterUnwatch = await bobClient.GetFromJsonAsync<List<TvSeriesSummaryDto>>("/api/v1/cinema/series");
+            afterUnwatch!.Single(s => s.Id == series.Id).Seasons.Single().Episodes.Single().WatchProgress!.IsWatched.Should().BeFalse();
+
             // Manual Identify for Movie, Series, invalid, and 404
             (await adminClient.PostAsJsonAsync($"/api/v1/admin/media/{movieId}/identify", new IdentifyMediaRequest(0, "", null, null)))
                 .StatusCode.Should().Be(HttpStatusCode.BadRequest);
@@ -224,6 +265,24 @@ public class ExtendedApiCoverageTests
                 .Content.ReadFromJsonAsync<PlaylistDetailDto>();
             detailAfterDelete!.Tracks.Should().ContainSingle(t => t.Position == 0 && t.Song.Id == song2Id);
 
+            // Rename + Delete playlist + Song lyrics endpoint
+            (await bobClient.PutAsJsonAsync($"/api/v1/music/playlists/{createdPlaylist.Id}", new RenamePlaylistRequest("   ")))
+                .StatusCode.Should().Be(HttpStatusCode.BadRequest);
+            var renamedPlaylist = await (await bobClient.PutAsJsonAsync(
+                $"/api/v1/music/playlists/{createdPlaylist.Id}",
+                new RenamePlaylistRequest("After Hours")))
+                .Content.ReadFromJsonAsync<PlaylistDetailDto>();
+            renamedPlaylist!.Name.Should().Be("After Hours");
+
+            var lyricsResp = await bobClient.GetFromJsonAsync<SongLyricsDto>($"/api/v1/music/songs/{song1Id}/lyrics");
+            lyricsResp.Should().NotBeNull();
+            lyricsResp!.SongId.Should().Be(song1Id);
+
+            (await bobClient.DeleteAsync($"/api/v1/music/playlists/{createdPlaylist.Id}"))
+                .StatusCode.Should().Be(HttpStatusCode.NoContent);
+            (await bobClient.GetAsync($"/api/v1/music/playlists/{createdPlaylist.Id}"))
+                .StatusCode.Should().Be(HttpStatusCode.NotFound);
+
             // 6. DirectPlay video master.m3u8 + audio bitrate alias checks + missing files scan
             var videoSourceId = movieDetail.Sources.Single().Id;
             var videoTicket = (await (await bobClient.PostAsJsonAsync(
@@ -244,6 +303,28 @@ public class ExtendedApiCoverageTests
             var missingMusicScan = await (await adminClient.PostAsync($"/api/v1/admin/libraries/{musicLib.Id}/scan", null))
                 .Content.ReadFromJsonAsync<LibraryScanSummaryDto>();
             missingMusicScan!.SourcesMarkedMissing.Should().Be(1);
+
+            // Verify M4 Admin Server endpoints: library counts/sizes, unmatched, tmdb-search, sessions, revoke invite, deactivate user
+            var enrichedLibs = await adminClient.GetFromJsonAsync<List<LibraryRootResponse>>("/api/v1/admin/libraries");
+            enrichedLibs.Should().Contain(l => l.Id == moviesLib.Id && l.ItemCount >= 1 && l.TotalSizeBytes > 0);
+
+            var unmatched = await adminClient.GetFromJsonAsync<List<UnmatchedMediaDto>>("/api/v1/admin/media/unmatched");
+            unmatched.Should().NotBeNull();
+
+            var tmdbHits = await adminClient.GetFromJsonAsync<List<TmdbCandidateDto>>("/api/v1/admin/media/tmdb-search?query=Blade&mediaType=0");
+            tmdbHits.Should().NotBeNull();
+
+            var adminSessions = await adminClient.GetFromJsonAsync<List<ActiveStreamSessionDto>>("/api/v1/admin/sessions");
+            adminSessions.Should().NotBeNull();
+
+            var revokedInvite = await (await adminClient.PostAsync($"/api/v1/admin/invites/{invite!.Id}/revoke", null))
+                .Content.ReadFromJsonAsync<InviteResponse>();
+            revokedInvite!.IsRevoked.Should().BeTrue();
+
+            (await adminClient.DeleteAsync($"/api/v1/admin/users/{regDto.UserId}"))
+                .StatusCode.Should().Be(HttpStatusCode.NoContent);
+            (await adminClient.DeleteAsync($"/api/v1/admin/users/{adminLogin.UserId}"))
+                .StatusCode.Should().Be(HttpStatusCode.BadRequest);
 
             // Also cover LibraryScanWorker reading once cleanly via service scope
             using var scope = factory.Services.CreateScope();

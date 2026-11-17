@@ -25,9 +25,34 @@ public class CinemaAndIdentityDomainTests
         series.LockManualMatch(95396, "Severance (Locked)", 2022, "Locked Overview", "art2", "bg2");
         series.IsMetadataLocked.Should().BeTrue();
         series.ApplyScannedMetadata("Wrong", 1999, "Overwritten", 1, "bad", "bad");
+        series.ApplyRichMetadata(9.9, ["Ignored"], """[{"name":"Bad"}]""");
         series.Title.Should().Be("Severance (Locked)");
+        series.GenresCsv.Should().BeNull();
+
+        series.ApplyRichMetadata(8.74, ["Drama", "Sci-Fi", "Drama"], """[{"name":"Adam Scott","role":"Mark Scout"}]""", bypassLock: true);
+        series.Rating.Should().Be(8.7);
+        series.GenresCsv.Should().Be("Drama, Sci-Fi");
+        series.CastJson.Should().Contain("Adam Scott");
 
         var season = new TvSeason(series.Id, 1, "Season 1", "s1art");
+        season.SetExpectedEpisodeCount(9);
+        season.ExpectedEpisodeCount.Should().Be(9);
+        season.SetExpectedEpisodeCount(0);
+        season.ExpectedEpisodeCount.Should().BeNull();
+
+        var movie = new Movie(root.Id, "Dark City", 1998);
+        movie.ApplyRichMetadata(7.6, ["Mystery", "Sci-Fi"], 100, """[{"name":"Rufus Sewell","role":"John Murdoch"}]""");
+        movie.Rating.Should().Be(7.6);
+        movie.GenresCsv.Should().Be("Mystery, Sci-Fi");
+        movie.RuntimeMinutes.Should().Be(100);
+
+        var watchlistMovie = WatchlistItem.ForMovie(Guid.NewGuid(), movie.Id, now);
+        watchlistMovie.MovieId.Should().Be(movie.Id);
+        watchlistMovie.TvSeriesId.Should().BeNull();
+
+        var watchlistSeries = WatchlistItem.ForSeries(watchlistMovie.UserId, series.Id, now);
+        watchlistSeries.TvSeriesId.Should().Be(series.Id);
+        watchlistSeries.MovieId.Should().BeNull();
         var episode = new Episode(season.Id, 1, "Good News About Hell", "Pilot", "ep1still");
         season.Episodes.Add(episode);
         series.Seasons.Add(season);
@@ -69,6 +94,25 @@ public class CinemaAndIdentityDomainTests
         user.UpdateThemePreferences(ThemeSurfacePreset.OledBlack, "#10B981");
         user.PreferredSurfacePreset.Should().Be(ThemeSurfacePreset.OledBlack);
         user.PreferredAccentHex.Should().Be("#10B981");
+
+        user.AutoplayNextEpisode.Should().BeTrue();
+        user.NormalizeVolume.Should().BeFalse();
+        user.MatchTitleColors.Should().BeTrue();
+        user.SubtitleSize.Should().Be("medium");
+        user.SubtitleBackground.Should().Be("shadow");
+
+        user.UpdateAccountPreferences(false, true, false, "XL", "Box");
+        user.AutoplayNextEpisode.Should().BeFalse();
+        user.NormalizeVolume.Should().BeTrue();
+        user.MatchTitleColors.Should().BeFalse();
+        user.SubtitleSize.Should().Be("xl");
+        user.SubtitleBackground.Should().Be("box");
+
+        var badSubSize = () => user.UpdateAccountPreferences(true, false, true, "huge", "shadow");
+        badSubSize.Should().Throw<ArgumentException>();
+
+        var badSubBg = () => user.UpdateAccountPreferences(true, false, true, "large", "neon");
+        badSubBg.Should().Throw<ArgumentException>();
 
         user.ChangePassword("hash2", now.AddMinutes(5));
         user.OneTimeResetCodeHash.Should().BeNull();
@@ -122,5 +166,26 @@ public class CinemaAndIdentityDomainTests
         registry.RemoveConnection("c2").Should().NotBeNull();
         registry.IsDeviceConnected(userId, "d1").Should().BeFalse();
         registry.RemoveConnection("unknown").Should().BeNull();
+    }
+
+    [Fact]
+    public void Playlist_Rename_And_UpdateDescription_ShouldTrimAndUpdateTimestamp()
+    {
+        var t0 = DateTimeOffset.Parse("2026-11-16T10:00:00Z");
+        var t1 = DateTimeOffset.Parse("2026-11-17T12:00:00Z");
+        var playlist = new Playlist(Guid.NewGuid(), "Initial Mix", "Original notes", t0);
+
+        playlist.Rename("  Late Night Synth  ", t1);
+        playlist.Name.Should().Be("Late Night Synth");
+        playlist.Description.Should().Be("Original notes");
+        playlist.UpdatedAtUtc.Should().Be(t1);
+
+        var t2 = t1.AddMinutes(5);
+        playlist.UpdateDescription("   ", t2);
+        playlist.Description.Should().BeNull();
+        playlist.UpdatedAtUtc.Should().Be(t2);
+
+        var invalidRename = () => playlist.Rename("   ", t2);
+        invalidRename.Should().Throw<ArgumentException>();
     }
 }

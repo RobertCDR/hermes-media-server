@@ -1,3 +1,5 @@
+import 'package:material_ui/material_ui.dart' show Color, HSLColor;
+
 enum AudioQualityPreset {
   lossless('Lossless', 'Lossless'),
   veryHigh320('VeryHigh320', 'Very High (320k)'),
@@ -129,6 +131,7 @@ class SongModel {
     this.artworkHash,
     required this.isLiked,
     required this.isMissing,
+    this.fileLastWriteUtc,
   });
 
   final String id;
@@ -147,6 +150,7 @@ class SongModel {
   final String? artworkHash;
   final bool isLiked;
   final bool isMissing;
+  final DateTime? fileLastWriteUtc;
 
   SongModel copyWith({bool? isLiked}) {
     return SongModel(
@@ -166,10 +170,12 @@ class SongModel {
       artworkHash: artworkHash,
       isLiked: isLiked ?? this.isLiked,
       isMissing: isMissing,
+      fileLastWriteUtc: fileLastWriteUtc,
     );
   }
 
   factory SongModel.fromJson(Map<String, dynamic> json) {
+    final rawModified = json['fileLastWriteUtc'] as String?;
     return SongModel(
       id: json['id'] as String,
       artistId: json['artistId'] as String,
@@ -187,6 +193,7 @@ class SongModel {
       artworkHash: json['artworkHash'] as String?,
       isLiked: json['isLiked'] as bool? ?? false,
       isMissing: json['isMissing'] as bool? ?? false,
+      fileLastWriteUtc: rawModified == null ? null : DateTime.tryParse(rawModified),
     );
   }
 }
@@ -422,4 +429,220 @@ class UnifiedSearchResult {
           .toList(),
     );
   }
+}
+
+class AlbumDetailModel {
+  const AlbumDetailModel({
+    required this.id,
+    required this.artistId,
+    required this.artistName,
+    required this.title,
+    this.year,
+    this.artworkHash,
+    required this.songs,
+  });
+
+  final String id;
+  final String artistId;
+  final String artistName;
+  final String title;
+  final int? year;
+  final String? artworkHash;
+  final List<SongModel> songs;
+
+  factory AlbumDetailModel.fromJson(Map<String, dynamic> json) {
+    final rawSongs = json['songs'] as List<dynamic>? ?? const [];
+    return AlbumDetailModel(
+      id: json['id'] as String,
+      artistId: json['artistId'] as String,
+      artistName: json['artistName'] as String? ?? '',
+      title: json['title'] as String? ?? '',
+      year: json['year'] as int?,
+      artworkHash: json['artworkHash'] as String?,
+      songs: rawSongs
+          .map((e) => SongModel.fromJson(e as Map<String, dynamic>))
+          .toList(),
+    );
+  }
+}
+
+class ArtistDetailModel {
+  const ArtistDetailModel({
+    required this.id,
+    required this.name,
+    this.artworkHash,
+    required this.albums,
+    required this.songs,
+  });
+
+  final String id;
+  final String name;
+  final String? artworkHash;
+  final List<AlbumSummaryModel> albums;
+  final List<SongModel> songs;
+
+  factory ArtistDetailModel.fromJson(Map<String, dynamic> json) {
+    final rawAlbums = json['albums'] as List<dynamic>? ?? const [];
+    final rawSongs = json['songs'] as List<dynamic>? ?? const [];
+    return ArtistDetailModel(
+      id: json['id'] as String,
+      name: json['name'] as String? ?? '',
+      artworkHash: json['artworkHash'] as String?,
+      albums: rawAlbums
+          .map((e) => AlbumSummaryModel.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      songs: rawSongs
+          .map((e) => SongModel.fromJson(e as Map<String, dynamic>))
+          .toList(),
+    );
+  }
+}
+
+class SongLyricLineModel {
+  const SongLyricLineModel({this.timestampMs, required this.text});
+
+  final int? timestampMs;
+  final String text;
+
+  factory SongLyricLineModel.fromJson(Map<String, dynamic> json) {
+    return SongLyricLineModel(
+      timestampMs: (json['timestampMs'] as num?)?.toInt(),
+      text: json['text'] as String? ?? '',
+    );
+  }
+}
+
+class SongLyricsModel {
+  const SongLyricsModel({
+    required this.songId,
+    required this.isSynced,
+    required this.source,
+    required this.lines,
+  });
+
+  final String songId;
+  final bool isSynced;
+  final String source;
+  final List<SongLyricLineModel> lines;
+
+  factory SongLyricsModel.fromJson(Map<String, dynamic> json) {
+    final rawLines = json['lines'] as List<dynamic>? ?? const [];
+    return SongLyricsModel(
+      songId: json['songId'] as String? ?? '',
+      isSynced: json['isSynced'] as bool? ?? false,
+      source: json['source'] as String? ?? 'none',
+      lines: rawLines
+          .map((e) => SongLyricLineModel.fromJson(e as Map<String, dynamic>))
+          .toList(),
+    );
+  }
+}
+
+enum SmartPlaylistKind {
+  recentlyAdded(
+    id: 'recent',
+    title: 'Recently added',
+    description: 'Latest additions to your music library',
+  ),
+  losslessMasters(
+    id: 'lossless',
+    title: 'Lossless masters',
+    description: 'Bit-perfect FLAC, ALAC and WAV tracks',
+  ),
+  freshMix(
+    id: 'mix',
+    title: 'Deep cuts mix',
+    description: 'Varied picks across albums in your collection',
+  );
+
+  const SmartPlaylistKind({
+    required this.id,
+    required this.title,
+    required this.description,
+  });
+
+  final String id;
+  final String title;
+  final String description;
+}
+
+enum MusicPageKind {
+  home,
+  albums,
+  artists,
+  songs,
+  library,
+  liked,
+  album,
+  artist,
+  playlist,
+  smart,
+}
+
+class MusicPageRoute {
+  const MusicPageRoute._({required this.kind, this.targetId});
+
+  const MusicPageRoute.home() : this._(kind: MusicPageKind.home);
+  const MusicPageRoute.albums() : this._(kind: MusicPageKind.albums);
+  const MusicPageRoute.artists() : this._(kind: MusicPageKind.artists);
+  const MusicPageRoute.songs() : this._(kind: MusicPageKind.songs);
+  const MusicPageRoute.library() : this._(kind: MusicPageKind.library);
+  const MusicPageRoute.liked() : this._(kind: MusicPageKind.liked);
+  const MusicPageRoute.album(String id) : this._(kind: MusicPageKind.album, targetId: id);
+  const MusicPageRoute.artist(String id) : this._(kind: MusicPageKind.artist, targetId: id);
+  const MusicPageRoute.playlist(String id) : this._(kind: MusicPageKind.playlist, targetId: id);
+  const MusicPageRoute.smart(String id) : this._(kind: MusicPageKind.smart, targetId: id);
+
+  final MusicPageKind kind;
+  final String? targetId;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is MusicPageRoute &&
+          runtimeType == other.runtimeType &&
+          kind == other.kind &&
+          targetId == other.targetId;
+
+  @override
+  int get hashCode => Object.hash(kind, targetId);
+}
+
+/// Coordinates cross-surface navigation into Music routes (e.g. clicking song title -> Album).
+class MusicNavigationController {
+  MusicNavigationController({this.onRequestRoute});
+
+  void Function(MusicPageRoute route)? onRequestRoute;
+  MusicPageRoute? _pendingRoute;
+
+  void navigate(MusicPageRoute route) {
+    final handler = onRequestRoute;
+    if (handler != null) {
+      _pendingRoute = null;
+      handler(route);
+    } else {
+      _pendingRoute = route;
+    }
+  }
+
+  MusicPageRoute? takePendingRoute() {
+    final next = _pendingRoute;
+    _pendingRoute = null;
+    return next;
+  }
+}
+
+/// Deterministic dark-surface wash tint matching Figma v4 `--tint` backdrops.
+Color deriveMusicTint(String seed, {Color fallback = const Color(0xFF42362C)}) {
+  final trimmed = seed.trim();
+  if (trimmed.isEmpty) return fallback;
+  var hash = 2166136261;
+  for (final unit in trimmed.codeUnits) {
+    hash ^= unit;
+    hash = (hash * 16777619) & 0xFFFFFFFF;
+  }
+  final hue = (hash % 360).toDouble();
+  final sat = 0.34 + ((hash >> 8) % 24) / 100.0;
+  final light = 0.25 + ((hash >> 16) % 10) / 100.0;
+  return HSLColor.fromAHSL(1.0, hue, sat, light).toColor();
 }

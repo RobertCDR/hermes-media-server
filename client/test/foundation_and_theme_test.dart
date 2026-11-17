@@ -6,48 +6,71 @@ import 'package:hermes_client/src/core/auth/auth_service.dart';
 import 'package:hermes_client/src/core/auth/session_store.dart';
 import 'package:hermes_client/src/core/network/endpoint_resolver.dart';
 import 'package:hermes_client/src/core/theme/hermes_theme_tokens.dart';
+import 'package:hermes_client/src/core/widgets/hermes_icons.dart';
 import 'package:hermes_client/src/features/shell/dual_world_shell.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
   group('HermesThemeTokens', () {
-    test('defaults to Obsidian Glow and Crimson with HDR-safe #D8D8D8 subtitles', () {
+    test('defaults to Crimson v4 palette with HDR-safe #D8D8D8 subtitles', () {
       final tokens = HermesThemeTokens.resolve();
 
-      expect(tokens.surfacePreset, SurfacePreset.obsidianGlow);
-      expect(tokens.accentKind, HermesAccentKind.crimson);
-      expect(tokens.bgPrimary, const Color(0xFF090B12));
-      expect(tokens.bgElevated, const Color(0xFF111522));
-      expect(tokens.accentPrimary, const Color(0xFFE11D48));
+      expect(tokens.themeId, HermesThemeId.crimson);
+      expect(tokens.pureBlack, isFalse);
+      expect(tokens.bg, const Color(0xFF130A0C));
+      expect(tokens.bgRail, const Color(0xFF0F0708));
+      expect(tokens.bgSunken, const Color(0xFF0B0506));
+      expect(tokens.surface, const Color(0xFF1C1012));
+      expect(tokens.accent, const Color(0xFFDC143C));
       expect(tokens.subtitleSafeColor, const Color(0xFFD8D8D8));
+      expect(tokens.toThemeData().scaffoldBackgroundColor, const Color(0xFF130A0C));
     });
 
-    test('supports OLED Black and Slate surface presets and curated accents', () {
-      final oled = HermesThemeTokens.resolve(
-        surfacePreset: SurfacePreset.oledBlack,
-        accentKind: HermesAccentKind.emerald,
-      );
-      expect(oled.bgPrimary, const Color(0xFF000000));
-      expect(oled.accentPrimary, const Color(0xFF10B981));
+    test('resolves all 6 v4 themes and Pure black background OLED override', () {
+      final expected = {
+        HermesThemeId.crimson: (const Color(0xFF130A0C), const Color(0xFFDC143C)),
+        HermesThemeId.midnight: (const Color(0xFF0B0E15), const Color(0xFF5B8CFF)),
+        HermesThemeId.forest: (const Color(0xFF0A110D), const Color(0xFF3DD68C)),
+        HermesThemeId.amethyst: (const Color(0xFF100C16), const Color(0xFFA678FF)),
+        HermesThemeId.amber: (const Color(0xFF120E09), const Color(0xFFF2A93B)),
+        HermesThemeId.graphite: (const Color(0xFF0F0F10), const Color(0xFFF2F2F3)),
+      };
 
-      final slate = HermesThemeTokens.resolve(
-        surfacePreset: SurfacePreset.slate,
-        accentKind: HermesAccentKind.violet,
-      );
-      expect(slate.bgPrimary, const Color(0xFF0F172A));
-      expect(slate.accentPrimary, const Color(0xFF7C3AED));
+      for (final entry in expected.entries) {
+        final tokens = HermesThemeTokens.resolve(themeId: entry.key);
+        expect(tokens.bg, entry.value.$1);
+        expect(tokens.accent, entry.value.$2);
+
+        final oled = HermesThemeTokens.resolve(
+          themeId: entry.key,
+          pureBlack: true,
+        );
+        expect(oled.bg, const Color(0xFF000000));
+        expect(oled.bgSunken, const Color(0xFF000000));
+        expect(oled.bgRail, const Color(0xFF000000));
+        expect(oled.surface, tokens.surface);
+      }
     });
 
-    test('clamps dark dynamic album-art accents to maintain >= 4.5:1 WCAG contrast', () {
-      final tokens = HermesThemeTokens.resolve(
-        surfacePreset: SurfacePreset.obsidianGlow,
-        accentKind: HermesAccentKind.dynamicAlbumArt,
-        dynamicSourceColor: const Color(0xFF0B0B14),
-      );
+    test('clamps dark title tints to maintain >= 4.5:1 WCAG contrast', () {
+      final base = HermesThemeTokens.resolve();
+      final tinted = base.withTitleTint(const Color(0xFF0B0B14));
 
-      final ratio = HermesThemeTokens.wcagContrastRatio(tokens.accentPrimary, tokens.bgPrimary);
+      final ratio = HermesThemeTokens.wcagContrastRatio(
+        tinted.accent,
+        tinted.bg,
+      );
       expect(ratio, greaterThanOrEqualTo(4.5));
+      expect(tinted.titleTint, const Color(0xFF0B0B14));
+      expect(tinted.pageWash, isNot(tinted.bg));
+
+      final washOnly = base.withTitleTint(
+        const Color(0xFF0B0B14),
+        overrideAccent: false,
+      );
+      expect(washOnly.accent, base.accent);
+      expect(washOnly.titleTint, const Color(0xFF0B0B14));
     });
   });
 
@@ -182,22 +205,31 @@ void main() {
   });
 
   group('DualWorldShell', () {
-    testWidgets('switches between Cinema and Music worlds on desktop and mobile viewports', (tester) async {
+    testWidgets('renders v4 Obsidian rail, account popover, inline destinations, and mobile NavigationBar', (tester) async {
       final tokens = HermesThemeTokens.resolve();
       tester.view.devicePixelRatio = 1.0;
       tester.view.physicalSize = const Size(1280, 800);
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
 
+      var switchServerTapped = false;
+      var signOutTapped = false;
+
       await tester.pumpWidget(
         MaterialApp(
           theme: tokens.toThemeData(),
           home: DualWorldShell(
-            username: 'admin',
+            username: 'robert',
             isAdmin: true,
+            serverName: 'Hermes Home',
+            endpointLabel: 'Tailscale',
             cinemaBuilder: (_) => const Center(child: Text('Cinema Catalog View')),
             musicBuilder: (_) => const Center(child: Text('Music Library View')),
+            adminBuilder: (_) => const Center(child: Text('Server Admin View')),
+            settingsBuilder: (_) => const Center(child: Text('Settings Inline View')),
             miniPlayerBuilder: (_) => const Text('MiniPlayer Idle'),
+            onSwitchServer: () => switchServerTapped = true,
+            onSignOut: () => signOutTapped = true,
           ),
         ),
       );
@@ -205,7 +237,9 @@ void main() {
       expect(find.text('Cinema Catalog View'), findsOneWidget);
       expect(find.text('Music Library View'), findsNothing);
       expect(find.text('MiniPlayer Idle'), findsOneWidget);
-      expect(find.byType(NavigationRail), findsOneWidget);
+      expect(find.byType(HermesMarkIcon), findsOneWidget);
+      expect(find.text('Server'), findsOneWidget);
+      expect(find.text('Settings'), findsOneWidget);
 
       await tester.tap(find.text('Music').first);
       await tester.pumpAndSettle();
@@ -213,7 +247,29 @@ void main() {
       expect(find.text('Music Library View'), findsOneWidget);
       expect(find.text('Cinema Catalog View'), findsNothing);
 
-      // Mobile viewport switches to bottom NavigationBar
+      // Account popover triggers Account settings, Switch server, and Sign out.
+      await tester.tap(find.byKey(const Key('rail-avatar-button')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('account-popover')), findsOneWidget);
+      expect(find.text('robert · Owner'), findsOneWidget);
+
+      await tester.tap(find.text('Account settings'));
+      await tester.pumpAndSettle();
+      expect(find.text('Settings Inline View'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('rail-avatar-button')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Switch server / Setup UI'));
+      await tester.pumpAndSettle();
+      expect(switchServerTapped, isTrue);
+
+      await tester.tap(find.byKey(const Key('rail-avatar-button')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Sign out'));
+      await tester.pumpAndSettle();
+      expect(signOutTapped, isTrue);
+
+      // Mobile viewport switches to bottom NavigationBar cleanly
       tester.view.physicalSize = const Size(400, 800);
       await tester.pumpAndSettle();
       expect(find.byType(NavigationBar), findsOneWidget);

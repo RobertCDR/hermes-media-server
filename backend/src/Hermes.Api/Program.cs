@@ -74,6 +74,8 @@ builder.Services.AddSingleton(sp =>
 });
 builder.Services.AddSingleton<ITranscodeSessionManager>(sp => sp.GetRequiredService<FfmpegTranscodeSessionManager>());
 builder.Services.AddSingleton<SubtitleExtractorService>();
+builder.Services.AddSingleton<LrcLyricsService>();
+builder.Services.AddSingleton<LibraryScanProgressTracker>();
 builder.Services.AddSingleton<LibraryScanChannel>();
 builder.Services.AddScoped<LibraryScannerService>();
 builder.Services.AddHostedService<LibraryScanWorker>();
@@ -214,6 +216,7 @@ app.MapInviteEndpoints();
 app.MapUserManagementEndpoints();
 app.MapLibraryAdminEndpoints();
 app.MapIdentifyEndpoints();
+app.MapAdminSessionEndpoints();
 app.MapArtworkEndpoints();
 app.MapCinemaEndpoints();
 app.MapWatchProgressEndpoints();

@@ -38,6 +38,11 @@ public sealed record WatchProgressUpdatedEvent(
     bool IsWatched,
     DateTimeOffset UpdatedAtUtc);
 
+public sealed record CastMemberDto(
+    string Name,
+    string Role,
+    string? ArtworkHash);
+
 public sealed record MovieSummaryDto(
     Guid Id,
     string Title,
@@ -47,7 +52,13 @@ public sealed record MovieSummaryDto(
     string? ArtworkHash,
     string? BackdropHash,
     WatchProgressDto? WatchProgress,
-    List<MediaSourceDto> Sources);
+    List<MediaSourceDto> Sources,
+    DateTimeOffset AddedAtUtc = default,
+    double? Rating = null,
+    List<string>? Genres = null,
+    int? RuntimeMinutes = null,
+    bool IsInWatchlist = false,
+    List<CastMemberDto>? Cast = null);
 
 public sealed record EpisodeSummaryDto(
     Guid Id,
@@ -63,7 +74,8 @@ public sealed record TvSeasonDto(
     int SeasonNumber,
     string Title,
     string? ArtworkHash,
-    List<EpisodeSummaryDto> Episodes);
+    List<EpisodeSummaryDto> Episodes,
+    int? ExpectedEpisodeCount = null);
 
 public sealed record TvSeriesSummaryDto(
     Guid Id,
@@ -73,7 +85,12 @@ public sealed record TvSeriesSummaryDto(
     int? TmdbId,
     string? ArtworkHash,
     string? BackdropHash,
-    List<TvSeasonDto> Seasons);
+    List<TvSeasonDto> Seasons,
+    DateTimeOffset AddedAtUtc = default,
+    double? Rating = null,
+    List<string>? Genres = null,
+    bool IsInWatchlist = false,
+    List<CastMemberDto>? Cast = null);
 
 public sealed record UpdateWatchProgressRequest(
     Guid? MovieId,
@@ -81,3 +98,14 @@ public sealed record UpdateWatchProgressRequest(
     long PositionMs,
     long DurationMs,
     bool? MarkWatched = null);
+
+public sealed record UpdateWatchlistRequest(
+    Guid? MovieId,
+    Guid? TvSeriesId,
+    bool InWatchlist);
+
+public sealed record WatchlistResponse(bool InWatchlist);
+
+public sealed record MarkSeriesWatchedRequest(bool Watched);
+
+public sealed record SeriesWatchedResponse(Guid SeriesId, bool Watched, int EpisodesUpdated);

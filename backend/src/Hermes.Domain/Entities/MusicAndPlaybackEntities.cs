@@ -150,6 +150,21 @@ public sealed class Playlist
     public DateTimeOffset UpdatedAtUtc { get; private set; }
 
     public ICollection<PlaylistTrack> Tracks { get; } = [];
+
+    public void Rename(string name, DateTimeOffset utcNow)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        Name = name.Trim();
+        UpdatedAtUtc = utcNow;
+    }
+
+    public void UpdateDescription(string? description, DateTimeOffset utcNow)
+    {
+        Description = string.IsNullOrWhiteSpace(description) ? null : description.Trim();
+        UpdatedAtUtc = utcNow;
+    }
+
+    public void Touch(DateTimeOffset utcNow) => UpdatedAtUtc = utcNow;
 }
 
 public sealed class PlaylistTrack

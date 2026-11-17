@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Hermes.Api.Features.System;
 using Hermes.Domain.Entities;
 using Hermes.Domain.Ports;
+using Hermes.Infrastructure.Media;
 using Hermes.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
@@ -19,6 +20,7 @@ public static class MusicEndpoints
         music.MapGet("/albums", ListAlbumsAsync).WithName("ListAlbums");
         music.MapGet("/albums/{id:guid}", GetAlbumAsync).WithName("GetAlbum");
         music.MapGet("/songs", ListSongsAsync).WithName("ListSongs");
+        music.MapGet("/songs/{id:guid}/lyrics", GetSongLyricsAsync).WithName("GetSongLyrics");
         music.MapGet("/songs/liked", ListLikedSongsAsync).WithName("ListLikedSongs");
         music.MapPost("/songs/{id:guid}/like", ToggleLikeSongAsync).WithName("ToggleLikeSong");
         music.MapGet("/session", GetCurrentPlaybackSessionAsync).WithName("GetPlaybackSession");
@@ -378,7 +380,33 @@ public static class MusicEndpoints
             song.BitDepth,
             song.Album.ArtworkHash,
             isLiked,
-            song.MissingSinceUtc is not null);
+            song.MissingSinceUtc is not null,
+            song.FileLastWriteUtc);
+
+    private static async Task<IResult> GetSongLyricsAsync(
+        Guid id,
+        HermesDbContext db,
+        LrcLyricsService lyricsService,
+        CancellationToken cancellationToken)
+    {
+        var song = await db.Songs
+            .AsNoTracking()
+            .Where(s => s.Id == id)
+            .Select(s => new { s.Id, s.FilePath })
+            .SingleOrDefaultAsync(cancellationToken);
+
+        if (song is null)
+        {
+            return Results.NotFound(new { error = "song_not_found" });
+        }
+
+        var result = await lyricsService.ReadLyricsAsync(song.FilePath, cancellationToken);
+        return Results.Ok(new SongLyricsDto(
+            song.Id,
+            result.IsSynced,
+            result.Source,
+            result.Lines.Select(l => new SongLyricLineDto(l.TimestampMs, l.Text)).ToList()));
+    }
 
     private static string EscapeLikePattern(string input) =>
         input.Replace("\\", "\\\\", StringComparison.Ordinal)

@@ -146,6 +146,52 @@ public sealed class TmdbMetadataClient(HttpClient httpClient, IConfiguration con
             .ToList();
     }
 
+    public async Task<TmdbRichDetails?> GetRichDetailsAsync(
+        LibraryMediaType mediaType,
+        int tmdbId,
+        CancellationToken cancellationToken)
+    {
+        var apiKey = configuration["Hermes:TmdbApiKey"];
+        if (string.IsNullOrWhiteSpace(apiKey) || tmdbId <= 0)
+        {
+            return null;
+        }
+
+        var segment = mediaType == LibraryMediaType.Series ? "tv" : "movie";
+        var url = $"https://api.themoviedb.org/3/{segment}/{tmdbId}?api_key={Uri.EscapeDataString(apiKey)}&append_to_response=credits";
+        var item = await httpClient.GetFromJsonAsync<TmdbRichDetailsResponse>(url, cancellationToken);
+        if (item is null)
+        {
+            return null;
+        }
+
+        var runtime = item.Runtime is > 0
+            ? item.Runtime
+            : item.EpisodeRunTime?.FirstOrDefault(r => r > 0);
+        var rating = item.VoteAverage is > 0 ? Math.Round(item.VoteAverage.Value, 1) : (double?)null;
+        var genres = item.Genres?
+            .Where(g => !string.IsNullOrWhiteSpace(g.Name))
+            .Select(g => g.Name!.Trim())
+            .ToList() ?? [];
+
+        var cast = item.Credits?.Cast?
+            .Where(c => !string.IsNullOrWhiteSpace(c.Name))
+            .OrderBy(c => c.Order)
+            .Take(8)
+            .Select(c => new TmdbCastCandidate(
+                c.Name!.Trim(),
+                string.IsNullOrWhiteSpace(c.Character) ? "Cast" : c.Character.Trim(),
+                c.ProfilePath))
+            .ToList() ?? [];
+
+        var seasons = item.Seasons?
+            .Where(s => s.SeasonNumber > 0 && s.EpisodeCount > 0)
+            .Select(s => new TmdbSeasonCountCandidate(s.SeasonNumber, s.EpisodeCount))
+            .ToList() ?? [];
+
+        return new TmdbRichDetails(rating, runtime, genres, cast, seasons);
+    }
+
     private static int? TryParseYear(string? dateText)
     {
         if (!string.IsNullOrWhiteSpace(dateText) &&
@@ -222,5 +268,62 @@ public sealed class TmdbMetadataClient(HttpClient httpClient, IConfiguration con
 
         [JsonPropertyName("still_path")]
         public string? StillPath { get; init; }
+    }
+
+    private sealed class TmdbRichDetailsResponse
+    {
+        [JsonPropertyName("vote_average")]
+        public double? VoteAverage { get; init; }
+
+        [JsonPropertyName("runtime")]
+        public int? Runtime { get; init; }
+
+        [JsonPropertyName("episode_run_time")]
+        public List<int>? EpisodeRunTime { get; init; }
+
+        [JsonPropertyName("genres")]
+        public List<TmdbGenreItem>? Genres { get; init; }
+
+        [JsonPropertyName("credits")]
+        public TmdbCreditsItem? Credits { get; init; }
+
+        [JsonPropertyName("seasons")]
+        public List<TmdbSeasonSummaryItem>? Seasons { get; init; }
+    }
+
+    private sealed class TmdbGenreItem
+    {
+        [JsonPropertyName("name")]
+        public string? Name { get; init; }
+    }
+
+    private sealed class TmdbCreditsItem
+    {
+        [JsonPropertyName("cast")]
+        public List<TmdbCastItem>? Cast { get; init; }
+    }
+
+    private sealed class TmdbCastItem
+    {
+        [JsonPropertyName("name")]
+        public string? Name { get; init; }
+
+        [JsonPropertyName("character")]
+        public string? Character { get; init; }
+
+        [JsonPropertyName("profile_path")]
+        public string? ProfilePath { get; init; }
+
+        [JsonPropertyName("order")]
+        public int Order { get; init; }
+    }
+
+    private sealed class TmdbSeasonSummaryItem
+    {
+        [JsonPropertyName("season_number")]
+        public int SeasonNumber { get; init; }
+
+        [JsonPropertyName("episode_count")]
+        public int EpisodeCount { get; init; }
     }
 }

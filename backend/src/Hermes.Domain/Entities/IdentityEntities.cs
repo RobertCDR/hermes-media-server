@@ -11,6 +11,8 @@ public sealed class User
         Username = string.Empty;
         PasswordHash = string.Empty;
         PreferredAccentHex = "#E11D48";
+        SubtitleSize = "medium";
+        SubtitleBackground = "shadow";
     }
 
     private User(Guid id, string username, string passwordHash, UserRole role, DateTimeOffset createdAtUtc)
@@ -26,6 +28,11 @@ public sealed class User
         CreatedAtUtc = createdAtUtc;
         PreferredSurfacePreset = ThemeSurfacePreset.ObsidianGlow;
         PreferredAccentHex = "#E11D48";
+        AutoplayNextEpisode = true;
+        NormalizeVolume = false;
+        MatchTitleColors = true;
+        SubtitleSize = "medium";
+        SubtitleBackground = "shadow";
     }
 
     public Guid Id { get; private set; }
@@ -39,6 +46,17 @@ public sealed class User
     public DateTimeOffset? OneTimeResetExpiresAtUtc { get; private set; }
     public ThemeSurfacePreset PreferredSurfacePreset { get; private set; }
     public string PreferredAccentHex { get; private set; }
+    public bool AutoplayNextEpisode { get; private set; } = true;
+    public bool NormalizeVolume { get; private set; }
+    public bool MatchTitleColors { get; private set; } = true;
+    public string SubtitleSize { get; private set; } = "medium";
+    public string SubtitleBackground { get; private set; } = "shadow";
+
+    private static readonly HashSet<string> ValidSubtitleSizes =
+        new(["small", "medium", "large", "xl"], StringComparer.OrdinalIgnoreCase);
+
+    private static readonly HashSet<string> ValidSubtitleBackgrounds =
+        new(["none", "shadow", "box"], StringComparer.OrdinalIgnoreCase);
 
     public ICollection<RefreshToken> RefreshTokens => _refreshTokens;
 
@@ -71,6 +89,35 @@ public sealed class User
         ArgumentException.ThrowIfNullOrWhiteSpace(accentHex);
         PreferredSurfacePreset = surfacePreset;
         PreferredAccentHex = accentHex.Trim();
+    }
+
+    public void UpdateAccountPreferences(
+        bool autoplayNextEpisode,
+        bool normalizeVolume,
+        bool matchTitleColors,
+        string subtitleSize,
+        string subtitleBackground)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(subtitleSize);
+        ArgumentException.ThrowIfNullOrWhiteSpace(subtitleBackground);
+
+        var normalizedSize = subtitleSize.Trim().ToLowerInvariant();
+        if (!ValidSubtitleSizes.Contains(normalizedSize))
+        {
+            throw new ArgumentException($"Unsupported subtitle size '{subtitleSize}'.", nameof(subtitleSize));
+        }
+
+        var normalizedBg = subtitleBackground.Trim().ToLowerInvariant();
+        if (!ValidSubtitleBackgrounds.Contains(normalizedBg))
+        {
+            throw new ArgumentException($"Unsupported subtitle background '{subtitleBackground}'.", nameof(subtitleBackground));
+        }
+
+        AutoplayNextEpisode = autoplayNextEpisode;
+        NormalizeVolume = normalizeVolume;
+        MatchTitleColors = matchTitleColors;
+        SubtitleSize = normalizedSize;
+        SubtitleBackground = normalizedBg;
     }
 
     public void Deactivate(DateTimeOffset utcNow)

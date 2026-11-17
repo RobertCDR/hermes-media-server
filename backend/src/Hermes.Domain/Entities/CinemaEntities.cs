@@ -60,6 +60,10 @@ public sealed class Movie
     public int? TmdbId { get; private set; }
     public string? ArtworkHash { get; private set; }
     public string? BackdropHash { get; private set; }
+    public double? Rating { get; private set; }
+    public string? GenresCsv { get; private set; }
+    public int? RuntimeMinutes { get; private set; }
+    public string? CastJson { get; private set; }
     public bool IsMetadataLocked { get; private set; }
     public DateTimeOffset AddedAtUtc { get; private set; }
 
@@ -79,6 +83,47 @@ public sealed class Movie
         TmdbId = tmdbId;
         ArtworkHash = artworkHash;
         BackdropHash = backdropHash;
+    }
+
+    public void ApplyRichMetadata(
+        double? rating,
+        IEnumerable<string>? genres,
+        int? runtimeMinutes,
+        string? castJson,
+        bool bypassLock = false)
+    {
+        if (IsMetadataLocked && !bypassLock)
+        {
+            return;
+        }
+
+        if (rating is > 0)
+        {
+            Rating = Math.Round(rating.Value, 1);
+        }
+
+        if (genres is not null)
+        {
+            var cleaned = genres
+                .Where(g => !string.IsNullOrWhiteSpace(g))
+                .Select(g => g.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (cleaned.Count > 0)
+            {
+                GenresCsv = string.Join(", ", cleaned);
+            }
+        }
+
+        if (runtimeMinutes is > 0)
+        {
+            RuntimeMinutes = runtimeMinutes;
+        }
+
+        if (!string.IsNullOrWhiteSpace(castJson))
+        {
+            CastJson = castJson;
+        }
     }
 
     public void LockManualMatch(int tmdbId, string title, int? year, string? overview, string? artworkHash, string? backdropHash)
@@ -120,6 +165,9 @@ public sealed class TvSeries
     public int? TmdbId { get; private set; }
     public string? ArtworkHash { get; private set; }
     public string? BackdropHash { get; private set; }
+    public double? Rating { get; private set; }
+    public string? GenresCsv { get; private set; }
+    public string? CastJson { get; private set; }
     public bool IsMetadataLocked { get; private set; }
     public DateTimeOffset AddedAtUtc { get; private set; }
 
@@ -139,6 +187,41 @@ public sealed class TvSeries
         TmdbId = tmdbId;
         ArtworkHash = artworkHash;
         BackdropHash = backdropHash;
+    }
+
+    public void ApplyRichMetadata(
+        double? rating,
+        IEnumerable<string>? genres,
+        string? castJson,
+        bool bypassLock = false)
+    {
+        if (IsMetadataLocked && !bypassLock)
+        {
+            return;
+        }
+
+        if (rating is > 0)
+        {
+            Rating = Math.Round(rating.Value, 1);
+        }
+
+        if (genres is not null)
+        {
+            var cleaned = genres
+                .Where(g => !string.IsNullOrWhiteSpace(g))
+                .Select(g => g.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (cleaned.Count > 0)
+            {
+                GenresCsv = string.Join(", ", cleaned);
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(castJson))
+        {
+            CastJson = castJson;
+        }
     }
 
     public void LockManualMatch(int tmdbId, string title, int? year, string? overview, string? artworkHash, string? backdropHash)
@@ -177,9 +260,13 @@ public sealed class TvSeason
     public int SeasonNumber { get; private set; }
     public string Title { get; private set; }
     public string? ArtworkHash { get; private set; }
+    public int? ExpectedEpisodeCount { get; private set; }
 
     public TvSeries TvSeries { get; private set; } = null!;
     public ICollection<Episode> Episodes { get; } = [];
+
+    public void SetExpectedEpisodeCount(int? expectedEpisodeCount) =>
+        ExpectedEpisodeCount = expectedEpisodeCount is > 0 ? expectedEpisodeCount : null;
 }
 
 public sealed class Episode
@@ -441,4 +528,37 @@ public sealed class WatchProgress
         }
         UpdatedAtUtc = utcNow;
     }
+}
+
+public sealed class WatchlistItem
+{
+    private WatchlistItem()
+    {
+    }
+
+    private WatchlistItem(Guid id, Guid userId, Guid? movieId, Guid? tvSeriesId, DateTimeOffset addedAtUtc)
+    {
+        if ((movieId is null) == (tvSeriesId is null))
+        {
+            throw new ArgumentException("WatchlistItem must reference either a Movie or a TvSeries.");
+        }
+
+        Id = id;
+        UserId = userId;
+        MovieId = movieId;
+        TvSeriesId = tvSeriesId;
+        AddedAtUtc = addedAtUtc;
+    }
+
+    public Guid Id { get; private set; }
+    public Guid UserId { get; private set; }
+    public Guid? MovieId { get; private set; }
+    public Guid? TvSeriesId { get; private set; }
+    public DateTimeOffset AddedAtUtc { get; private set; }
+
+    public static WatchlistItem ForMovie(Guid userId, Guid movieId, DateTimeOffset utcNow) =>
+        new(Guid.NewGuid(), userId, movieId, null, utcNow);
+
+    public static WatchlistItem ForSeries(Guid userId, Guid tvSeriesId, DateTimeOffset utcNow) =>
+        new(Guid.NewGuid(), userId, null, tvSeriesId, utcNow);
 }

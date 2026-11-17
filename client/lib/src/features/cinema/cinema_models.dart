@@ -1,3 +1,5 @@
+import 'package:material_ui/material_ui.dart';
+
 enum VideoQualityPreset {
   directPlay('DirectPlay', 'Direct Play'),
   p1080('1080p', '1080p'),
@@ -8,6 +10,26 @@ enum VideoQualityPreset {
 
   final String apiValue;
   final String label;
+}
+
+class CastMemberModel {
+  const CastMemberModel({
+    required this.name,
+    required this.role,
+    this.artworkHash,
+  });
+
+  final String name;
+  final String role;
+  final String? artworkHash;
+
+  factory CastMemberModel.fromJson(Map<String, dynamic> json) {
+    return CastMemberModel(
+      name: json['name'] as String? ?? '',
+      role: json['role'] as String? ?? '',
+      artworkHash: json['artworkHash'] as String?,
+    );
+  }
 }
 
 class MediaStreamModel {
@@ -71,8 +93,18 @@ class MediaSourceModel {
   final bool isAvailable;
   final List<MediaStreamModel> streams;
 
-  List<MediaStreamModel> get audioStreams => streams.where((s) => s.isAudio).toList();
-  List<MediaStreamModel> get subtitleStreams => streams.where((s) => s.isSubtitle).toList();
+  List<MediaStreamModel> get audioStreams =>
+      streams.where((s) => s.isAudio).toList();
+
+  List<MediaStreamModel> get subtitleStreams =>
+      streams.where((s) => s.isSubtitle).toList();
+
+  String get shortTag {
+    if (height >= 2160) return isHdr ? '4K HDR' : '4K';
+    if (height >= 1080) return isHdr ? '1080p HDR' : '1080p';
+    if (height > 0) return '${height}p';
+    return videoCodec.isEmpty ? 'Source' : videoCodec.toUpperCase();
+  }
 
   factory MediaSourceModel.fromJson(Map<String, dynamic> json) {
     final rawStreams = json['streams'] as List<dynamic>? ?? const [];
@@ -115,14 +147,66 @@ class WatchProgressModel {
     return (positionMs / durationMs).clamp(0.0, 1.0);
   }
 
+  int get remainingMinutes {
+    if (durationMs <= 0) return 0;
+    final leftMs = (durationMs - positionMs).clamp(0, durationMs);
+    return (leftMs / 60000).ceil();
+  }
+
   factory WatchProgressModel.fromJson(Map<String, dynamic> json) {
+    final rawUpdated = json['updatedAtUtc'] as String?;
     return WatchProgressModel(
       positionMs: (json['positionMs'] as num?)?.toInt() ?? 0,
       durationMs: (json['durationMs'] as num?)?.toInt() ?? 0,
       isWatched: json['isWatched'] as bool? ?? false,
-      updatedAtUtc: DateTime.parse(json['updatedAtUtc'] as String),
+      updatedAtUtc: rawUpdated != null
+          ? DateTime.parse(rawUpdated)
+          : DateTime.now().toUtc(),
     );
   }
+}
+
+enum CinemaResumeMode { start, resume, next, finished }
+
+class CinemaEpisodeEntry {
+  const CinemaEpisodeEntry({
+    required this.seasonNumber,
+    required this.episode,
+  });
+
+  final int seasonNumber;
+  final EpisodeSummary episode;
+
+  String get code => 'S$seasonNumber E${episode.episodeNumber}';
+}
+
+class CinemaResumePoint {
+  const CinemaResumePoint({
+    required this.mode,
+    required this.progress,
+    required this.durationMinutes,
+    this.episodeEntry,
+  });
+
+  final CinemaResumeMode mode;
+  final double progress;
+  final int durationMinutes;
+  final CinemaEpisodeEntry? episodeEntry;
+
+  String get playLabel {
+    if (episodeEntry == null) {
+      return mode == CinemaResumeMode.resume ? 'Resume' : 'Play';
+    }
+    return switch (mode) {
+      CinemaResumeMode.resume => 'Resume ${episodeEntry!.code}',
+      CinemaResumeMode.next => 'Play ${episodeEntry!.code}',
+      CinemaResumeMode.start => 'Play ${episodeEntry!.code}',
+      CinemaResumeMode.finished => 'Watch again',
+    };
+  }
+
+  int get remainingMinutes =>
+      (durationMinutes * (1.0 - progress)).ceil().clamp(0, durationMinutes);
 }
 
 class MovieSummary {
@@ -136,6 +220,12 @@ class MovieSummary {
     this.backdropHash,
     this.watchProgress,
     required this.sources,
+    this.addedAtUtc,
+    this.rating,
+    this.genres = const [],
+    this.runtimeMinutes,
+    this.isInWatchlist = false,
+    this.cast = const [],
   });
 
   final String id;
@@ -147,10 +237,67 @@ class MovieSummary {
   final String? backdropHash;
   final WatchProgressModel? watchProgress;
   final List<MediaSourceModel> sources;
+  final DateTime? addedAtUtc;
+  final double? rating;
+  final List<String> genres;
+  final int? runtimeMinutes;
+  final bool isInWatchlist;
+  final List<CastMemberModel> cast;
+
+  bool get isWatched => watchProgress?.isWatched == true;
+
+  bool get isNew => isAddedRecently(addedAtUtc);
+
+  int get durationMinutes {
+    if (runtimeMinutes != null && runtimeMinutes! > 0) {
+      return runtimeMinutes!;
+    }
+    final ms = sources.firstOrNull?.durationMs ?? 0;
+    return ms > 0 ? (ms / 60000).round() : 0;
+  }
+
+  CinemaResumePoint get resumePoint {
+    final progress = isWatched ? 0.0 : (watchProgress?.completionRatio ?? 0.0);
+    return CinemaResumePoint(
+      mode: progress > 0 ? CinemaResumeMode.resume : CinemaResumeMode.start,
+      progress: progress,
+      durationMinutes: durationMinutes,
+    );
+  }
+
+  MovieSummary copyWith({
+    WatchProgressModel? watchProgress,
+    bool clearWatchProgress = false,
+    bool? isInWatchlist,
+  }) {
+    return MovieSummary(
+      id: id,
+      title: title,
+      year: year,
+      overview: overview,
+      tmdbId: tmdbId,
+      artworkHash: artworkHash,
+      backdropHash: backdropHash,
+      watchProgress: clearWatchProgress
+          ? null
+          : (watchProgress ?? this.watchProgress),
+      sources: sources,
+      addedAtUtc: addedAtUtc,
+      rating: rating,
+      genres: genres,
+      runtimeMinutes: runtimeMinutes,
+      isInWatchlist: isInWatchlist ?? this.isInWatchlist,
+      cast: cast,
+    );
+  }
 
   factory MovieSummary.fromJson(Map<String, dynamic> json) {
     final rawSources = json['sources'] as List<dynamic>? ?? const [];
     final rawProgress = json['watchProgress'] as Map<String, dynamic>?;
+    final rawGenres = json['genres'] as List<dynamic>? ?? const [];
+    final rawCast = json['cast'] as List<dynamic>? ?? const [];
+    final rawAdded = json['addedAtUtc'] as String?;
+
     return MovieSummary(
       id: json['id'] as String,
       title: json['title'] as String? ?? '',
@@ -159,9 +306,21 @@ class MovieSummary {
       tmdbId: json['tmdbId'] as int?,
       artworkHash: json['artworkHash'] as String?,
       backdropHash: json['backdropHash'] as String?,
-      watchProgress: rawProgress == null ? null : WatchProgressModel.fromJson(rawProgress),
+      watchProgress: rawProgress == null
+          ? null
+          : WatchProgressModel.fromJson(rawProgress),
       sources: rawSources
           .map((e) => MediaSourceModel.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      addedAtUtc: rawAdded != null && !rawAdded.startsWith('0001-')
+          ? DateTime.tryParse(rawAdded)
+          : null,
+      rating: (json['rating'] as num?)?.toDouble(),
+      genres: rawGenres.map((g) => g.toString()).toList(),
+      runtimeMinutes: json['runtimeMinutes'] as int?,
+      isInWatchlist: json['isInWatchlist'] as bool? ?? false,
+      cast: rawCast
+          .map((c) => CastMemberModel.fromJson(c as Map<String, dynamic>))
           .toList(),
     );
   }
@@ -186,6 +345,23 @@ class EpisodeSummary {
   final WatchProgressModel? watchProgress;
   final List<MediaSourceModel> sources;
 
+  int get durationMinutes {
+    final ms = sources.firstOrNull?.durationMs ?? 0;
+    return ms > 0 ? (ms / 60000).round() : 0;
+  }
+
+  EpisodeSummary copyWith({WatchProgressModel? watchProgress}) {
+    return EpisodeSummary(
+      id: id,
+      episodeNumber: episodeNumber,
+      title: title,
+      overview: overview,
+      stillArtworkHash: stillArtworkHash,
+      watchProgress: watchProgress ?? this.watchProgress,
+      sources: sources,
+    );
+  }
+
   factory EpisodeSummary.fromJson(Map<String, dynamic> json) {
     final rawSources = json['sources'] as List<dynamic>? ?? const [];
     final rawProgress = json['watchProgress'] as Map<String, dynamic>?;
@@ -195,7 +371,9 @@ class EpisodeSummary {
       title: json['title'] as String? ?? '',
       overview: json['overview'] as String?,
       stillArtworkHash: json['stillArtworkHash'] as String?,
-      watchProgress: rawProgress == null ? null : WatchProgressModel.fromJson(rawProgress),
+      watchProgress: rawProgress == null
+          ? null
+          : WatchProgressModel.fromJson(rawProgress),
       sources: rawSources
           .map((e) => MediaSourceModel.fromJson(e as Map<String, dynamic>))
           .toList(),
@@ -210,6 +388,7 @@ class TvSeasonModel {
     required this.title,
     this.artworkHash,
     required this.episodes,
+    this.expectedEpisodeCount,
   });
 
   final String id;
@@ -217,6 +396,25 @@ class TvSeasonModel {
   final String title;
   final String? artworkHash;
   final List<EpisodeSummary> episodes;
+  final int? expectedEpisodeCount;
+
+  int get missingEpisodeCount {
+    if (expectedEpisodeCount == null || expectedEpisodeCount! <= episodes.length) {
+      return 0;
+    }
+    return expectedEpisodeCount! - episodes.length;
+  }
+
+  TvSeasonModel copyWith({List<EpisodeSummary>? episodes}) {
+    return TvSeasonModel(
+      id: id,
+      seasonNumber: seasonNumber,
+      title: title,
+      artworkHash: artworkHash,
+      episodes: episodes ?? this.episodes,
+      expectedEpisodeCount: expectedEpisodeCount,
+    );
+  }
 
   factory TvSeasonModel.fromJson(Map<String, dynamic> json) {
     final rawEpisodes = json['episodes'] as List<dynamic>? ?? const [];
@@ -228,6 +426,7 @@ class TvSeasonModel {
       episodes: rawEpisodes
           .map((e) => EpisodeSummary.fromJson(e as Map<String, dynamic>))
           .toList(),
+      expectedEpisodeCount: json['expectedEpisodeCount'] as int?,
     );
   }
 }
@@ -242,6 +441,11 @@ class TvSeriesSummary {
     this.artworkHash,
     this.backdropHash,
     required this.seasons,
+    this.addedAtUtc,
+    this.rating,
+    this.genres = const [],
+    this.isInWatchlist = false,
+    this.cast = const [],
   });
 
   final String id;
@@ -252,9 +456,125 @@ class TvSeriesSummary {
   final String? artworkHash;
   final String? backdropHash;
   final List<TvSeasonModel> seasons;
+  final DateTime? addedAtUtc;
+  final double? rating;
+  final List<String> genres;
+  final bool isInWatchlist;
+  final List<CastMemberModel> cast;
+
+  List<CinemaEpisodeEntry> get allEpisodes => [
+        for (final season in seasons)
+          for (final ep in season.episodes)
+            CinemaEpisodeEntry(seasonNumber: season.seasonNumber, episode: ep),
+      ];
+
+  int get availableEpisodeCount => allEpisodes.length;
+
+  int get expectedTotalEpisodeCount => seasons.fold<int>(
+        0,
+        (sum, s) =>
+            sum +
+            (s.expectedEpisodeCount != null &&
+                    s.expectedEpisodeCount! > s.episodes.length
+                ? s.expectedEpisodeCount!
+                : s.episodes.length),
+      );
+
+  bool get isPartial =>
+      expectedTotalEpisodeCount > availableEpisodeCount && seasons.isNotEmpty;
+
+  bool get isNew => isAddedRecently(addedAtUtc);
+
+  bool get isWatched {
+    final eps = allEpisodes;
+    return eps.isNotEmpty && eps.every((e) => e.episode.watchProgress?.isWatched == true);
+  }
+
+  CinemaEpisodeEntry? nextEpisodeAfter(int seasonNumber, int episodeNumber) {
+    final eps = allEpisodes;
+    final idx = eps.indexWhere(
+      (e) =>
+          e.seasonNumber == seasonNumber &&
+          e.episode.episodeNumber == episodeNumber,
+    );
+    if (idx < 0 || idx + 1 >= eps.length) {
+      return null;
+    }
+    return eps[idx + 1];
+  }
+
+  CinemaResumePoint? get resumePoint {
+    final eps = allEpisodes;
+    if (eps.isEmpty) return null;
+
+    final inProgress = eps.where((e) {
+      final wp = e.episode.watchProgress;
+      return wp != null && !wp.isWatched && wp.positionMs > 0;
+    }).firstOrNull;
+    if (inProgress != null) {
+      return CinemaResumePoint(
+        mode: CinemaResumeMode.resume,
+        progress: inProgress.episode.watchProgress!.completionRatio,
+        durationMinutes: inProgress.episode.durationMinutes,
+        episodeEntry: inProgress,
+      );
+    }
+
+    var lastDoneIndex = -1;
+    for (var i = 0; i < eps.length; i++) {
+      if (eps[i].episode.watchProgress?.isWatched == true) {
+        lastDoneIndex = i;
+      }
+    }
+
+    if (lastDoneIndex >= 0 && lastDoneIndex + 1 < eps.length) {
+      final upNext = eps[lastDoneIndex + 1];
+      return CinemaResumePoint(
+        mode: CinemaResumeMode.next,
+        progress: 0,
+        durationMinutes: upNext.episode.durationMinutes,
+        episodeEntry: upNext,
+      );
+    }
+
+    final first = eps.first;
+    return CinemaResumePoint(
+      mode: lastDoneIndex >= 0
+          ? CinemaResumeMode.finished
+          : CinemaResumeMode.start,
+      progress: 0,
+      durationMinutes: first.episode.durationMinutes,
+      episodeEntry: first,
+    );
+  }
+
+  TvSeriesSummary copyWith({
+    List<TvSeasonModel>? seasons,
+    bool? isInWatchlist,
+  }) {
+    return TvSeriesSummary(
+      id: id,
+      title: title,
+      year: year,
+      overview: overview,
+      tmdbId: tmdbId,
+      artworkHash: artworkHash,
+      backdropHash: backdropHash,
+      seasons: seasons ?? this.seasons,
+      addedAtUtc: addedAtUtc,
+      rating: rating,
+      genres: genres,
+      isInWatchlist: isInWatchlist ?? this.isInWatchlist,
+      cast: cast,
+    );
+  }
 
   factory TvSeriesSummary.fromJson(Map<String, dynamic> json) {
     final rawSeasons = json['seasons'] as List<dynamic>? ?? const [];
+    final rawGenres = json['genres'] as List<dynamic>? ?? const [];
+    final rawCast = json['cast'] as List<dynamic>? ?? const [];
+    final rawAdded = json['addedAtUtc'] as String?;
+
     return TvSeriesSummary(
       id: json['id'] as String,
       title: json['title'] as String? ?? '',
@@ -266,6 +586,48 @@ class TvSeriesSummary {
       seasons: rawSeasons
           .map((e) => TvSeasonModel.fromJson(e as Map<String, dynamic>))
           .toList(),
+      addedAtUtc: rawAdded != null && !rawAdded.startsWith('0001-')
+          ? DateTime.tryParse(rawAdded)
+          : null,
+      rating: (json['rating'] as num?)?.toDouble(),
+      genres: rawGenres.map((g) => g.toString()).toList(),
+      isInWatchlist: json['isInWatchlist'] as bool? ?? false,
+      cast: rawCast
+          .map((c) => CastMemberModel.fromJson(c as Map<String, dynamic>))
+          .toList(),
     );
   }
+}
+
+bool isAddedRecently(DateTime? addedAtUtc) {
+  if (addedAtUtc == null) return false;
+  return DateTime.now().toUtc().difference(addedAtUtc.toUtc()).inDays <= 7;
+}
+
+String formatCinemaMinutes(int minutes) {
+  if (minutes <= 0) return '0m';
+  final hours = minutes ~/ 60;
+  final mins = minutes % 60;
+  return hours > 0 ? '${hours}h ${mins}m' : '${mins}m';
+}
+
+const List<Color> _titleTintPalette = [
+  Color(0xFFDC143C),
+  Color(0xFF5B8CFF),
+  Color(0xFF3DD68C),
+  Color(0xFFA678FF),
+  Color(0xFFF2A93B),
+  Color(0xFF38BDF8),
+  Color(0xFFF472B6),
+];
+
+/// Derives a consistent title accent tint from the title string when
+/// artwork palette extraction is unavailable.
+Color deriveTitleTint(String title) {
+  if (title.isEmpty) return _titleTintPalette.first;
+  var hash = 0;
+  for (final code in title.codeUnits) {
+    hash = (hash * 31 + code) & 0x7FFFFFFF;
+  }
+  return _titleTintPalette[hash % _titleTintPalette.length];
 }

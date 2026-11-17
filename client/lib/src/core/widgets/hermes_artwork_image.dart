@@ -41,6 +41,7 @@ class HermesArtworkImage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tokens = HermesThemeTokens.of(context);
+    final compact = width != null && width! <= 56;
     final placeholder = Container(
       width: width,
       height: height,
@@ -55,13 +56,13 @@ class HermesArtworkImage extends StatelessWidget {
           ],
         ),
       ),
-      padding: const EdgeInsets.all(10),
+      padding: EdgeInsets.all(compact ? 4 : 10),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(
             fallbackIcon,
-            size: (width != null && width! <= 64) ? 22 : 34,
+            size: compact ? 18 : 34,
             color: tokens.textSecondary.withValues(alpha: 0.85),
           ),
           if (showFallbackLabel && (width == null || width! > 80)) ...[

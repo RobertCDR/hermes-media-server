@@ -24,6 +24,8 @@ public static class AuthEndpoints
         group.MapPost("/reset-password", ResetPasswordAsync).AllowAnonymous().WithName("ResetPassword");
         group.MapPost("/change-password", ChangePasswordAsync).RequireAuthorization().WithName("ChangePassword");
         group.MapPost("/stream-tickets", CreateStreamTicketAsync).RequireAuthorization().WithName("CreateStreamTicket");
+        group.MapGet("/me/preferences", GetAccountPreferencesAsync).RequireAuthorization().WithName("GetAccountPreferences");
+        group.MapPut("/me/preferences", UpdateAccountPreferencesAsync).RequireAuthorization().WithName("UpdateAccountPreferences");
 
         return endpoints;
     }
@@ -261,6 +263,73 @@ public static class AuthEndpoints
         var ticket = streamTicketService.CreateStreamTicket(userId, request.MediaSourceId, StreamTicketTtl);
         return Results.Ok(new StreamTicketResponse(ticket, timeProvider.GetUtcNow().Add(StreamTicketTtl)));
     }
+
+    private static async Task<IResult> GetAccountPreferencesAsync(
+        ClaimsPrincipal principal,
+        HermesDbContext db,
+        CancellationToken cancellationToken)
+    {
+        if (!principal.TryGetUserId(out var userId))
+        {
+            return Results.Unauthorized();
+        }
+
+        var user = await db.Users
+            .AsNoTracking()
+            .SingleOrDefaultAsync(u => u.Id == userId, cancellationToken);
+
+        if (user is null || !user.IsActive)
+        {
+            return Results.Unauthorized();
+        }
+
+        return Results.Ok(ToPreferencesDto(user));
+    }
+
+    private static async Task<IResult> UpdateAccountPreferencesAsync(
+        UpdateAccountPreferencesRequest request,
+        ClaimsPrincipal principal,
+        HermesDbContext db,
+        CancellationToken cancellationToken)
+    {
+        if (!principal.TryGetUserId(out var userId))
+        {
+            return Results.Unauthorized();
+        }
+
+        var user = await db.Users
+            .SingleOrDefaultAsync(u => u.Id == userId, cancellationToken);
+
+        if (user is null || !user.IsActive)
+        {
+            return Results.Unauthorized();
+        }
+
+        try
+        {
+            user.UpdateAccountPreferences(
+                request.AutoplayNextEpisode,
+                request.NormalizeVolume,
+                request.MatchTitleColors,
+                request.SubtitleSize,
+                request.SubtitleBackground);
+        }
+        catch (ArgumentException)
+        {
+            return Results.BadRequest(new { error = "invalid_account_preferences" });
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+        return Results.Ok(ToPreferencesDto(user));
+    }
+
+    private static AccountPreferencesDto ToPreferencesDto(User user) =>
+        new(
+            user.AutoplayNextEpisode,
+            user.NormalizeVolume,
+            user.MatchTitleColors,
+            user.SubtitleSize,
+            user.SubtitleBackground);
 
     private static async Task<AuthTokenResponse> IssueDeviceSessionAsync(
         HermesDbContext db,

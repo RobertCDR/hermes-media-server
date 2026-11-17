@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_client/src/core/settings/hermes_preferences.dart';
 import 'package:hermes_client/src/core/theme/hermes_theme_tokens.dart';
 import 'package:hermes_client/src/features/admin/admin_service.dart';
 import 'package:hermes_client/src/features/admin/admin_dashboard_screen.dart';
@@ -187,10 +188,15 @@ void main() {
   });
 
   group('PlayerAndThemeSettingsScreen & AdminDashboardScreen', () {
-    testWidgets('settings screen updates theme preset and OpenGL renderer option', (tester) async {
+    testWidgets('settings screen updates v4 theme cards, OLED pure black, renderer, and synced account preferences', (tester) async {
+      tester.view.physicalSize = const Size(1024, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+
       HermesThemeTokens updatedTokens = HermesThemeTokens.resolve();
       VideoRendererBackend renderer = VideoRendererBackend.openGl;
       VideoQualityPreset defaultQuality = VideoQualityPreset.directPlay;
+      HermesAccountPreferences accountPrefs = const HermesAccountPreferences();
 
       await tester.pumpWidget(
         MaterialApp(
@@ -199,24 +205,62 @@ void main() {
             tokens: updatedTokens,
             rendererBackend: renderer,
             defaultVideoQuality: defaultQuality,
+            accountPreferences: accountPrefs,
+            username: 'robert',
+            deviceName: 'Win11',
             onThemeChanged: (next) => updatedTokens = next,
             onRendererChanged: (next) => renderer = next,
             onDefaultVideoQualityChanged: (next) => defaultQuality = next,
+            onAccountPreferencesChanged: (next) => accountPrefs = next,
           ),
         ),
       );
 
-      await tester.tap(find.text('OLED Black'));
-      await tester.pumpAndSettle();
-      expect(updatedTokens.surfacePreset, SurfacePreset.oledBlack);
+      expect(find.text('Saved on Win11 only'), findsOneWidget);
 
-      await tester.tap(find.text('Emerald'));
+      await tester.tap(find.byKey(const Key('theme-card-forest')));
       await tester.pumpAndSettle();
-      expect(updatedTokens.accentKind, HermesAccentKind.emerald);
+      expect(updatedTokens.themeId, HermesThemeId.forest);
+      expect(updatedTokens.accent, const Color(0xFF3DD68C));
 
-      await tester.tap(find.text('1080p'));
+      await tester.ensureVisible(find.byKey(const Key('setting-pure-black-switch')));
+      await tester.tap(find.byKey(const Key('setting-pure-black-switch')));
+      await tester.pumpAndSettle();
+      expect(updatedTokens.pureBlack, isTrue);
+      expect(updatedTokens.bg, const Color(0xFF000000));
+
+      await tester.ensureVisible(find.text('Original (Direct Play)'));
+      await tester.tap(find.text('Original (Direct Play)'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('1080p').last);
       await tester.pumpAndSettle();
       expect(defaultQuality, VideoQualityPreset.p1080);
+
+      await tester.ensureVisible(find.text('Automatic'));
+      await tester.tap(find.text('Automatic'));
+      await tester.pumpAndSettle();
+      expect(renderer, VideoRendererBackend.auto);
+
+      // Switch to Your account tab and test subtitle preview + sync callbacks
+      await tester.ensureVisible(find.text('Your account'));
+      await tester.tap(find.text('Your account'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Synced to robert on every device'), findsOneWidget);
+      expect(find.byKey(const Key('subtitle-preview-box')), findsOneWidget);
+
+      await tester.tap(find.text('Extra large'));
+      await tester.pumpAndSettle();
+      expect(accountPrefs.subtitleSize, SubtitleSizePreset.xl);
+
+      await tester.tap(find.text('Box'));
+      await tester.pumpAndSettle();
+      expect(accountPrefs.subtitleBackground, SubtitleBackgroundStyle.box);
+
+      // Mobile viewport check for zero overflow
+      tester.view.physicalSize = const Size(400, 800);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
     });
 
     testWidgets('admin dashboard displays library roots, invites, users and triggers scan', (tester) async {
@@ -403,12 +447,14 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Continue Watching'), findsOneWidget);
-      expect(find.text('Watch Now'), findsOneWidget);
+      expect(find.text('Resume'), findsOneWidget);
+      expect(find.text('Watchlist'), findsWidgets);
+      expect(find.text('Details'), findsOneWidget);
       expect(find.text('Primal Fear'), findsWidgets);
 
-      await tester.tap(find.text('TV Series'));
+      await tester.tap(find.byKey(const Key('cinema-tab-series')));
       await tester.pumpAndSettle();
-      expect(find.text('TV Series (1)'), findsOneWidget);
+      expect(find.text('TV Shows'), findsWidgets);
       expect(find.text('Dark'), findsWidgets);
     });
 
