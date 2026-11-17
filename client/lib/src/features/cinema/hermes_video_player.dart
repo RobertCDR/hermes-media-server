@@ -2,12 +2,14 @@ import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
 
+import '../../core/media/hermes_media_runtime.dart';
 import '../../core/settings/hermes_preferences.dart';
 import '../../core/theme/hermes_theme_tokens.dart';
 import '../../core/widgets/hermes_artwork_image.dart';
 import '../../core/widgets/hermes_icons.dart';
 import 'cinema_models.dart';
 import 'cinema_service.dart';
+import 'hermes_video_playback_controller.dart';
 
 enum VideoRendererBackend {
   openGl('OpenGL (HDR Safe)'),
@@ -96,6 +98,10 @@ class WatchProgressReporter {
   }
 }
 
+typedef HermesVideoControllerFactory = HermesVideoPlaybackController Function(
+  HermesVideoPlayerConfig config,
+);
+
 class HermesVideoPlayerScreen extends StatefulWidget {
   const HermesVideoPlayerScreen({
     super.key,
@@ -116,6 +122,7 @@ class HermesVideoPlayerScreen extends StatefulWidget {
     this.nextEpisodeTitle,
     this.nextEpisodeStillUri,
     this.onPlayNextEpisode,
+    this.playbackControllerFactory,
   });
 
   final String title;
@@ -135,6 +142,7 @@ class HermesVideoPlayerScreen extends StatefulWidget {
   final String? nextEpisodeTitle;
   final Uri? nextEpisodeStillUri;
   final VoidCallback? onPlayNextEpisode;
+  final HermesVideoControllerFactory? playbackControllerFactory;
 
   @override
   State<HermesVideoPlayerScreen> createState() =>
@@ -156,14 +164,30 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
   Uri? _activeSubtitleUri;
   String? _ticket;
   bool _playing = true;
+  bool _buffering = false;
+  bool _scrubbing = false;
+  bool _hasVideoFrame = false;
   late int _positionMs;
+  int _engineDurationMs = 0;
+  int _hlsAnchorMs = 0;
   double _volume = 80;
   bool _muted = false;
   bool _panelOpen = false;
   bool _controlsHidden = false;
   bool _upNextDismissed = false;
+  bool _completionHandled = false;
+  List<String> _liveSubtitleLines = const [];
+  String? _playbackError;
   Timer? _idleTimer;
   late final WatchProgressReporter _reporter;
+  late final HermesVideoPlaybackController _playback;
+  StreamSubscription<int>? _posSub;
+  StreamSubscription<int>? _durSub;
+  StreamSubscription<bool>? _playingSub;
+  StreamSubscription<bool>? _bufferingSub;
+  StreamSubscription<bool>? _completedSub;
+  StreamSubscription<List<String>>? _subLinesSub;
+  StreamSubscription<String>? _errorSub;
 
   @override
   void initState() {
@@ -187,23 +211,103 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
         .firstOrNull
         ?.streamIndex;
 
+    _playback = widget.playbackControllerFactory?.call(widget.config) ??
+        (HermesMediaRuntime.isInitialized
+            ? MediaKitVideoPlaybackController(config: widget.config)
+            : StubVideoPlaybackController());
+    _attachPlaybackListeners();
+
     _reporter = WatchProgressReporter(
       cinemaService: widget.cinemaService,
       movieId: widget.movieId,
       episodeId: widget.episodeId,
       getPositionMs: () => _positionMs,
-      getDurationMs: () => widget.source.durationMs,
+      getDurationMs: _effectiveDurationMs,
     );
     _reporter.startPeriodic();
     unawaited(_loadPlaybackUri());
     _wakeControls();
   }
 
+  int _effectiveDurationMs() {
+    if (widget.source.durationMs > 0) {
+      return widget.source.durationMs;
+    }
+    return _hlsAnchorMs + _engineDurationMs;
+  }
+
+  void _attachPlaybackListeners() {
+    _posSub = _playback.positionMsStream.listen((enginePosMs) {
+      if (!mounted || _scrubbing) return;
+      final absolute = (_hlsAnchorMs + enginePosMs).clamp(
+        0,
+        _effectiveDurationMs() > 0 ? _effectiveDurationMs() : 1 << 30,
+      );
+      if (absolute > 0 && !_hasVideoFrame) {
+        _hasVideoFrame = true;
+      }
+      if ((absolute - _positionMs).abs() >= 250 ||
+          (absolute == 0 && _positionMs != 0)) {
+        setState(() {
+          _positionMs = absolute;
+        });
+      }
+    });
+
+    _durSub = _playback.durationMsStream.listen((durMs) {
+      if (!mounted || durMs <= 0) return;
+      setState(() {
+        _engineDurationMs = durMs;
+        _hasVideoFrame = true;
+      });
+    });
+
+    _playingSub = _playback.playingStream.listen((playing) {
+      if (!mounted || _playing == playing) return;
+      setState(() => _playing = playing);
+      _wakeControls();
+    });
+
+    _bufferingSub = _playback.bufferingStream.listen((buffering) {
+      if (!mounted || _buffering == buffering) return;
+      setState(() => _buffering = buffering);
+    });
+
+    _completedSub = _playback.completedStream.listen((completed) {
+      if (!mounted || !completed || _completionHandled) return;
+      _completionHandled = true;
+      unawaited(_reporter.reportNow(markWatched: true));
+      if (widget.accountPreferences.autoplayNextEpisode &&
+          !_upNextDismissed &&
+          widget.onPlayNextEpisode != null) {
+        widget.onPlayNextEpisode!();
+      }
+    });
+
+    _subLinesSub = _playback.subtitleLinesStream.listen((lines) {
+      if (!mounted) return;
+      setState(() => _liveSubtitleLines = lines);
+    });
+
+    _errorSub = _playback.errorStream.listen((message) {
+      if (!mounted) return;
+      setState(() => _playbackError = message);
+    });
+  }
+
   @override
   void dispose() {
     _idleTimer?.cancel();
+    unawaited(_posSub?.cancel());
+    unawaited(_durSub?.cancel());
+    unawaited(_playingSub?.cancel());
+    unawaited(_bufferingSub?.cancel());
+    unawaited(_completedSub?.cancel());
+    unawaited(_subLinesSub?.cancel());
+    unawaited(_errorSub?.cancel());
     unawaited(_reporter.reportNow());
     _reporter.dispose();
+    unawaited(_playback.dispose());
     super.dispose();
   }
 
@@ -221,18 +325,35 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
     }
   }
 
-  Future<void> _loadPlaybackUri() async {
+  MediaStreamModel? _findSubtitleStream(int? streamIndex) {
+    if (streamIndex == null) return null;
+    return widget.source.subtitleStreams
+        .where((s) => s.streamIndex == streamIndex)
+        .firstOrNull;
+  }
+
+  Future<String> _ensureTicket() async {
+    final existing = _ticket;
+    if (existing != null) return existing;
+    final issued = await widget.cinemaService.issueStreamTicket(widget.source.id);
+    _ticket = issued;
+    return issued;
+  }
+
+  Future<void> _loadPlaybackUri({int? overridePositionMs}) async {
     try {
-      final ticket = _ticket ??
-          await widget.cinemaService.issueStreamTicket(widget.source.id);
-      _ticket = ticket;
+      final ticket = await _ensureTicket();
+      final targetPosMs = overridePositionMs ?? _positionMs;
+      final isDirect = _quality == VideoQualityPreset.directPlay;
+      final anchorMs = isDirect ? 0 : (targetPosMs ~/ 1000) * 1000;
       final streamUri = widget.cinemaService.buildVideoStreamUri(
         mediaSourceId: widget.source.id,
         ticket: ticket,
         quality: _quality,
         audioStreamIndex: _selectedAudioIndex,
-        startSeconds: _positionMs ~/ 1000,
+        startSeconds: targetPosMs ~/ 1000,
       );
+      final subStream = _findSubtitleStream(_selectedSubtitleIndex);
       final subUri = _selectedSubtitleIndex == null
           ? null
           : widget.cinemaService.buildSubtitleVttUri(
@@ -242,29 +363,108 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
             );
       if (mounted) {
         setState(() {
+          _hlsAnchorMs = anchorMs;
+          _completionHandled = false;
+          _playbackError = null;
           _activeStreamUri = streamUri;
           _activeSubtitleUri = subUri;
         });
       }
+      await _playback.open(
+        streamUri,
+        startPositionMs: isDirect ? targetPosMs : 0,
+        subtitleUri: subUri,
+        subtitleTitle: subStream?.title,
+        subtitleLanguage: subStream?.language,
+        autoPlay: _playing,
+      );
+      await _playback.setVolume(_muted ? 0 : _volume);
     } catch (_) {
       // Surface kept intact cleanly when running against offline test stubs.
     }
   }
 
+  Future<void> _applySubtitleSelection(int? streamIndex) async {
+    Uri? subUri;
+    MediaStreamModel? subStream;
+    if (streamIndex != null) {
+      subStream = _findSubtitleStream(streamIndex);
+      try {
+        final ticket = await _ensureTicket();
+        subUri = widget.cinemaService.buildSubtitleVttUri(
+          mediaSourceId: widget.source.id,
+          streamIndex: streamIndex,
+          ticket: ticket,
+        );
+      } catch (_) {}
+    }
+    if (mounted) {
+      setState(() {
+        _selectedSubtitleIndex = streamIndex;
+        _activeSubtitleUri = subUri;
+        if (streamIndex == null) {
+          _liveSubtitleLines = const [];
+        }
+      });
+    }
+    await _playback.setExternalSubtitle(
+      subUri,
+      title: subStream?.title,
+      language: subStream?.language,
+    );
+  }
+
+  Future<void> _applyAudioSelection(int streamIndex) async {
+    setState(() => _selectedAudioIndex = streamIndex);
+    if (_quality == VideoQualityPreset.directPlay) {
+      await _playback.selectEmbeddedAudioTrack(
+        streamIndex: streamIndex,
+        availableAudioStreams: widget.source.audioStreams,
+      );
+      return;
+    }
+    await _loadPlaybackUri();
+  }
+
   void _togglePlayPause() {
+    final nextPlaying = !_playing;
     setState(() {
-      _playing = !_playing;
+      _playing = nextPlaying;
     });
+    if (nextPlaying) {
+      unawaited(_playback.play());
+    } else {
+      unawaited(_playback.pause());
+    }
     _wakeControls();
   }
 
-  void _skipSeconds(int deltaSeconds) {
-    final duration = widget.source.durationMs > 0 ? widget.source.durationMs : 1;
+  Future<void> _seekToPositionMs(int targetMs) async {
+    final duration = _effectiveDurationMs() > 0 ? _effectiveDurationMs() : 1;
+    final clamped = targetMs.clamp(0, duration);
     setState(() {
-      _positionMs = (_positionMs + deltaSeconds * 1000).clamp(0, duration);
+      _positionMs = clamped;
+      _completionHandled = false;
     });
     _wakeControls();
-    unawaited(_reporter.reportNow());
+
+    if (_quality == VideoQualityPreset.directPlay) {
+      await _playback.seek(clamped);
+    } else {
+      final relativeTargetMs = clamped - _hlsAnchorMs;
+      if (relativeTargetMs >= 0 &&
+          _engineDurationMs > 0 &&
+          relativeTargetMs <= _engineDurationMs) {
+        await _playback.seek(relativeTargetMs);
+      } else {
+        await _loadPlaybackUri(overridePositionMs: clamped);
+      }
+    }
+    await _reporter.reportNow();
+  }
+
+  void _skipSeconds(int deltaSeconds) {
+    unawaited(_seekToPositionMs(_positionMs + deltaSeconds * 1000));
   }
 
   String _formatClock(int ms) {
@@ -287,17 +487,31 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
           )
         : baseTokens;
 
-    final duration = widget.source.durationMs <= 0 ? 1 : widget.source.durationMs;
+    final duration = _effectiveDurationMs() <= 0 ? 1 : _effectiveDurationMs();
     final remainingMs = (duration - _positionMs).clamp(0, duration);
     final remainingSeconds = (remainingMs / 1000).ceil();
     final showUpNext = widget.nextEpisodeTitle != null &&
-        widget.source.durationMs > 0 &&
+        duration > 1 &&
         remainingSeconds <= 20 &&
         !_upNextDismissed;
 
     final subBottomOffset = showUpNext
         ? 230.0
         : (_controlsHidden ? 64.0 : 134.0);
+
+    final liveSubText = _liveSubtitleLines
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .join('\n');
+    final subtitleDisplayText = _selectedSubtitleIndex == null
+        ? ''
+        : liveSubText.isNotEmpty
+            ? liveSubText
+            : (!_playback.hasVideoOutput
+                ? (_activeSubtitleUri == null
+                    ? 'Subtitles enabled (#D8D8D8 HDR-safe)'
+                    : 'WebVTT Subtitles Ready (#D8D8D8)')
+                : '');
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -311,8 +525,13 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              // Frame placeholder / backdrop
-              if (widget.backdropUri != null)
+              if (_playback.hasVideoOutput)
+                Positioned.fill(
+                  child: _playback.buildVideoSurface(context),
+                ),
+              // Frame placeholder / backdrop before video frames start rendering
+              if ((!_playback.hasVideoOutput || !_hasVideoFrame) &&
+                  widget.backdropUri != null)
                 ExcludeSemantics(
                   child: Opacity(
                     alwaysIncludeSemantics: true,
@@ -325,44 +544,97 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
                     ),
                   ),
                 ),
-              // Center video stream info indicator when controls visible or paused
-              Center(
-                child: Padding(
-                  padding: const EdgeInsets.only(bottom: 110),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        '${widget.source.sourceLabel} · ${_quality == VideoQualityPreset.directPlay ? 'Original' : _quality.label}',
-                        style: TextStyle(
-                          fontFamily: 'Figtree',
-                          color: Colors.white.withValues(alpha: 0.65),
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      if (_activeStreamUri != null)
-                        Padding(
-                          padding: const EdgeInsets.only(
-                            top: 4,
-                            left: 32,
-                            right: 32,
+              // Center stream metadata (visible on stub backend without native surface)
+              if (!_playback.hasVideoOutput)
+                Center(
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 110),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          '${widget.source.sourceLabel} · ${_quality == VideoQualityPreset.directPlay ? 'Original' : _quality.label}',
+                          style: TextStyle(
+                            fontFamily: 'Figtree',
+                            color: Colors.white.withValues(alpha: 0.65),
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
                           ),
-                          child: Text(
-                            _activeStreamUri.toString(),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontFamily: 'monospace',
-                              color: Colors.white.withValues(alpha: 0.45),
-                              fontSize: 11,
+                        ),
+                        if (_activeStreamUri != null)
+                          Padding(
+                            padding: const EdgeInsets.only(
+                              top: 4,
+                              left: 32,
+                              right: 32,
+                            ),
+                            child: Text(
+                              _activeStreamUri.toString(),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontFamily: 'monospace',
+                                color: Colors.white.withValues(alpha: 0.45),
+                                fontSize: 11,
+                              ),
                             ),
                           ),
-                        ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
-              ),
+              if (_playback.hasVideoOutput && _buffering && _playbackError == null)
+                const Center(
+                  child: SizedBox(
+                    width: 36,
+                    height: 36,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 3,
+                      color: Colors.white70,
+                    ),
+                  ),
+                ),
+              if (_playbackError != null)
+                Center(
+                  child: Container(
+                    constraints: const BoxConstraints(maxWidth: 420),
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xD9101010),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: tokens.accent),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Playback failed',
+                          style: TextStyle(
+                            fontFamily: 'Figtree',
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                            color: tokens.text,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          _playbackError!,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontFamily: 'Figtree',
+                            fontSize: 13,
+                            color: tokens.text2,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        FilledButton(
+                          onPressed: () => unawaited(_loadPlaybackUri()),
+                          child: const Text('Retry'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               // Top & bottom protective scrim gradient
               IgnorePointer(
                 child: ExcludeSemantics(
@@ -391,7 +663,7 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
                 ),
               ),
               // Live HDR-safe Subtitles (#D8D8D8)
-              if (_selectedSubtitleIndex != null)
+              if (subtitleDisplayText.isNotEmpty)
                 AnimatedPositioned(
                   duration: widget.reduceMotion
                       ? Duration.zero
@@ -402,9 +674,7 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
                   bottom: subBottomOffset,
                   child: Center(
                     child: _PlayerSubtitleCaption(
-                      text: _activeSubtitleUri == null
-                          ? 'Subtitles enabled (#D8D8D8 HDR-safe)'
-                          : 'WebVTT Subtitles Ready (#D8D8D8)',
+                      text: subtitleDisplayText,
                       color: widget.config.subtitleColor,
                       sizePreset: widget.accountPreferences.subtitleSize,
                       backgroundStyle:
@@ -619,12 +889,19 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
                                             .clamp(0, duration)
                                             .toDouble(),
                                         max: duration.toDouble(),
+                                        onChangeStart: (_) {
+                                          setState(() => _scrubbing = true);
+                                        },
                                         onChanged: (val) {
                                           setState(() => _positionMs = val.toInt());
                                           _wakeControls();
                                         },
-                                        onChangeEnd: (_) =>
-                                            unawaited(_reporter.reportNow()),
+                                        onChangeEnd: (val) {
+                                          setState(() => _scrubbing = false);
+                                          unawaited(
+                                            _seekToPositionMs(val.round()),
+                                          );
+                                        },
                                       ),
                                     ),
                                   ),
@@ -678,8 +955,15 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
                                   ),
                                   IconButton(
                                     tooltip: _muted ? 'Unmute' : 'Mute',
-                                    onPressed: () =>
-                                        setState(() => _muted = !_muted),
+                                    onPressed: () {
+                                      final nextMuted = !_muted;
+                                      setState(() => _muted = nextMuted);
+                                      unawaited(
+                                        _playback.setVolume(
+                                          nextMuted ? 0 : _volume,
+                                        ),
+                                      );
+                                    },
                                     icon: Icon(
                                       _muted || _volume == 0
                                           ? Icons.volume_off_rounded
@@ -708,10 +992,13 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
                                       child: Slider(
                                         value: _muted ? 0 : _volume,
                                         max: 100,
-                                        onChanged: (next) => setState(() {
-                                          _volume = next;
-                                          _muted = next == 0;
-                                        }),
+                                        onChanged: (next) {
+                                          setState(() {
+                                            _volume = next;
+                                            _muted = next == 0;
+                                          });
+                                          unawaited(_playback.setVolume(next));
+                                        },
                                       ),
                                     ),
                                   ),
@@ -764,12 +1051,10 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
                               selectedQuality: _quality,
                               qualityOrder: _qualityOrder,
                               onSelectAudio: (idx) {
-                                setState(() => _selectedAudioIndex = idx);
-                                unawaited(_loadPlaybackUri());
+                                unawaited(_applyAudioSelection(idx));
                               },
                               onSelectSubtitle: (idx) {
-                                setState(() => _selectedSubtitleIndex = idx);
-                                unawaited(_loadPlaybackUri());
+                                unawaited(_applySubtitleSelection(idx));
                               },
                               onSelectQuality: (q) {
                                 setState(() => _quality = q);
