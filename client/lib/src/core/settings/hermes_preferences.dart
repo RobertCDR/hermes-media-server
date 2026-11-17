@@ -1,6 +1,8 @@
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../features/cinema/cinema_models.dart';
 import '../../features/cinema/hermes_video_player.dart';
@@ -302,4 +304,93 @@ class AccountPreferencesService {
 
   String _normalizeBase(String url) =>
       url.endsWith('/') ? url.substring(0, url.length - 1) : url;
+}
+
+abstract interface class DevicePreferencesStore {
+  Future<HermesDevicePreferences> load();
+  Future<void> save(HermesDevicePreferences preferences);
+  Future<String> getOrCreateDeviceId(String platformTag);
+}
+
+class InMemoryDevicePreferencesStore implements DevicePreferencesStore {
+  HermesDevicePreferences _prefs = const HermesDevicePreferences();
+  String? _deviceId;
+
+  @override
+  Future<HermesDevicePreferences> load() async => _prefs;
+
+  @override
+  Future<void> save(HermesDevicePreferences preferences) async {
+    _prefs = preferences;
+  }
+
+  @override
+  Future<String> getOrCreateDeviceId(String platformTag) async {
+    return _deviceId ??= _generateDeviceId(platformTag);
+  }
+}
+
+/// Persists device appearance, player preferences, and stable per-install device ID.
+class SharedPrefsDevicePreferencesStore implements DevicePreferencesStore {
+  static const _prefsKey = 'hermes.device_prefs.v1';
+  static const _deviceIdKey = 'hermes.device_id.v1';
+
+  Future<SharedPreferences?> _prefsOrNull() async {
+    try {
+      return await SharedPreferences.getInstance();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Future<HermesDevicePreferences> load() async {
+    final prefs = await _prefsOrNull();
+    final raw = prefs?.getString(_prefsKey);
+    if (raw == null || raw.isEmpty) {
+      return const HermesDevicePreferences();
+    }
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) {
+        return const HermesDevicePreferences();
+      }
+      return HermesDevicePreferences.fromJson(decoded);
+    } catch (_) {
+      return const HermesDevicePreferences();
+    }
+  }
+
+  @override
+  Future<void> save(HermesDevicePreferences preferences) async {
+    final prefs = await _prefsOrNull();
+    if (prefs == null) return;
+    await prefs.setString(_prefsKey, jsonEncode(preferences.toJson()));
+  }
+
+  @override
+  Future<String> getOrCreateDeviceId(String platformTag) async {
+    final prefs = await _prefsOrNull();
+    final existing = prefs?.getString(_deviceIdKey);
+    if (existing != null && existing.trim().isNotEmpty) {
+      return existing;
+    }
+    final generated = _generateDeviceId(platformTag);
+    await prefs?.setString(_deviceIdKey, generated);
+    return generated;
+  }
+}
+
+String _generateDeviceId(String platformTag) {
+  final sanitizedPlatform = platformTag.trim().toLowerCase().replaceAll(
+    RegExp(r'[^a-z0-9_-]'),
+    '',
+  );
+  final prefix = sanitizedPlatform.isEmpty ? 'client' : sanitizedPlatform;
+  final rng = Random();
+  final suffix = List.generate(
+    8,
+    (_) => rng.nextInt(16).toRadixString(16),
+  ).join();
+  return 'hermes-$prefix-$suffix';
 }
