@@ -121,6 +121,13 @@ public sealed class Song
     public void MarkMissing(DateTimeOffset utcNow) => MissingSinceUtc ??= utcNow;
 
     public void MarkPresent() => MissingSinceUtc = null;
+
+    public void UpdateFileFingerprint(long fileSizeBytes, DateTimeOffset fileLastWriteUtc)
+    {
+        FileSizeBytes = fileSizeBytes;
+        FileLastWriteUtc = fileLastWriteUtc;
+        MissingSinceUtc = null;
+    }
 }
 
 public sealed class Playlist

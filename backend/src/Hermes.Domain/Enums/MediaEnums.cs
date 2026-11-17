@@ -57,3 +57,13 @@ public enum ThemeSurfacePreset
     OledBlack = 1,
     Slate = 2
 }
+
+public enum HardwareAccelerationMode
+{
+    None = 0,
+    Auto = 1,
+    Nvenc = 2,
+    Vaapi = 3,
+    Qsv = 4,
+    VideoToolbox = 5
+}

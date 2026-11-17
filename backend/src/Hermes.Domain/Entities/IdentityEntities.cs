@@ -240,6 +240,7 @@ public sealed class ServerSettings
         MaxConcurrentVideoTranscodes = 2;
         MaxConcurrentAudioTranscodes = 4;
         TranscodingEnabled = true;
+        HardwareAccelerationMode = HardwareAccelerationMode.None;
         UpdatedAtUtc = utcNow;
     }
 
@@ -250,13 +251,25 @@ public sealed class ServerSettings
     public int MaxConcurrentAudioTranscodes { get; private set; }
     public int? MaxRemoteVideoBitrateBps { get; private set; }
     public bool TranscodingEnabled { get; private set; }
+    public HardwareAccelerationMode HardwareAccelerationMode { get; private set; }
     public DateTimeOffset UpdatedAtUtc { get; private set; }
 
     public static ServerSettings CreateDefault(string serverName, DateTimeOffset utcNow) =>
         new(Guid.NewGuid(), Guid.NewGuid(), serverName, utcNow);
 
-    public void UpdateTranscodeLimits(int maxVideo, int maxAudio, int? maxRemoteVideoBitrateBps, bool transcodingEnabled, DateTimeOffset utcNow)
+    public void UpdateTranscodeLimits(int maxVideo, int maxAudio, int? maxRemoteVideoBitrateBps, bool transcodingEnabled, DateTimeOffset utcNow) =>
+        UpdateSettings(ServerName, maxVideo, maxAudio, maxRemoteVideoBitrateBps, transcodingEnabled, HardwareAccelerationMode, utcNow);
+
+    public void UpdateSettings(
+        string serverName,
+        int maxVideo,
+        int maxAudio,
+        int? maxRemoteVideoBitrateBps,
+        bool transcodingEnabled,
+        HardwareAccelerationMode hardwareAccelerationMode,
+        DateTimeOffset utcNow)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(serverName);
         ArgumentOutOfRangeException.ThrowIfLessThan(maxVideo, 0);
         ArgumentOutOfRangeException.ThrowIfLessThan(maxAudio, 0);
         if (maxRemoteVideoBitrateBps is <= 0)
@@ -264,10 +277,17 @@ public sealed class ServerSettings
             throw new ArgumentOutOfRangeException(nameof(maxRemoteVideoBitrateBps), "Bitrate limit must be positive.");
         }
 
+        if (!Enum.IsDefined(hardwareAccelerationMode))
+        {
+            throw new ArgumentOutOfRangeException(nameof(hardwareAccelerationMode), "Unsupported hardware acceleration mode.");
+        }
+
+        ServerName = serverName.Trim();
         MaxConcurrentVideoTranscodes = maxVideo;
         MaxConcurrentAudioTranscodes = maxAudio;
         MaxRemoteVideoBitrateBps = maxRemoteVideoBitrateBps;
         TranscodingEnabled = transcodingEnabled;
+        HardwareAccelerationMode = hardwareAccelerationMode;
         UpdatedAtUtc = utcNow;
     }
 }

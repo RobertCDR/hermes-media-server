@@ -122,13 +122,27 @@ public class CinemaAndIdentityDomainTests
         user.IsActive.Should().BeFalse();
 
         var settings = ServerSettings.CreateDefault("Hermes", now);
+        settings.HardwareAccelerationMode.Should().Be(HardwareAccelerationMode.None);
         settings.UpdateTranscodeLimits(4, 6, 20_000_000, true, now.AddMinutes(1));
         settings.MaxConcurrentVideoTranscodes.Should().Be(4);
         settings.MaxConcurrentAudioTranscodes.Should().Be(6);
         settings.MaxRemoteVideoBitrateBps.Should().Be(20_000_000);
 
+        settings.UpdateSettings("Hermes NAS", 3, 5, null, false, HardwareAccelerationMode.Vaapi, now.AddMinutes(2));
+        settings.ServerName.Should().Be("Hermes NAS");
+        settings.TranscodingEnabled.Should().BeFalse();
+        settings.HardwareAccelerationMode.Should().Be(HardwareAccelerationMode.Vaapi);
+
         var badSettings = () => settings.UpdateTranscodeLimits(2, 2, 0, true, now);
         badSettings.Should().Throw<ArgumentOutOfRangeException>();
+
+        var library = new MediaLibraryRoot("Movies", LibraryMediaType.Movies, "/media/movies", watchEnabled: true);
+        library.FetchMetadata.Should().BeTrue();
+        library.UpdateOptions("Cinema 4K", "/mnt/cinema", watchEnabled: false, fetchMetadata: false);
+        library.Name.Should().Be("Cinema 4K");
+        library.RootPath.Should().Be("/mnt/cinema");
+        library.WatchEnabled.Should().BeFalse();
+        library.FetchMetadata.Should().BeFalse();
     }
 
     [Fact]

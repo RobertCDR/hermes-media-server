@@ -183,6 +183,11 @@ namespace Hermes.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<bool>("FetchMetadata")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true);
+
                     b.Property<DateTimeOffset?>("LastScanCompletedAtUtc")
                         .HasColumnType("timestamp with time zone");
 
@@ -546,6 +551,11 @@ namespace Hermes.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
+
+                    b.Property<int>("HardwareAccelerationMode")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
 
                     b.Property<int>("MaxConcurrentAudioTranscodes")
                         .HasColumnType("integer");

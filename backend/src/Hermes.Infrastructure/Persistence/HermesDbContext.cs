@@ -78,6 +78,7 @@ public sealed class HermesDbContext(DbContextOptions<HermesDbContext> options) :
         {
             b.HasKey(s => s.Id);
             b.Property(s => s.ServerName).HasMaxLength(128).IsRequired();
+            b.Property(s => s.HardwareAccelerationMode).HasDefaultValue(Domain.Enums.HardwareAccelerationMode.None);
         });
     }
 
@@ -88,6 +89,7 @@ public sealed class HermesDbContext(DbContextOptions<HermesDbContext> options) :
             b.HasKey(r => r.Id);
             b.Property(r => r.Name).HasMaxLength(128).IsRequired();
             b.Property(r => r.RootPath).HasMaxLength(1024).IsRequired();
+            b.Property(r => r.FetchMetadata).HasDefaultValue(true);
             b.HasIndex(r => r.RootPath).IsUnique();
         });
 
