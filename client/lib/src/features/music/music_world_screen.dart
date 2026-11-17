@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:material_ui/material_ui.dart';
 
 import '../../core/theme/hermes_theme_tokens.dart';
+import '../../core/widgets/hermes_search_pill.dart';
 import 'music_detail_views.dart';
 import 'music_models.dart';
 import 'music_playback_coordinator.dart';
@@ -40,6 +41,7 @@ class MusicWorldScreen extends StatefulWidget {
 
 class _MusicWorldScreenState extends State<MusicWorldScreen> {
   final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
 
   List<SongModel> _songs = [];
@@ -98,6 +100,7 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
     _scrollController
       ..removeListener(_onScroll)
       ..dispose();
+    _searchFocusNode.dispose();
     _searchController.dispose();
     super.dispose();
   }
@@ -268,9 +271,55 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
       );
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not start playback: $e')),
-        );
+        showMusicToast(context, 'Could not start playback: $e');
+      }
+    }
+  }
+
+  void _queueCollection(List<SongModel> songs, String label) {
+    if (songs.isEmpty) return;
+    widget.coordinator.addAllToQueue(songs);
+    if (mounted) {
+      showMusicToast(context, 'Added "$label" (${songs.length}) to queue');
+    }
+  }
+
+  Future<List<SongModel>> _loadPlaylistSongs(PlaylistSummaryModel pl) async {
+    final cached = _playlistDetails[pl.id];
+    if (cached != null) {
+      return cached.tracks.map((t) => t.song).toList();
+    }
+    final detail = await widget.musicService.getPlaylist(pl.id);
+    if (mounted) {
+      _playlistDetails[pl.id] = detail;
+    }
+    return detail.tracks.map((t) => t.song).toList();
+  }
+
+  Future<void> _playPlaylist(PlaylistSummaryModel pl) async {
+    try {
+      final songs = await _loadPlaylistSongs(pl);
+      if (!mounted) return;
+      await _playCollection(
+        songs,
+        sourceLabel: pl.name,
+        sourceRoute: MusicPageRoute.playlist(pl.id),
+      );
+    } catch (e) {
+      if (mounted) {
+        showMusicToast(context, 'Could not play playlist: $e');
+      }
+    }
+  }
+
+  Future<void> _queuePlaylist(PlaylistSummaryModel pl) async {
+    try {
+      final songs = await _loadPlaylistSongs(pl);
+      if (!mounted) return;
+      _queueCollection(songs, pl.name);
+    } catch (e) {
+      if (mounted) {
+        showMusicToast(context, 'Could not queue playlist: $e');
       }
     }
   }
@@ -286,9 +335,7 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
       });
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not update Liked Songs: $e')),
-        );
+        showMusicToast(context, 'Could not update Liked Songs: $e');
       }
     }
   }
@@ -321,9 +368,7 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
       _navigate(MusicPageRoute.playlist(created.id));
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not create playlist: $e')),
-        );
+        showMusicToast(context, 'Could not create playlist: $e');
       }
     }
   }
@@ -364,9 +409,7 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
       });
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Rename failed: $e')),
-        );
+        showMusicToast(context, 'Rename failed: $e');
       }
     }
   }
@@ -382,9 +425,7 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
       _navigate(const MusicPageRoute.home());
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Delete failed: $e')),
-        );
+        showMusicToast(context, 'Delete failed: $e');
       }
     }
   }
@@ -413,14 +454,10 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
             )
             .toList();
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Added "${song.title}" to ${updated.name}')),
-      );
+      showMusicToast(context, 'Added "${song.title}" to ${updated.name}');
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not add track: $e')),
-        );
+        showMusicToast(context, 'Could not add track: $e');
       }
     }
   }
@@ -451,9 +488,7 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
       });
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not remove track: $e')),
-        );
+        showMusicToast(context, 'Could not remove track: $e');
       }
     }
   }
@@ -562,6 +597,7 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
                     scrolled: _scrolled,
                     tint: tint,
                     controller: _searchController,
+                    focusNode: _searchFocusNode,
                     hasQuery: _searchQuery.isNotEmpty,
                     onBack: _goBack,
                     onQueryChanged: (val) => setState(() => _searchQuery = val.trim()),
@@ -615,12 +651,20 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
                 child: _MusicSidebar(
                   currentRoute: _currentRoute,
                   libraryFilter: _libraryFilter,
-                  likedCount: _likedSongs().length,
+                  likedSongs: _likedSongs(),
                   playlists: _playlists,
                   albums: _albums,
                   musicService: widget.musicService,
                   coordinator: widget.coordinator,
                   onNavigate: _navigate,
+                  onPlaySongs: _playCollection,
+                  onQueueSongs: _queueCollection,
+                  onPlayPlaylist: _playPlaylist,
+                  onQueuePlaylist: _queuePlaylist,
+                  onRenamePlaylist: _promptRenamePlaylist,
+                  onDeletePlaylist: _deletePlaylist,
+                  albumSongsOf: _albumSongs,
+                  smartSongsOf: _smartSongs,
                   onToggleFilter: (f) => setState(
                     () => _libraryFilter = _libraryFilter == f ? null : f,
                   ),
@@ -834,6 +878,12 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
           coordinator: widget.coordinator,
           playlists: _playlists,
           onPlayCollection: _playCollection,
+          onPlayAlbum: (alb) => _playCollection(
+            _albumSongs(alb.id),
+            sourceLabel: alb.title,
+            sourceRoute: MusicPageRoute.album(alb.id),
+          ),
+          onQueueAlbum: (alb) => _queueCollection(_albumSongs(alb.id), alb.title),
           onToggleLike: _toggleLike,
           onAddToPlaylist: _addToPlaylist,
           onNavigate: _navigate,
@@ -858,6 +908,7 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
             sourceLabel: alb.title,
             sourceRoute: MusicPageRoute.album(alb.id),
           ),
+          onQueueAlbum: (alb) => _queueCollection(_albumSongs(alb.id), alb.title),
           onToggleLike: _toggleLike,
           onAddToPlaylist: _addToPlaylist,
           onNavigate: _navigate,
@@ -892,34 +943,40 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
   }
 
   Widget _buildHome(BuildContext context, HermesThemeTokens tokens) {
+    final likedSongs = _likedSongs();
     final shortcuts = <_HomeShortcutData>[
       _HomeShortcutData(
         title: 'Liked Songs',
         tint: tokens.accent,
         isLiked: true,
+        openLabel: 'Open Liked Songs',
         onOpen: () => _navigate(const MusicPageRoute.liked()),
         onPlay: () => _playCollection(
-          _likedSongs(),
+          likedSongs,
           sourceLabel: 'Liked Songs',
           sourceRoute: const MusicPageRoute.liked(),
         ),
+        onAddToQueue: () => _queueCollection(likedSongs, 'Liked Songs'),
       ),
       for (final pl in _playlists.take(4))
         _HomeShortcutData(
           title: pl.name,
           tint: deriveMusicTint(pl.name, fallback: tokens.surface3),
           isPlaylist: true,
+          openLabel: 'Open playlist',
           onOpen: () => _navigate(MusicPageRoute.playlist(pl.id)),
-          onPlay: () async {
-            final detail = _playlistDetails[pl.id] ??
-                await widget.musicService.getPlaylist(pl.id);
-            if (!mounted) return;
-            _playlistDetails[pl.id] = detail;
-            await _playCollection(
-              detail.tracks.map((t) => t.song).toList(),
-              sourceLabel: pl.name,
-              sourceRoute: MusicPageRoute.playlist(pl.id),
-            );
+          onPlay: () => unawaited(_playPlaylist(pl)),
+          onAddToQueue: () => unawaited(_queuePlaylist(pl)),
+          extraMenuItems: const [
+            PopupMenuItem(value: 'rename', child: Text('Rename playlist')),
+            PopupMenuItem(value: 'delete', child: Text('Delete playlist')),
+          ],
+          onExtraMenuSelected: (action) {
+            if (action == 'rename') {
+              unawaited(_promptRenamePlaylist(pl));
+            } else if (action == 'delete') {
+              unawaited(_deletePlaylist(pl));
+            }
           },
         ),
       for (final alb in _albums.take(6))
@@ -927,12 +984,14 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
           title: alb.title,
           tint: deriveMusicTint(alb.title, fallback: tokens.surface3),
           artworkUri: widget.musicService.buildArtworkUri(alb.artworkHash),
+          openLabel: 'Open album',
           onOpen: () => _navigate(MusicPageRoute.album(alb.id)),
           onPlay: () => _playCollection(
             _albumSongs(alb.id),
             sourceLabel: alb.title,
             sourceRoute: MusicPageRoute.album(alb.id),
           ),
+          onAddToQueue: () => _queueCollection(_albumSongs(alb.id), alb.title),
         ),
     ].take(8).toList();
 
@@ -1010,6 +1069,7 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
   }
 
   Widget _buildMobileLibraryView(BuildContext context, HermesThemeTokens tokens) {
+    final liked = _likedSongs();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1030,11 +1090,27 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
         const SizedBox(height: 12),
         _LibraryRowButton(
           title: 'Liked Songs',
-          subtitle: 'Playlist • ${_likedSongs().length} songs',
+          subtitle: 'Playlist • ${liked.length} songs',
           active: false,
           playing: false,
           isLiked: true,
           onTap: () => _navigate(const MusicPageRoute.liked()),
+          onSecondaryTapDown: (d) => unawaited(
+            openMusicCollectionContextMenu(
+              context,
+              d.globalPosition,
+              openLabel: 'Open Liked Songs',
+              onOpen: () => _navigate(const MusicPageRoute.liked()),
+              onPlay: () => unawaited(
+                _playCollection(
+                  liked,
+                  sourceLabel: 'Liked Songs',
+                  sourceRoute: const MusicPageRoute.liked(),
+                ),
+              ),
+              onAddToQueue: () => _queueCollection(liked, 'Liked Songs'),
+            ),
+          ),
         ),
         for (final pl in _playlists)
           _LibraryRowButton(
@@ -1044,6 +1120,27 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
             playing: false,
             isPlaylist: true,
             onTap: () => _navigate(MusicPageRoute.playlist(pl.id)),
+            onSecondaryTapDown: (d) => unawaited(
+              openMusicCollectionContextMenu(
+                context,
+                d.globalPosition,
+                openLabel: 'Open playlist',
+                onOpen: () => _navigate(MusicPageRoute.playlist(pl.id)),
+                onPlay: () => unawaited(_playPlaylist(pl)),
+                onAddToQueue: () => unawaited(_queuePlaylist(pl)),
+                extraItems: const [
+                  PopupMenuItem(value: 'rename', child: Text('Rename playlist')),
+                  PopupMenuItem(value: 'delete', child: Text('Delete playlist')),
+                ],
+                onExtraSelected: (action) {
+                  if (action == 'rename') {
+                    unawaited(_promptRenamePlaylist(pl));
+                  } else if (action == 'delete') {
+                    unawaited(_deletePlaylist(pl));
+                  }
+                },
+              ),
+            ),
           ),
         for (final smart in SmartPlaylistKind.values)
           _LibraryRowButton(
@@ -1053,6 +1150,25 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
             playing: false,
             smartKind: smart,
             onTap: () => _navigate(MusicPageRoute.smart(smart.id)),
+            onSecondaryTapDown: (d) {
+              final songs = _smartSongs(smart);
+              unawaited(
+                openMusicCollectionContextMenu(
+                  context,
+                  d.globalPosition,
+                  openLabel: 'Open playlist',
+                  onOpen: () => _navigate(MusicPageRoute.smart(smart.id)),
+                  onPlay: () => unawaited(
+                    _playCollection(
+                      songs,
+                      sourceLabel: smart.title,
+                      sourceRoute: MusicPageRoute.smart(smart.id),
+                    ),
+                  ),
+                  onAddToQueue: () => _queueCollection(songs, smart.title),
+                ),
+              );
+            },
           ),
         for (final alb in _albums)
           _LibraryRowButton(
@@ -1062,6 +1178,25 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
             playing: false,
             artworkUri: widget.musicService.buildArtworkUri(alb.artworkHash),
             onTap: () => _navigate(MusicPageRoute.album(alb.id)),
+            onSecondaryTapDown: (d) {
+              final songs = _albumSongs(alb.id);
+              unawaited(
+                openMusicCollectionContextMenu(
+                  context,
+                  d.globalPosition,
+                  openLabel: 'Open album',
+                  onOpen: () => _navigate(MusicPageRoute.album(alb.id)),
+                  onPlay: () => unawaited(
+                    _playCollection(
+                      songs,
+                      sourceLabel: alb.title,
+                      sourceRoute: MusicPageRoute.album(alb.id),
+                    ),
+                  ),
+                  onAddToQueue: () => _queueCollection(songs, alb.title),
+                ),
+              );
+            },
           ),
       ],
     );
@@ -1081,16 +1216,19 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
       itemBuilder: (context, index) {
         final alb = albums[index];
         final year = alb.year != null ? '${alb.year} • ' : '';
+        final songs = _albumSongs(alb.id);
         return MusicBrowseCard(
           title: alb.title,
           subtitle: '$year${alb.artistName}',
+          openLabel: 'Open album',
           artworkUri: widget.musicService.buildArtworkUri(alb.artworkHash),
           onOpen: () => _navigate(MusicPageRoute.album(alb.id)),
           onPlay: () => _playCollection(
-            _albumSongs(alb.id),
+            songs,
             sourceLabel: alb.title,
             sourceRoute: MusicPageRoute.album(alb.id),
           ),
+          onAddToQueue: () => _queueCollection(songs, alb.title),
         );
       },
     );
@@ -1110,16 +1248,19 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
       ),
       itemBuilder: (context, index) {
         final smart = smarts[index];
+        final songs = _smartSongs(smart);
         return MusicBrowseCard(
           title: smart.title,
           subtitle: smart.description,
+          openLabel: 'Open playlist',
           smartKind: smart,
           onOpen: () => _navigate(MusicPageRoute.smart(smart.id)),
           onPlay: () => _playCollection(
-            _smartSongs(smart),
+            songs,
             sourceLabel: smart.title,
             sourceRoute: MusicPageRoute.smart(smart.id),
           ),
+          onAddToQueue: () => _queueCollection(songs, smart.title),
         );
       },
     );
@@ -1138,17 +1279,20 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
       ),
       itemBuilder: (context, index) {
         final art = artists[index];
+        final songs = _artistSongs(art.id);
         return MusicBrowseCard(
           title: art.name,
           subtitle: 'Artist • ${art.albumCount} ${art.albumCount == 1 ? 'album' : 'albums'}',
+          openLabel: 'Open artist',
           artworkUri: widget.musicService.buildArtworkUri(art.artworkHash),
           circular: true,
           onOpen: () => _navigate(MusicPageRoute.artist(art.id)),
           onPlay: () => _playCollection(
-            _artistSongs(art.id),
+            songs,
             sourceLabel: art.name,
             sourceRoute: MusicPageRoute.artist(art.id),
           ),
+          onAddToQueue: () => _queueCollection(songs, art.name),
         );
       },
     );
@@ -1170,18 +1314,21 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
         return MusicBrowseCard(
           title: pl.name,
           subtitle: 'Playlist • ${pl.trackCount} songs',
+          openLabel: 'Open playlist',
           isPlaylist: true,
           onOpen: () => _navigate(MusicPageRoute.playlist(pl.id)),
-          onPlay: () async {
-            final detail = _playlistDetails[pl.id] ??
-                await widget.musicService.getPlaylist(pl.id);
-            if (!mounted) return;
-            _playlistDetails[pl.id] = detail;
-            await _playCollection(
-              detail.tracks.map((t) => t.song).toList(),
-              sourceLabel: pl.name,
-              sourceRoute: MusicPageRoute.playlist(pl.id),
-            );
+          onPlay: () => unawaited(_playPlaylist(pl)),
+          onAddToQueue: () => unawaited(_queuePlaylist(pl)),
+          extraMenuItems: const [
+            PopupMenuItem(value: 'rename', child: Text('Rename playlist')),
+            PopupMenuItem(value: 'delete', child: Text('Delete playlist')),
+          ],
+          onExtraMenuSelected: (action) {
+            if (action == 'rename') {
+              unawaited(_promptRenamePlaylist(pl));
+            } else if (action == 'delete') {
+              unawaited(_deletePlaylist(pl));
+            }
           },
         );
       },
@@ -1213,24 +1360,45 @@ class _MusicSidebar extends StatelessWidget {
   const _MusicSidebar({
     required this.currentRoute,
     required this.libraryFilter,
-    required this.likedCount,
+    required this.likedSongs,
     required this.playlists,
     required this.albums,
     required this.musicService,
     required this.coordinator,
     required this.onNavigate,
+    required this.onPlaySongs,
+    required this.onQueueSongs,
+    required this.onPlayPlaylist,
+    required this.onQueuePlaylist,
+    required this.onRenamePlaylist,
+    required this.onDeletePlaylist,
+    required this.albumSongsOf,
+    required this.smartSongsOf,
     required this.onToggleFilter,
     required this.onCreatePlaylist,
   });
 
   final MusicPageRoute currentRoute;
   final _LibraryFilter? libraryFilter;
-  final int likedCount;
+  final List<SongModel> likedSongs;
   final List<PlaylistSummaryModel> playlists;
   final List<AlbumSummaryModel> albums;
   final MusicService musicService;
   final MusicPlaybackCoordinator coordinator;
   final ValueChanged<MusicPageRoute> onNavigate;
+  final Future<void> Function(
+    List<SongModel> songs, {
+    int startIndex,
+    String? sourceLabel,
+    MusicPageRoute? sourceRoute,
+  }) onPlaySongs;
+  final void Function(List<SongModel> songs, String label) onQueueSongs;
+  final Future<void> Function(PlaylistSummaryModel playlist) onPlayPlaylist;
+  final Future<void> Function(PlaylistSummaryModel playlist) onQueuePlaylist;
+  final Future<void> Function(PlaylistSummaryModel playlist) onRenamePlaylist;
+  final Future<void> Function(PlaylistSummaryModel playlist) onDeletePlaylist;
+  final List<SongModel> Function(String albumId) albumSongsOf;
+  final List<SongModel> Function(SmartPlaylistKind kind) smartSongsOf;
   final ValueChanged<_LibraryFilter> onToggleFilter;
   final VoidCallback onCreatePlaylist;
 
@@ -1346,11 +1514,27 @@ class _MusicSidebar extends StatelessWidget {
                       if (libraryFilter != _LibraryFilter.albums) ...[
                         _LibraryRowButton(
                           title: 'Liked Songs',
-                          subtitle: 'Playlist • $likedCount',
+                          subtitle: 'Playlist • ${likedSongs.length}',
                           active: currentRoute.kind == MusicPageKind.liked,
                           playing: coordinator.activeSourceRoute?.kind == MusicPageKind.liked,
                           isLiked: true,
                           onTap: () => onNavigate(const MusicPageRoute.liked()),
+                          onSecondaryTapDown: (d) => unawaited(
+                            openMusicCollectionContextMenu(
+                              context,
+                              d.globalPosition,
+                              openLabel: 'Open Liked Songs',
+                              onOpen: () => onNavigate(const MusicPageRoute.liked()),
+                              onPlay: () => unawaited(
+                                onPlaySongs(
+                                  likedSongs,
+                                  sourceLabel: 'Liked Songs',
+                                  sourceRoute: const MusicPageRoute.liked(),
+                                ),
+                              ),
+                              onAddToQueue: () => onQueueSongs(likedSongs, 'Liked Songs'),
+                            ),
+                          ),
                         ),
                         for (final pl in playlists)
                           _LibraryRowButton(
@@ -1361,6 +1545,27 @@ class _MusicSidebar extends StatelessWidget {
                             playing: coordinator.activeSourceRoute == MusicPageRoute.playlist(pl.id),
                             isPlaylist: true,
                             onTap: () => onNavigate(MusicPageRoute.playlist(pl.id)),
+                            onSecondaryTapDown: (d) => unawaited(
+                              openMusicCollectionContextMenu(
+                                context,
+                                d.globalPosition,
+                                openLabel: 'Open playlist',
+                                onOpen: () => onNavigate(MusicPageRoute.playlist(pl.id)),
+                                onPlay: () => unawaited(onPlayPlaylist(pl)),
+                                onAddToQueue: () => unawaited(onQueuePlaylist(pl)),
+                                extraItems: const [
+                                  PopupMenuItem(value: 'rename', child: Text('Rename playlist')),
+                                  PopupMenuItem(value: 'delete', child: Text('Delete playlist')),
+                                ],
+                                onExtraSelected: (action) {
+                                  if (action == 'rename') {
+                                    unawaited(onRenamePlaylist(pl));
+                                  } else if (action == 'delete') {
+                                    unawaited(onDeletePlaylist(pl));
+                                  }
+                                },
+                              ),
+                            ),
                           ),
                       ],
                       if (libraryFilter == null)
@@ -1373,6 +1578,25 @@ class _MusicSidebar extends StatelessWidget {
                             playing: coordinator.activeSourceRoute == MusicPageRoute.smart(smart.id),
                             smartKind: smart,
                             onTap: () => onNavigate(MusicPageRoute.smart(smart.id)),
+                            onSecondaryTapDown: (d) {
+                              final songs = smartSongsOf(smart);
+                              unawaited(
+                                openMusicCollectionContextMenu(
+                                  context,
+                                  d.globalPosition,
+                                  openLabel: 'Open playlist',
+                                  onOpen: () => onNavigate(MusicPageRoute.smart(smart.id)),
+                                  onPlay: () => unawaited(
+                                    onPlaySongs(
+                                      songs,
+                                      sourceLabel: smart.title,
+                                      sourceRoute: MusicPageRoute.smart(smart.id),
+                                    ),
+                                  ),
+                                  onAddToQueue: () => onQueueSongs(songs, smart.title),
+                                ),
+                              );
+                            },
                           ),
                       if (libraryFilter != _LibraryFilter.playlists)
                         for (final alb in albums)
@@ -1385,6 +1609,25 @@ class _MusicSidebar extends StatelessWidget {
                                 coordinator.session?.state == PlaybackState.playing,
                             artworkUri: musicService.buildArtworkUri(alb.artworkHash),
                             onTap: () => onNavigate(MusicPageRoute.album(alb.id)),
+                            onSecondaryTapDown: (d) {
+                              final songs = albumSongsOf(alb.id);
+                              unawaited(
+                                openMusicCollectionContextMenu(
+                                  context,
+                                  d.globalPosition,
+                                  openLabel: 'Open album',
+                                  onOpen: () => onNavigate(MusicPageRoute.album(alb.id)),
+                                  onPlay: () => unawaited(
+                                    onPlaySongs(
+                                      songs,
+                                      sourceLabel: alb.title,
+                                      sourceRoute: MusicPageRoute.album(alb.id),
+                                    ),
+                                  ),
+                                  onAddToQueue: () => onQueueSongs(songs, alb.title),
+                                ),
+                              );
+                            },
                           ),
                     ],
                   ),
@@ -1491,6 +1734,7 @@ class _LibraryRowButton extends StatelessWidget {
     required this.active,
     required this.playing,
     required this.onTap,
+    this.onSecondaryTapDown,
     this.artworkUri,
     this.isLiked = false,
     this.isPlaylist = false,
@@ -1502,6 +1746,7 @@ class _LibraryRowButton extends StatelessWidget {
   final bool active;
   final bool playing;
   final VoidCallback onTap;
+  final GestureTapDownCallback? onSecondaryTapDown;
   final Uri? artworkUri;
   final bool isLiked;
   final bool isPlaylist;
@@ -1512,6 +1757,7 @@ class _LibraryRowButton extends StatelessWidget {
     final tokens = HermesThemeTokens.of(context);
     return InkWell(
       onTap: onTap,
+      onSecondaryTapDown: onSecondaryTapDown,
       borderRadius: BorderRadius.circular(6),
       child: Container(
         padding: const EdgeInsets.all(8),
@@ -1572,6 +1818,7 @@ class _MusicTopbar extends StatelessWidget {
     required this.scrolled,
     required this.tint,
     required this.controller,
+    required this.focusNode,
     required this.hasQuery,
     required this.onBack,
     required this.onQueryChanged,
@@ -1582,6 +1829,7 @@ class _MusicTopbar extends StatelessWidget {
   final bool scrolled;
   final Color tint;
   final TextEditingController controller;
+  final FocusNode focusNode;
   final bool hasQuery;
   final VoidCallback onBack;
   final ValueChanged<String> onQueryChanged;
@@ -1625,38 +1873,15 @@ class _MusicTopbar extends StatelessWidget {
               alignment: Alignment.centerLeft,
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 420),
-                child: Container(
-                  height: 42,
-                  padding: const EdgeInsets.symmetric(horizontal: 14),
-                  decoration: BoxDecoration(
-                    color: tokens.surface2,
-                    borderRadius: BorderRadius.circular(99),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.search_rounded, size: 18, color: tokens.text2),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: TextField(
-                          controller: controller,
-                          onChanged: onQueryChanged,
-                          style: TextStyle(fontSize: 14, color: tokens.text),
-                          decoration: InputDecoration(
-                            hintText: 'Search your music',
-                            hintStyle: TextStyle(fontSize: 14, color: tokens.text3),
-                            border: InputBorder.none,
-                            isDense: true,
-                            contentPadding: EdgeInsets.zero,
-                          ),
-                        ),
-                      ),
-                      if (hasQuery)
-                        InkWell(
-                          onTap: onClearSearch,
-                          child: Icon(Icons.close_rounded, size: 17, color: tokens.text2),
-                        ),
-                    ],
-                  ),
+                child: HermesSearchPill(
+                  inputKey: const Key('music-search-input'),
+                  clearKey: const Key('music-search-clear'),
+                  controller: controller,
+                  focusNode: focusNode,
+                  hintText: 'Search your music',
+                  hasQuery: hasQuery,
+                  onChanged: onQueryChanged,
+                  onClear: onClearSearch,
                 ),
               ),
             ),
@@ -1739,6 +1964,10 @@ class _HomeShortcutData {
     required this.tint,
     required this.onOpen,
     required this.onPlay,
+    this.openLabel = 'Open',
+    this.onAddToQueue,
+    this.extraMenuItems = const [],
+    this.onExtraMenuSelected,
     this.artworkUri,
     this.isLiked = false,
     this.isPlaylist = false,
@@ -1748,6 +1977,10 @@ class _HomeShortcutData {
   final Color tint;
   final VoidCallback onOpen;
   final VoidCallback onPlay;
+  final String openLabel;
+  final VoidCallback? onAddToQueue;
+  final List<PopupMenuEntry<String>> extraMenuItems;
+  final ValueChanged<String>? onExtraMenuSelected;
   final Uri? artworkUri;
   final bool isLiked;
   final bool isPlaylist;
@@ -1785,6 +2018,18 @@ class _HomeShortcutTileState extends State<_HomeShortcutTile> {
       },
       child: InkWell(
         onTap: data.onOpen,
+        onSecondaryTapDown: (d) => unawaited(
+          openMusicCollectionContextMenu(
+            context,
+            d.globalPosition,
+            openLabel: data.openLabel,
+            onOpen: data.onOpen,
+            onPlay: data.onPlay,
+            onAddToQueue: data.onAddToQueue,
+            extraItems: data.extraMenuItems,
+            onExtraSelected: data.onExtraMenuSelected,
+          ),
+        ),
         borderRadius: BorderRadius.circular(4),
         child: Container(
           height: 56,

@@ -155,6 +155,18 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
     notifyListeners();
   }
 
+  void addAllToQueue(Iterable<SongModel> songs) {
+    var added = false;
+    for (final song in songs) {
+      _songsById[song.id] = song;
+      _upNextSongIds.add(song.id);
+      added = true;
+    }
+    if (added) {
+      notifyListeners();
+    }
+  }
+
   void playNext(SongModel song) {
     _songsById[song.id] = song;
     _upNextSongIds.insert(0, song.id);
@@ -310,6 +322,46 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
     await _dispatchTransport(nextState);
   }
 
+  Future<void> playUpNextAt(int index) async {
+    final current = _session;
+    if (index < 0 || index >= _upNextSongIds.length) {
+      return;
+    }
+    final nextId = _upNextSongIds.removeAt(index);
+    if (current == null || current.queueSongIds.isEmpty) {
+      final song = _songsById[nextId];
+      if (song != null) {
+        await startQueue([song], 0);
+      }
+      return;
+    }
+
+    final updatedQueue = List<String>.from(current.queueSongIds);
+    final insertAt = (current.currentIndex + 1).clamp(0, updatedQueue.length);
+    updatedQueue.insert(insertAt, nextId);
+    if (transport != null) {
+      final updated = await transport!.startPlayback(updatedQueue, insertAt);
+      await applyServerSession(updated);
+      return;
+    }
+    await applyServerSession(
+      PlaybackSessionState(
+        sessionId: current.sessionId,
+        version: _lastAppliedVersion + 1,
+        activeRendererDeviceId: current.activeRendererDeviceId,
+        activeRendererDeviceName: current.activeRendererDeviceName,
+        state: PlaybackState.playing,
+        repeatMode: current.repeatMode,
+        shuffle: current.shuffle,
+        volume: current.volume,
+        currentIndex: insertAt,
+        currentSongId: nextId,
+        positionMs: 0,
+        queueSongIds: updatedQueue,
+      ),
+    );
+  }
+
   Future<void> skipNext() async {
     final current = _session;
     if (current == null || current.queueSongIds.isEmpty) {
@@ -317,31 +369,7 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
     }
 
     if (_upNextSongIds.isNotEmpty) {
-      final nextId = _upNextSongIds.removeAt(0);
-      final updatedQueue = List<String>.from(current.queueSongIds);
-      final insertAt = (current.currentIndex + 1).clamp(0, updatedQueue.length);
-      updatedQueue.insert(insertAt, nextId);
-      if (transport != null) {
-        final updated = await transport!.startPlayback(updatedQueue, insertAt);
-        await applyServerSession(updated);
-        return;
-      }
-      await applyServerSession(
-        PlaybackSessionState(
-          sessionId: current.sessionId,
-          version: _lastAppliedVersion + 1,
-          activeRendererDeviceId: current.activeRendererDeviceId,
-          activeRendererDeviceName: current.activeRendererDeviceName,
-          state: PlaybackState.playing,
-          repeatMode: current.repeatMode,
-          shuffle: current.shuffle,
-          volume: current.volume,
-          currentIndex: insertAt,
-          currentSongId: nextId,
-          positionMs: 0,
-          queueSongIds: updatedQueue,
-        ),
-      );
+      await playUpNextAt(0);
       return;
     }
 

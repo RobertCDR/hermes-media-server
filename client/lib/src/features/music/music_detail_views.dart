@@ -123,6 +123,8 @@ class MusicAlbumPage extends StatelessWidget {
     required this.onToggleLike,
     required this.onAddToPlaylist,
     required this.onNavigate,
+    this.onPlayAlbum,
+    this.onQueueAlbum,
   });
 
   final AlbumSummaryModel album;
@@ -135,6 +137,8 @@ class MusicAlbumPage extends StatelessWidget {
   final ValueChanged<SongModel> onToggleLike;
   final Future<void> Function(String playlistId, SongModel song) onAddToPlaylist;
   final ValueChanged<MusicPageRoute> onNavigate;
+  final ValueChanged<AlbumSummaryModel>? onPlayAlbum;
+  final ValueChanged<AlbumSummaryModel>? onQueueAlbum;
 
   String _formatAlbumDuration(List<SongModel> items) {
     final totalSec = items.fold<int>(0, (s, e) => s + e.durationMs) ~/ 1000;
@@ -266,7 +270,8 @@ class MusicAlbumPage extends StatelessWidget {
             albums: moreByArtist,
             musicService: musicService,
             onNavigate: onNavigate,
-            onPlayAlbum: (other) => onNavigate(MusicPageRoute.album(other.id)),
+            onPlayAlbum: onPlayAlbum ?? (other) => onNavigate(MusicPageRoute.album(other.id)),
+            onQueueAlbum: onQueueAlbum,
           ),
         ],
       ],
@@ -286,6 +291,7 @@ class MusicArtistPage extends StatelessWidget {
     required this.playlists,
     required this.onPlayCollection,
     required this.onPlayAlbum,
+    this.onQueueAlbum,
     required this.onToggleLike,
     required this.onAddToPlaylist,
     required this.onNavigate,
@@ -299,6 +305,7 @@ class MusicArtistPage extends StatelessWidget {
   final List<PlaylistSummaryModel> playlists;
   final Future<void> Function(List<SongModel> songs, {int startIndex, String? sourceLabel, MusicPageRoute? sourceRoute}) onPlayCollection;
   final ValueChanged<AlbumSummaryModel> onPlayAlbum;
+  final ValueChanged<AlbumSummaryModel>? onQueueAlbum;
   final ValueChanged<SongModel> onToggleLike;
   final Future<void> Function(String playlistId, SongModel song) onAddToPlaylist;
   final ValueChanged<MusicPageRoute> onNavigate;
@@ -448,6 +455,7 @@ class MusicArtistPage extends StatelessWidget {
             musicService: musicService,
             onNavigate: onNavigate,
             onPlayAlbum: onPlayAlbum,
+            onQueueAlbum: onQueueAlbum,
           ),
         ],
       ],
@@ -583,12 +591,14 @@ class _AlbumCardGrid extends StatelessWidget {
     required this.musicService,
     required this.onNavigate,
     required this.onPlayAlbum,
+    this.onQueueAlbum,
   });
 
   final List<AlbumSummaryModel> albums;
   final MusicService musicService;
   final ValueChanged<MusicPageRoute> onNavigate;
   final ValueChanged<AlbumSummaryModel> onPlayAlbum;
+  final ValueChanged<AlbumSummaryModel>? onQueueAlbum;
 
   @override
   Widget build(BuildContext context) {
@@ -608,9 +618,11 @@ class _AlbumCardGrid extends StatelessWidget {
         return MusicBrowseCard(
           title: alb.title,
           subtitle: '$year${alb.artistName}',
+          openLabel: 'Open album',
           artworkUri: musicService.buildArtworkUri(alb.artworkHash),
           onOpen: () => onNavigate(MusicPageRoute.album(alb.id)),
           onPlay: () => onPlayAlbum(alb),
+          onAddToQueue: onQueueAlbum == null ? null : () => onQueueAlbum!(alb),
         );
       },
     );

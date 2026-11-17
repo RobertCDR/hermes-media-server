@@ -8,6 +8,7 @@ import 'src/core/network/endpoint_resolver.dart';
 import 'src/core/settings/hermes_preferences.dart';
 import 'src/core/theme/hermes_theme_tokens.dart';
 import 'src/core/widgets/hermes_artwork_image.dart';
+import 'src/core/widgets/hermes_search_pill.dart';
 import 'src/features/admin/admin_dashboard_screen.dart';
 import 'src/features/admin/admin_service.dart';
 import 'src/features/auth/setup_and_login_screen.dart';
@@ -248,161 +249,15 @@ class _HermesAppState extends State<HermesApp> {
     BuildContext navContext,
     MusicService musicService,
     MusicPlaybackCoordinator musicCoordinator,
-  ) async {
-    final queryController = TextEditingController();
-    UnifiedSearchResult? result;
-    var searching = false;
-    String? error;
-
-    await showDialog<void>(
+  ) {
+    return showDialog<void>(
       context: navContext,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) {
-          Future<void> runSearch() async {
-            final q = queryController.text.trim();
-            if (q.isEmpty) {
-              setDialogState(() {
-                result = null;
-                error = null;
-              });
-              return;
-            }
-            setDialogState(() {
-              searching = true;
-              error = null;
-            });
-            try {
-              final next = await musicService.searchLibrary(q);
-              if (!ctx.mounted) {
-                return;
-              }
-              setDialogState(() {
-                result = next;
-                searching = false;
-              });
-            } catch (e) {
-              if (!ctx.mounted) {
-                return;
-              }
-              setDialogState(() {
-                error = e.toString();
-                searching = false;
-              });
-            }
-          }
-
-          return AlertDialog(
-            title: const Text('Search Hermes Library'),
-            content: SizedBox(
-              width: 560,
-              height: 420,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  TextField(
-                    controller: queryController,
-                    autofocus: true,
-                    decoration: InputDecoration(
-                      hintText: 'Search movies, TV series, artists, albums, songs...',
-                      suffixIcon: IconButton(
-                        tooltip: 'Search',
-                        icon: const Icon(Icons.search),
-                        onPressed: runSearch,
-                      ),
-                    ),
-                    onSubmitted: (_) => unawaited(runSearch()),
-                  ),
-                  const SizedBox(height: 14),
-                  Expanded(
-                    child: searching
-                        ? const Center(child: CircularProgressIndicator())
-                        : error != null
-                            ? Text('Search failed: $error')
-                            : result == null
-                                ? const Center(
-                                    child: Text('Enter a title, artist, album, or song to search.'),
-                                  )
-                                : result!.isEmpty
-                                    ? const Center(child: Text('No matches found.'))
-                                    : ListView(
-                                        children: [
-                                          for (final movie in result!.movies)
-                                            ListTile(
-                                              leading: HermesArtworkImage(
-                                                uri: musicService.buildArtworkUri(movie.artworkHash),
-                                                fallbackTitle: movie.title,
-                                                fallbackIcon: Icons.movie_outlined,
-                                                width: 40,
-                                                height: 54,
-                                                showFallbackLabel: false,
-                                              ),
-                                              title: Text(movie.title),
-                                              subtitle: Text(movie.year == null ? 'Movie' : 'Movie • ${movie.year}'),
-                                              onTap: () => Navigator.of(ctx).pop(),
-                                            ),
-                                          for (final show in result!.series)
-                                            ListTile(
-                                              leading: HermesArtworkImage(
-                                                uri: musicService.buildArtworkUri(show.artworkHash),
-                                                fallbackTitle: show.title,
-                                                fallbackIcon: Icons.tv_outlined,
-                                                width: 40,
-                                                height: 54,
-                                                showFallbackLabel: false,
-                                              ),
-                                              title: Text(show.title),
-                                              subtitle: Text(show.year == null ? 'TV Series' : 'TV Series • ${show.year}'),
-                                              onTap: () => Navigator.of(ctx).pop(),
-                                            ),
-                                          for (final album in result!.albums)
-                                            ListTile(
-                                              leading: HermesArtworkImage(
-                                                uri: musicService.buildArtworkUri(album.artworkHash),
-                                                fallbackTitle: album.title,
-                                                fallbackIcon: Icons.album_outlined,
-                                                width: 44,
-                                                height: 44,
-                                                showFallbackLabel: false,
-                                              ),
-                                              title: Text(album.title),
-                                              subtitle: Text('Album • ${album.artistName}'),
-                                              onTap: () => Navigator.of(ctx).pop(),
-                                            ),
-                                          for (final song in result!.songs)
-                                            ListTile(
-                                              leading: HermesArtworkImage(
-                                                uri: musicService.buildArtworkUri(song.artworkHash),
-                                                fallbackTitle: song.albumTitle,
-                                                fallbackIcon: Icons.music_note_outlined,
-                                                width: 44,
-                                                height: 44,
-                                                showFallbackLabel: false,
-                                              ),
-                                              title: Text(song.title),
-                                              subtitle: Text('Song • ${song.artistName}'),
-                                              onTap: () {
-                                                Navigator.of(ctx).pop();
-                                                unawaited(musicCoordinator.startQueue([song], 0));
-                                              },
-                                            ),
-                                        ],
-                                      ),
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(),
-                child: const Text('Close'),
-              ),
-            ],
-          );
-        },
+      builder: (_) => _LibrarySearchDialog(
+        musicService: musicService,
+        musicCoordinator: musicCoordinator,
+        onOpenMusicRoute: _openMusicRoute,
       ),
     );
-
-    queryController.dispose();
   }
 
   @override
@@ -650,6 +505,221 @@ class _HermesAppState extends State<HermesApp> {
                 );
               },
             ),
+    );
+  }
+}
+
+class _LibrarySearchDialog extends StatefulWidget {
+  const _LibrarySearchDialog({
+    required this.musicService,
+    required this.musicCoordinator,
+    required this.onOpenMusicRoute,
+  });
+
+  final MusicService musicService;
+  final MusicPlaybackCoordinator musicCoordinator;
+  final ValueChanged<MusicPageRoute> onOpenMusicRoute;
+
+  @override
+  State<_LibrarySearchDialog> createState() => _LibrarySearchDialogState();
+}
+
+class _LibrarySearchDialogState extends State<_LibrarySearchDialog> {
+  final TextEditingController _queryController = TextEditingController();
+  UnifiedSearchResult? _result;
+  bool _searching = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _queryController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _runSearch() async {
+    final q = _queryController.text.trim();
+    if (q.isEmpty) {
+      setState(() {
+        _result = null;
+        _error = null;
+      });
+      return;
+    }
+    setState(() {
+      _searching = true;
+      _error = null;
+    });
+    try {
+      final next = await widget.musicService.searchLibrary(q);
+      if (!mounted) return;
+      setState(() {
+        _result = next;
+        _searching = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _searching = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Search Hermes Library'),
+      content: SizedBox(
+        width: 560,
+        height: 420,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: HermesSearchPill(
+                    controller: _queryController,
+                    autofocus: true,
+                    hintText:
+                        'Search movies, TV series, artists, albums, songs...',
+                    hasQuery: _queryController.text.isNotEmpty,
+                    onChanged: (_) => setState(() {}),
+                    onClear: () {
+                      _queryController.clear();
+                      setState(() {
+                        _result = null;
+                        _error = null;
+                      });
+                    },
+                    onSubmitted: (_) => unawaited(_runSearch()),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  onPressed: _searching ? null : () => unawaited(_runSearch()),
+                  child: const Text('Search'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Expanded(
+              child: _searching
+                  ? const Center(child: CircularProgressIndicator())
+                  : _error != null
+                      ? Text('Search failed: $_error')
+                      : _result == null
+                          ? const Center(
+                              child: Text(
+                                'Enter a title, artist, album, or song to search.',
+                              ),
+                            )
+                          : _result!.isEmpty
+                              ? const Center(child: Text('No matches found.'))
+                              : ListView(
+                                  children: [
+                                    for (final movie in _result!.movies)
+                                      ListTile(
+                                        leading: HermesArtworkImage(
+                                          uri: widget.musicService
+                                              .buildArtworkUri(
+                                            movie.artworkHash,
+                                          ),
+                                          fallbackTitle: movie.title,
+                                          fallbackIcon: Icons.movie_outlined,
+                                          width: 40,
+                                          height: 54,
+                                          showFallbackLabel: false,
+                                        ),
+                                        title: Text(movie.title),
+                                        subtitle: Text(
+                                          movie.year == null
+                                              ? 'Movie'
+                                              : 'Movie • ${movie.year}',
+                                        ),
+                                        onTap: () => Navigator.of(context).pop(),
+                                      ),
+                                    for (final show in _result!.series)
+                                      ListTile(
+                                        leading: HermesArtworkImage(
+                                          uri: widget.musicService
+                                              .buildArtworkUri(
+                                            show.artworkHash,
+                                          ),
+                                          fallbackTitle: show.title,
+                                          fallbackIcon: Icons.tv_outlined,
+                                          width: 40,
+                                          height: 54,
+                                          showFallbackLabel: false,
+                                        ),
+                                        title: Text(show.title),
+                                        subtitle: Text(
+                                          show.year == null
+                                              ? 'TV Series'
+                                              : 'TV Series • ${show.year}',
+                                        ),
+                                        onTap: () => Navigator.of(context).pop(),
+                                      ),
+                                    for (final album in _result!.albums)
+                                      ListTile(
+                                        leading: HermesArtworkImage(
+                                          uri: widget.musicService
+                                              .buildArtworkUri(
+                                            album.artworkHash,
+                                          ),
+                                          fallbackTitle: album.title,
+                                          fallbackIcon: Icons.album_outlined,
+                                          width: 44,
+                                          height: 44,
+                                          showFallbackLabel: false,
+                                        ),
+                                        title: Text(album.title),
+                                        subtitle:
+                                            Text('Album • ${album.artistName}'),
+                                        onTap: () {
+                                          Navigator.of(context).pop();
+                                          widget.onOpenMusicRoute(
+                                            MusicPageRoute.album(album.id),
+                                          );
+                                        },
+                                      ),
+                                    for (final song in _result!.songs)
+                                      ListTile(
+                                        leading: HermesArtworkImage(
+                                          uri: widget.musicService
+                                              .buildArtworkUri(
+                                            song.artworkHash,
+                                          ),
+                                          fallbackTitle: song.albumTitle,
+                                          fallbackIcon:
+                                              Icons.music_note_outlined,
+                                          width: 44,
+                                          height: 44,
+                                          showFallbackLabel: false,
+                                        ),
+                                        title: Text(song.title),
+                                        subtitle:
+                                            Text('Song • ${song.artistName}'),
+                                        onTap: () {
+                                          Navigator.of(context).pop();
+                                          unawaited(
+                                            widget.musicCoordinator
+                                                .startQueue([song], 0),
+                                          );
+                                        },
+                                      ),
+                                  ],
+                                ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Close'),
+        ),
+      ],
     );
   }
 }

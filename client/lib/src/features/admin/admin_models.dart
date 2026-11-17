@@ -8,6 +8,7 @@ class LibraryRootModel {
     required this.createdAtUtc,
     this.lastScanCompletedAtUtc,
     this.itemCount = 0,
+    this.hasReportedCount = true,
     this.totalSizeBytes = 0,
     this.isScanning = false,
     this.scanProcessedFiles = 0,
@@ -22,14 +23,53 @@ class LibraryRootModel {
   final DateTime createdAtUtc;
   final DateTime? lastScanCompletedAtUtc;
   final int itemCount;
+  final bool hasReportedCount;
   final int totalSizeBytes;
   final bool isScanning;
   final int scanProcessedFiles;
   final int scanTotalFiles;
 
+  LibraryRootModel copyWith({
+    String? id,
+    String? name,
+    int? mediaType,
+    String? rootPath,
+    bool? watchEnabled,
+    DateTime? createdAtUtc,
+    DateTime? lastScanCompletedAtUtc,
+    int? itemCount,
+    bool? hasReportedCount,
+    int? totalSizeBytes,
+    bool? isScanning,
+    int? scanProcessedFiles,
+    int? scanTotalFiles,
+  }) {
+    return LibraryRootModel(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      mediaType: mediaType ?? this.mediaType,
+      rootPath: rootPath ?? this.rootPath,
+      watchEnabled: watchEnabled ?? this.watchEnabled,
+      createdAtUtc: createdAtUtc ?? this.createdAtUtc,
+      lastScanCompletedAtUtc: lastScanCompletedAtUtc ?? this.lastScanCompletedAtUtc,
+      itemCount: itemCount ?? this.itemCount,
+      hasReportedCount: hasReportedCount ?? this.hasReportedCount,
+      totalSizeBytes: totalSizeBytes ?? this.totalSizeBytes,
+      isScanning: isScanning ?? this.isScanning,
+      scanProcessedFiles: scanProcessedFiles ?? this.scanProcessedFiles,
+      scanTotalFiles: scanTotalFiles ?? this.scanTotalFiles,
+    );
+  }
+
   String get contentsLabel {
+    if (isScanning && itemCount == 0) {
+      return 'Scanning…';
+    }
     if (lastScanCompletedAtUtc == null && itemCount == 0 && !isScanning) {
       return 'Not scanned yet';
+    }
+    if (!hasReportedCount) {
+      return 'Scanned';
     }
     return switch (mediaType) {
       0 => '$itemCount ${itemCount == 1 ? 'movie' : 'movies'}',
@@ -52,21 +92,37 @@ class LibraryRootModel {
     return '${(totalSizeBytes / 1000).round()} KB';
   }
 
+  static int _parseMediaType(Object? raw) {
+    if (raw is num) return raw.toInt();
+    if (raw is String) {
+      return switch (raw.trim().toLowerCase()) {
+        'movies' || 'movie' || '0' => 0,
+        'series' || 'tv' || 'shows' || '1' => 1,
+        'music' || 'audio' || '2' => 2,
+        _ => int.tryParse(raw.trim()) ?? 0,
+      };
+    }
+    return 0;
+  }
+
   factory LibraryRootModel.fromJson(Map<String, dynamic> json) {
     final lastScan = json['lastScanCompletedAtUtc'] as String?;
+    final rawItemCount = json['itemCount'];
+    final hasCount = rawItemCount is num;
     return LibraryRootModel(
       id: json['id'] as String,
       name: json['name'] as String? ?? '',
-      mediaType: json['mediaType'] as int? ?? 0,
+      mediaType: _parseMediaType(json['mediaType']),
       rootPath: json['rootPath'] as String? ?? '',
       watchEnabled: json['watchEnabled'] as bool? ?? true,
       createdAtUtc: DateTime.parse(json['createdAtUtc'] as String),
       lastScanCompletedAtUtc: lastScan == null ? null : DateTime.parse(lastScan),
-      itemCount: json['itemCount'] as int? ?? 0,
+      itemCount: hasCount ? rawItemCount.toInt() : 0,
+      hasReportedCount: hasCount,
       totalSizeBytes: (json['totalSizeBytes'] as num?)?.toInt() ?? 0,
       isScanning: json['isScanning'] as bool? ?? false,
-      scanProcessedFiles: json['scanProcessedFiles'] as int? ?? 0,
-      scanTotalFiles: json['scanTotalFiles'] as int? ?? 0,
+      scanProcessedFiles: (json['scanProcessedFiles'] as num?)?.toInt() ?? 0,
+      scanTotalFiles: (json['scanTotalFiles'] as num?)?.toInt() ?? 0,
     );
   }
 }

@@ -145,119 +145,21 @@ class _PlayerAndThemeSettingsScreenState
   }
 
   Future<void> _showChangePasswordDialog() async {
-    final currentController = TextEditingController();
-    final nextController = TextEditingController();
-    String? errorText;
-    var submitting = false;
-
-    await showDialog<void>(
+    final updated = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) {
-        final tokens = HermesThemeTokens.of(dialogContext);
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            Future<void> submit() async {
-              final current = currentController.text;
-              final next = nextController.text;
-              if (next.trim().length < 8) {
-                setDialogState(() {
-                  errorText = 'New password must be at least 8 characters.';
-                });
-                return;
-              }
-              setDialogState(() {
-                errorText = null;
-                submitting = true;
-              });
-              try {
-                await widget.onChangePassword?.call(current, next);
-                if (!context.mounted) return;
-                Navigator.of(context).pop();
-                if (!mounted) return;
-                ScaffoldMessenger.of(this.context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Password updated across your account.'),
-                  ),
-                );
-              } catch (error) {
-                setDialogState(() {
-                  submitting = false;
-                  errorText = error.toString().replaceFirst('AuthException', '');
-                });
-              }
-            }
-
-            return AlertDialog(
-              backgroundColor: tokens.surface2,
-              title: Text(
-                'Change password',
-                style: TextStyle(
-                  fontFamily: 'Figtree',
-                  fontSize: 18,
-                  fontWeight: FontWeight.w800,
-                  color: tokens.text,
-                ),
-              ),
-              content: SizedBox(
-                width: 380,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text(
-                      'Updating your password signs out inactive refresh sessions on other devices.',
-                      style: TextStyle(fontSize: 13, color: tokens.text2),
-                    ),
-                    const SizedBox(height: 16),
-                    TextField(
-                      controller: currentController,
-                      obscureText: true,
-                      decoration: const InputDecoration(
-                        labelText: 'Current password',
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: nextController,
-                      obscureText: true,
-                      decoration: const InputDecoration(
-                        labelText: 'New password',
-                      ),
-                    ),
-                    if (errorText != null) ...[
-                      const SizedBox(height: 12),
-                      Text(
-                        errorText!,
-                        style: const TextStyle(
-                          color: Color(0xFFFF6B7D),
-                          fontSize: 13,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: submitting ? null : () => Navigator.of(context).pop(),
-                  child: const Text('Cancel'),
-                ),
-                FilledButton(
-                  onPressed: submitting ? null : submit,
-                  child: submitting
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text('Save password'),
-                ),
-              ],
-            );
-          },
-        );
-      },
+      builder: (_) => _ChangePasswordDialog(
+        onChangePassword: widget.onChangePassword,
+      ),
     );
+    if (updated == true && mounted) {
+      ScaffoldMessenger.maybeOf(context)
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Password updated across your account.'),
+          ),
+        );
+    }
   }
 
   @override
@@ -1132,6 +1034,139 @@ class _SubtitlePreviewBox extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _ChangePasswordDialog extends StatefulWidget {
+  const _ChangePasswordDialog({required this.onChangePassword});
+
+  final ChangePasswordCallback? onChangePassword;
+
+  @override
+  State<_ChangePasswordDialog> createState() => _ChangePasswordDialogState();
+}
+
+class _ChangePasswordDialogState extends State<_ChangePasswordDialog> {
+  final TextEditingController _currentController = TextEditingController();
+  final TextEditingController _nextController = TextEditingController();
+  String? _errorText;
+  bool _submitting = false;
+
+  @override
+  void dispose() {
+    _currentController.dispose();
+    _nextController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final current = _currentController.text;
+    final next = _nextController.text;
+    if (next.trim().length < 8) {
+      setState(() {
+        _errorText = 'New password must be at least 8 characters.';
+      });
+      return;
+    }
+
+    setState(() {
+      _errorText = null;
+      _submitting = true;
+    });
+
+    try {
+      await widget.onChangePassword?.call(current, next);
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+    } catch (error) {
+      if (!mounted) return;
+      final cleaned = error
+          .toString()
+          .replaceFirst(RegExp(r'^AuthException\s*:?\s*'), '')
+          .replaceFirst(RegExp(r'^Exception:\s*'), '')
+          .trim();
+      setState(() {
+        _submitting = false;
+        _errorText = cleaned.isEmpty ? 'Could not update password.' : cleaned;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = HermesThemeTokens.of(context);
+    return AlertDialog(
+      backgroundColor: tokens.surface2,
+      title: Text(
+        'Change password',
+        style: TextStyle(
+          fontFamily: 'Figtree',
+          fontSize: 18,
+          fontWeight: FontWeight.w800,
+          color: tokens.text,
+        ),
+      ),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 380),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Updating your password signs out inactive refresh sessions on other devices.',
+                style: TextStyle(fontSize: 13, color: tokens.text2),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _currentController,
+                obscureText: true,
+                textInputAction: TextInputAction.next,
+                decoration: const InputDecoration(
+                  labelText: 'Current password',
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _nextController,
+                obscureText: true,
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) => _submitting ? null : _submit(),
+                decoration: const InputDecoration(
+                  labelText: 'New password',
+                ),
+              ),
+              if (_errorText != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  _errorText!,
+                  style: const TextStyle(
+                    color: Color(0xFFFF6B7D),
+                    fontSize: 13,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _submitting ? null : () => Navigator.of(context).pop(false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _submitting ? null : _submit,
+          child: _submitting
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Save password'),
+        ),
+      ],
     );
   }
 }

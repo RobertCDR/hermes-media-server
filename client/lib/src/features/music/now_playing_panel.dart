@@ -370,6 +370,9 @@ class _NowPlayingPanelState extends State<NowPlayingPanel> {
           active: true,
           trailing: isPlaying ? HermesEqBars(color: tokens.accent, height: 12) : null,
           onTap: () => widget.onNavigate(MusicPageRoute.album(song.albumId)),
+          onSecondaryTapDown: (d) => unawaited(
+            _openQueueContextMenu(context, d.globalPosition, song, includePlayNow: false),
+          ),
         ),
         if (upNext.isNotEmpty) ...[
           Padding(
@@ -403,8 +406,16 @@ class _NowPlayingPanelState extends State<NowPlayingPanel> {
             _QueueRowTile(
               song: upNext[i],
               artworkUri: widget.musicService.buildArtworkUri(upNext[i].artworkHash),
-              onTap: () => unawaited(coordinator.skipNext()),
+              onTap: () => unawaited(coordinator.playUpNextAt(i)),
               onRemove: () => coordinator.removeFromUpNext(i),
+              onSecondaryTapDown: (d) => unawaited(
+                _openQueueContextMenu(
+                  context,
+                  d.globalPosition,
+                  upNext[i],
+                  upNextIndex: i,
+                ),
+              ),
             ),
         ],
         Padding(
@@ -451,9 +462,66 @@ class _NowPlayingPanelState extends State<NowPlayingPanel> {
                   widget.musicService.buildArtworkUri(fromSource[i].artworkHash),
               onTap: () =>
                   unawaited(coordinator.playAtIndex(session.currentIndex + 1 + i)),
+              onSecondaryTapDown: (d) => unawaited(
+                _openQueueContextMenu(
+                  context,
+                  d.globalPosition,
+                  fromSource[i],
+                  queueSongIndex: session.currentIndex + 1 + i,
+                ),
+              ),
             ),
       ],
     );
+  }
+
+  Future<void> _openQueueContextMenu(
+    BuildContext context,
+    Offset globalPosition,
+    SongModel song, {
+    int? upNextIndex,
+    int? queueSongIndex,
+    bool includePlayNow = true,
+  }) async {
+    final coordinator = widget.coordinator;
+    final currentSong = coordinator.songById(song.id) ?? song;
+    final items = buildMusicSongMenuItems(
+      song: currentSong,
+      showPlayNow: includePlayNow,
+      showRemoveFromQueue: upNextIndex != null,
+    );
+    final chosen = await showMusicContextMenu<String>(
+      context,
+      globalPosition,
+      items,
+    );
+    if (chosen == null || !mounted) return;
+
+    if (chosen == 'play') {
+      if (upNextIndex != null) {
+        await coordinator.playUpNextAt(upNextIndex);
+      } else if (queueSongIndex != null) {
+        await coordinator.playAtIndex(queueSongIndex);
+      }
+    } else if (chosen == 'queue') {
+      coordinator.addToQueue(currentSong);
+      if (context.mounted) {
+        showMusicToast(context, 'Added "${currentSong.title}" to queue');
+      }
+    } else if (chosen == 'next') {
+      coordinator.playNext(currentSong);
+      if (context.mounted) {
+        showMusicToast(context, 'Playing "${currentSong.title}" next');
+      }
+    } else if (chosen == 'queue_remove' && upNextIndex != null) {
+      coordinator.removeFromUpNext(upNextIndex);
+    } else if (chosen == 'album') {
+      widget.onNavigate(MusicPageRoute.album(currentSong.albumId));
+    } else if (chosen == 'artist') {
+      widget.onNavigate(MusicPageRoute.artist(currentSong.artistId));
+    } else if (chosen == 'like') {
+      unawaited(coordinator.toggleLikeSong(currentSong.id));
+    }
   }
 
   Widget _buildLyricsSection(
@@ -585,6 +653,7 @@ class _QueueRowTile extends StatelessWidget {
     required this.song,
     required this.artworkUri,
     required this.onTap,
+    this.onSecondaryTapDown,
     this.active = false,
     this.trailing,
     this.onRemove,
@@ -593,6 +662,7 @@ class _QueueRowTile extends StatelessWidget {
   final SongModel song;
   final Uri? artworkUri;
   final VoidCallback onTap;
+  final GestureTapDownCallback? onSecondaryTapDown;
   final bool active;
   final Widget? trailing;
   final VoidCallback? onRemove;
@@ -602,6 +672,7 @@ class _QueueRowTile extends StatelessWidget {
     final tokens = HermesThemeTokens.of(context);
     return InkWell(
       onTap: onTap,
+      onSecondaryTapDown: onSecondaryTapDown,
       borderRadius: BorderRadius.circular(6),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),

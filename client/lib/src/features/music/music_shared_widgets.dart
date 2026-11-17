@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:material_ui/material_ui.dart';
 
 import '../../core/theme/hermes_theme_tokens.dart';
@@ -6,6 +8,121 @@ import '../../core/widgets/hermes_icons.dart';
 import 'music_models.dart';
 import 'music_playback_coordinator.dart';
 import 'music_service.dart';
+
+/// Displays a flat Spotify-style right-click context menu anchored at [globalPosition].
+Future<T?> showMusicContextMenu<T>(
+  BuildContext context,
+  Offset globalPosition,
+  List<PopupMenuEntry<T>> items,
+) {
+  if (items.isEmpty) return Future<T?>.value(null);
+  final tokens = HermesThemeTokens.of(context);
+  final overlayBox =
+      Overlay.of(context).context.findRenderObject() as RenderBox?;
+  final overlaySize = overlayBox?.size ?? MediaQuery.sizeOf(context);
+  final rect = Rect.fromLTWH(globalPosition.dx, globalPosition.dy, 1, 1);
+
+  return showMenu<T>(
+    context: context,
+    position: RelativeRect.fromRect(rect, Offset.zero & overlaySize),
+    color: tokens.surface3,
+    surfaceTintColor: Colors.transparent,
+    elevation: 10,
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(6),
+      side: BorderSide(color: tokens.line),
+    ),
+    items: items,
+  );
+}
+
+List<PopupMenuEntry<String>> buildMusicSongMenuItems({
+  required SongModel song,
+  List<PlaylistSummaryModel> playlists = const [],
+  String? playlistIdForRemoval,
+  bool showPlayNow = false,
+  bool showRemoveFromQueue = false,
+}) {
+  return [
+    if (showPlayNow)
+      const PopupMenuItem(value: 'play', child: Text('Play now')),
+    const PopupMenuItem(value: 'queue', child: Text('Add to queue')),
+    const PopupMenuItem(value: 'next', child: Text('Play next')),
+    if (showRemoveFromQueue)
+      const PopupMenuItem(value: 'queue_remove', child: Text('Remove from queue')),
+    const PopupMenuDivider(),
+    const PopupMenuItem(value: 'album', child: Text('Go to album')),
+    const PopupMenuItem(value: 'artist', child: Text('Go to artist')),
+    PopupMenuItem(
+      value: 'like',
+      child: Text(song.isLiked ? 'Remove from Liked Songs' : 'Save to Liked Songs'),
+    ),
+    if (playlistIdForRemoval != null)
+      const PopupMenuItem(
+        value: 'remove',
+        child: Text('Remove from this playlist'),
+      ),
+    if (playlists.isNotEmpty) ...[
+      const PopupMenuDivider(),
+      for (final pl in playlists)
+        PopupMenuItem(
+          value: 'pl:${pl.id}',
+          child: Text('Add to ${pl.name}'),
+        ),
+    ],
+  ];
+}
+
+Future<void> openMusicCollectionContextMenu(
+  BuildContext context,
+  Offset globalPosition, {
+  String openLabel = 'Open',
+  required VoidCallback onOpen,
+  VoidCallback? onPlay,
+  VoidCallback? onAddToQueue,
+  List<PopupMenuEntry<String>> extraItems = const [],
+  ValueChanged<String>? onExtraSelected,
+}) async {
+  final items = <PopupMenuEntry<String>>[
+    PopupMenuItem(value: 'open', child: Text(openLabel)),
+    if (onPlay != null)
+      const PopupMenuItem(value: 'play', child: Text('Play')),
+    if (onAddToQueue != null)
+      const PopupMenuItem(value: 'queue', child: Text('Add to queue')),
+    if (extraItems.isNotEmpty) ...[
+      const PopupMenuDivider(),
+      ...extraItems,
+    ],
+  ];
+
+  final choice = await showMusicContextMenu<String>(
+    context,
+    globalPosition,
+    items,
+  );
+  if (choice == null) return;
+  if (choice == 'open') {
+    onOpen();
+  } else if (choice == 'play') {
+    onPlay?.call();
+  } else if (choice == 'queue') {
+    onAddToQueue?.call();
+  } else {
+    onExtraSelected?.call(choice);
+  }
+}
+
+void showMusicToast(BuildContext context, String message) {
+  final messenger = ScaffoldMessenger.maybeOf(context);
+  messenger
+    ?..hideCurrentSnackBar()
+    ..showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+}
 
 /// Three-bar equalizer indicator matching Figma `.eq` for active playback rows and Connect cards.
 /// Uses bounded state transitions rather than an infinite ticker so frame scheduling settles cleanly.
@@ -484,15 +601,11 @@ class MusicTrackTable extends StatelessWidget {
               onToggleLike: () => onToggleLike(song),
               onAddToQueue: () {
                 coordinator.addToQueue(song);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Added "${song.title}" to queue')),
-                );
+                showMusicToast(context, 'Added "${song.title}" to queue');
               },
               onPlayNext: () {
                 coordinator.playNext(song);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Playing "${song.title}" next')),
-                );
+                showMusicToast(context, 'Playing "${song.title}" next');
               },
               onGoToAlbum: () => onNavigate(MusicPageRoute.album(song.albumId)),
               onGoToArtist: () => onNavigate(MusicPageRoute.artist(song.artistId)),
@@ -607,6 +720,51 @@ class _TrackTableRow extends StatefulWidget {
 class _TrackTableRowState extends State<_TrackTableRow> {
   bool _hovered = false;
 
+  Future<void> _handleMenuSelection(String value) async {
+    if (value == 'play') {
+      widget.onPlay();
+    } else if (value == 'queue') {
+      widget.onAddToQueue();
+    } else if (value == 'next') {
+      widget.onPlayNext();
+    } else if (value == 'album') {
+      widget.onGoToAlbum();
+    } else if (value == 'artist') {
+      widget.onGoToArtist();
+    } else if (value == 'like') {
+      widget.onToggleLike();
+    } else if (value == 'remove' &&
+        widget.playlistIdForRemoval != null &&
+        widget.onRemoveFromPlaylist != null) {
+      await widget.onRemoveFromPlaylist!(
+        widget.playlistIdForRemoval!,
+        widget.positionInList,
+      );
+    } else if (value.startsWith('pl:') && widget.onAddToPlaylist != null) {
+      await widget.onAddToPlaylist!(value.substring(3), widget.song);
+    }
+  }
+
+  List<PopupMenuEntry<String>> _menuItems({required bool includePlayNow}) {
+    return buildMusicSongMenuItems(
+      song: widget.song,
+      playlists: widget.playlists,
+      playlistIdForRemoval: widget.playlistIdForRemoval,
+      showPlayNow: includePlayNow,
+    );
+  }
+
+  Future<void> _openContextMenu(Offset globalPosition) async {
+    final chosen = await showMusicContextMenu<String>(
+      context,
+      globalPosition,
+      _menuItems(includePlayNow: true),
+    );
+    if (chosen != null) {
+      await _handleMenuSelection(chosen);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final tokens = HermesThemeTokens.of(context);
@@ -617,6 +775,8 @@ class _TrackTableRowState extends State<_TrackTableRow> {
       onExit: (_) => setState(() => _hovered = false),
       child: InkWell(
         onTap: widget.onPlay,
+        onSecondaryTapDown: (details) =>
+            unawaited(_openContextMenu(details.globalPosition)),
         borderRadius: BorderRadius.circular(4),
         child: Container(
           height: 56,
@@ -759,53 +919,10 @@ class _TrackTableRowState extends State<_TrackTableRow> {
                   tooltip: 'Track options',
                   padding: EdgeInsets.zero,
                   color: tokens.surface3,
+                  surfaceTintColor: Colors.transparent,
                   icon: Icon(Icons.more_horiz_rounded, size: 18, color: tokens.text2),
-                  onSelected: (value) async {
-                    if (value == 'queue') {
-                      widget.onAddToQueue();
-                    } else if (value == 'next') {
-                      widget.onPlayNext();
-                    } else if (value == 'album') {
-                      widget.onGoToAlbum();
-                    } else if (value == 'artist') {
-                      widget.onGoToArtist();
-                    } else if (value == 'like') {
-                      widget.onToggleLike();
-                    } else if (value == 'remove' &&
-                        widget.playlistIdForRemoval != null &&
-                        widget.onRemoveFromPlaylist != null) {
-                      await widget.onRemoveFromPlaylist!(
-                        widget.playlistIdForRemoval!,
-                        widget.positionInList,
-                      );
-                    } else if (value.startsWith('pl:') && widget.onAddToPlaylist != null) {
-                      await widget.onAddToPlaylist!(value.substring(3), song);
-                    }
-                  },
-                  itemBuilder: (ctx) => [
-                    const PopupMenuItem(value: 'queue', child: Text('Add to queue')),
-                    const PopupMenuItem(value: 'next', child: Text('Play next')),
-                    const PopupMenuDivider(),
-                    const PopupMenuItem(value: 'album', child: Text('Go to album')),
-                    const PopupMenuItem(value: 'artist', child: Text('Go to artist')),
-                    PopupMenuItem(
-                      value: 'like',
-                      child: Text(song.isLiked ? 'Remove from Liked Songs' : 'Save to Liked Songs'),
-                    ),
-                    if (widget.playlistIdForRemoval != null)
-                      const PopupMenuItem(
-                        value: 'remove',
-                        child: Text('Remove from this playlist'),
-                      ),
-                    if (widget.playlists.isNotEmpty) ...[
-                      const PopupMenuDivider(),
-                      for (final pl in widget.playlists)
-                        PopupMenuItem(
-                          value: 'pl:${pl.id}',
-                          child: Text('Add to ${pl.name}'),
-                        ),
-                    ],
-                  ],
+                  onSelected: (value) => unawaited(_handleMenuSelection(value)),
+                  itemBuilder: (_) => _menuItems(includePlayNow: false),
                 ),
               ),
             ],
@@ -824,6 +941,10 @@ class MusicBrowseCard extends StatefulWidget {
     required this.subtitle,
     required this.onOpen,
     required this.onPlay,
+    this.onAddToQueue,
+    this.openLabel = 'Open',
+    this.extraMenuItems = const [],
+    this.onExtraMenuSelected,
     this.artworkUri,
     this.circular = false,
     this.smartKind,
@@ -835,6 +956,10 @@ class MusicBrowseCard extends StatefulWidget {
   final String subtitle;
   final VoidCallback onOpen;
   final VoidCallback? onPlay;
+  final VoidCallback? onAddToQueue;
+  final String openLabel;
+  final List<PopupMenuEntry<String>> extraMenuItems;
+  final ValueChanged<String>? onExtraMenuSelected;
   final Uri? artworkUri;
   final bool circular;
   final SmartPlaylistKind? smartKind;
@@ -848,6 +973,18 @@ class MusicBrowseCard extends StatefulWidget {
 class _MusicBrowseCardState extends State<MusicBrowseCard> {
   bool _hovered = false;
 
+  Future<void> _openContextMenu(Offset globalPosition) =>
+      openMusicCollectionContextMenu(
+        context,
+        globalPosition,
+        openLabel: widget.openLabel,
+        onOpen: widget.onOpen,
+        onPlay: widget.onPlay,
+        onAddToQueue: widget.onAddToQueue,
+        extraItems: widget.extraMenuItems,
+        onExtraSelected: widget.onExtraMenuSelected,
+      );
+
   @override
   Widget build(BuildContext context) {
     final tokens = HermesThemeTokens.of(context);
@@ -857,6 +994,8 @@ class _MusicBrowseCardState extends State<MusicBrowseCard> {
       onExit: (_) => setState(() => _hovered = false),
       child: InkWell(
         onTap: widget.onOpen,
+        onSecondaryTapDown: (details) =>
+            unawaited(_openContextMenu(details.globalPosition)),
         borderRadius: BorderRadius.circular(8),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 140),

@@ -6,6 +6,7 @@ import '../../core/settings/hermes_preferences.dart';
 import '../../core/theme/hermes_theme_tokens.dart';
 import '../../core/widgets/hermes_artwork_image.dart';
 import '../../core/widgets/hermes_icons.dart';
+import '../../core/widgets/hermes_search_pill.dart';
 import 'cinema_detail_page.dart';
 import 'cinema_models.dart';
 import 'cinema_service.dart';
@@ -88,6 +89,7 @@ class CinemaCatalogScreen extends StatefulWidget {
 
 class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
   final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocusNode = FocusNode();
 
   bool _loading = true;
   Object? _loadError;
@@ -107,6 +109,7 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
 
   @override
   void dispose() {
+    _searchFocusNode.dispose();
     _searchController.dispose();
     super.dispose();
   }
@@ -597,24 +600,14 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
             return ListView(
               padding: const EdgeInsets.only(bottom: 56),
               children: [
-                if (showHero && !hero.isEmpty)
-                  _buildImmersiveHero(
-                    context,
-                    heroTokens,
-                    hero,
-                    isDesktop,
-                    horizontalPad,
-                  )
-                else
-                  Padding(
-                    padding: EdgeInsets.fromLTRB(
-                      horizontalPad,
-                      22,
-                      horizontalPad,
-                      20,
-                    ),
-                    child: _buildTopbar(heroTokens, isDesktop, darkGlass: false),
-                  ),
+                _buildPersistentHeader(
+                  context,
+                  heroTokens,
+                  hero,
+                  showHero: showHero && !hero.isEmpty,
+                  isDesktop: isDesktop,
+                  horizontalPad: horizontalPad,
+                ),
                 if (isWatchlistTab)
                   _buildWatchlistView(
                     context,
@@ -653,6 +646,14 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
     bool isDesktop, {
     required bool darkGlass,
   }) {
+    final activeTextColor = darkGlass ? Colors.white : tokens.text;
+    final inactiveTextColor = darkGlass
+        ? Colors.white.withValues(alpha: 0.62)
+        : tokens.text2;
+    final refreshIconColor = darkGlass
+        ? Colors.white.withValues(alpha: 0.72)
+        : tokens.text2;
+
     final tabs = SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: Row(
@@ -673,9 +674,7 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
                     fontFamily: 'Figtree',
                     fontSize: 15,
                     fontWeight: active ? FontWeight.w800 : FontWeight.w600,
-                    color: active
-                        ? Colors.white
-                        : Colors.white.withValues(alpha: 0.62),
+                    color: active ? activeTextColor : inactiveTextColor,
                   ),
                 ),
               ),
@@ -689,68 +688,21 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
       constraints: BoxConstraints(
         maxWidth: isDesktop ? 320 : double.infinity,
       ),
-      child: Container(
+      child: HermesSearchPill(
+        inputKey: const Key('cinema-search-input'),
+        clearKey: const Key('cinema-search-clear'),
+        controller: _searchController,
+        focusNode: _searchFocusNode,
+        hintText: 'Search titles, genres, cast...',
+        darkGlass: darkGlass,
         height: 40,
-        padding: const EdgeInsets.symmetric(horizontal: 14),
-        decoration: BoxDecoration(
-          color: darkGlass ? Colors.black.withValues(alpha: 0.42) : tokens.surface2,
-          borderRadius: BorderRadius.circular(99),
-          border: Border.all(
-            color: _searchQuery.isNotEmpty
-                ? Colors.white
-                : Colors.white.withValues(alpha: 0.14),
-            width: _searchQuery.isNotEmpty ? 1.5 : 1,
-          ),
-        ),
-        child: Row(
-          children: [
-            Icon(
-              Icons.search_rounded,
-              size: 16,
-              color: Colors.white.withValues(alpha: 0.68),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: TextField(
-                key: const Key('cinema-search-input'),
-                controller: _searchController,
-                onChanged: (value) => setState(() => _searchQuery = value),
-                style: const TextStyle(
-                  fontFamily: 'Figtree',
-                  fontSize: 14,
-                  color: Colors.white,
-                ),
-                decoration: InputDecoration(
-                  isCollapsed: true,
-                  filled: false,
-                  contentPadding: EdgeInsets.zero,
-                  hintText: 'Search titles, genres, cast...',
-                  hintStyle: TextStyle(
-                    fontFamily: 'Figtree',
-                    fontSize: 14,
-                    color: Colors.white.withValues(alpha: 0.5),
-                  ),
-                  border: InputBorder.none,
-                  enabledBorder: InputBorder.none,
-                  focusedBorder: InputBorder.none,
-                ),
-              ),
-            ),
-            if (_searchQuery.isNotEmpty)
-              InkWell(
-                key: const Key('cinema-search-clear'),
-                onTap: () {
-                  _searchController.clear();
-                  setState(() => _searchQuery = '');
-                },
-                child: Icon(
-                  Icons.close_rounded,
-                  size: 16,
-                  color: Colors.white.withValues(alpha: 0.72),
-                ),
-              ),
-          ],
-        ),
+        iconSize: 16,
+        hasQuery: _searchQuery.isNotEmpty,
+        onChanged: (value) => setState(() => _searchQuery = value),
+        onClear: () {
+          _searchController.clear();
+          setState(() => _searchQuery = '');
+        },
       ),
     );
 
@@ -767,7 +719,7 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
             icon: Icon(
               Icons.refresh_rounded,
               size: 20,
-              color: Colors.white.withValues(alpha: 0.72),
+              color: refreshIconColor,
             ),
           ),
         ],
@@ -786,7 +738,7 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
               icon: Icon(
                 Icons.refresh_rounded,
                 size: 20,
-                color: Colors.white.withValues(alpha: 0.72),
+                color: refreshIconColor,
               ),
             ),
           ],
@@ -797,201 +749,219 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
     );
   }
 
-  Widget _buildImmersiveHero(
+  Widget _buildPersistentHeader(
     BuildContext context,
     HermesThemeTokens tokens,
-    _HeroSelection hero,
-    bool isDesktop,
-    double horizontalPad,
-  ) {
+    _HeroSelection hero, {
+    required bool showHero,
+    required bool isDesktop,
+    required double horizontalPad,
+  }) {
     final movie = hero.movie;
     final show = hero.series;
-    final resume = movie != null ? movie.resumePoint : show!.resumePoint;
+    final resume = showHero ? (movie != null ? movie.resumePoint : show!.resumePoint) : null;
 
-    final backdropHash = movie != null
-        ? (movie.backdropHash ?? movie.artworkHash)
-        : (show?.backdropHash ?? show?.artworkHash);
-    final isBackdrop = movie != null
-        ? movie.backdropHash != null
-        : show?.backdropHash != null;
-    final heroUri = widget.cinemaService.buildArtworkUri(
-      backdropHash,
-      variant: isBackdrop ? 'backdrop_1280' : 'poster_800',
-    );
+    final backdropHash = showHero
+        ? (movie != null
+            ? (movie.backdropHash ?? movie.artworkHash)
+            : (show?.backdropHash ?? show?.artworkHash))
+        : null;
+    final isBackdrop = showHero &&
+        (movie != null ? movie.backdropHash != null : show?.backdropHash != null);
+    final heroUri = showHero
+        ? widget.cinemaService.buildArtworkUri(
+            backdropHash,
+            variant: isBackdrop ? 'backdrop_1280' : 'poster_800',
+          )
+        : null;
 
-    final primarySource = movie != null
-        ? movie.sources.firstOrNull
-        : resume?.episodeEntry?.episode.sources.firstOrNull ??
-            show?.seasons.firstOrNull?.episodes.firstOrNull?.sources.firstOrNull;
-    final playInitialPos = movie != null
-        ? (movie.isWatched ? 0 : (movie.watchProgress?.positionMs ?? 0))
-        : (resume?.episodeEntry?.episode.watchProgress?.isWatched == true
-            ? 0
-            : (resume?.episodeEntry?.episode.watchProgress?.positionMs ?? 0));
+    final primarySource = showHero
+        ? (movie != null
+            ? movie.sources.firstOrNull
+            : resume?.episodeEntry?.episode.sources.firstOrNull ??
+                show?.seasons.firstOrNull?.episodes.firstOrNull?.sources.firstOrNull)
+        : null;
+    final playInitialPos = !showHero
+        ? 0
+        : movie != null
+            ? (movie.isWatched ? 0 : (movie.watchProgress?.positionMs ?? 0))
+            : (resume?.episodeEntry?.episode.watchProgress?.isWatched == true
+                ? 0
+                : (resume?.episodeEntry?.episode.watchProgress?.positionMs ?? 0));
 
-    final lengthLabel = movie != null
-        ? (movie.durationMinutes > 0
-            ? formatCinemaMinutes(movie.durationMinutes)
-            : '')
-        : '${show!.seasons.length} ${show.seasons.length == 1 ? 'Season' : 'Seasons'}';
+    final lengthLabel = !showHero
+        ? ''
+        : movie != null
+            ? (movie.durationMinutes > 0
+                ? formatCinemaMinutes(movie.durationMinutes)
+                : '')
+            : '${show!.seasons.length} ${show.seasons.length == 1 ? 'Season' : 'Seasons'}';
 
-    final heroMinHeight = isDesktop ? 500.0 : 420.0;
+    final heroMinHeight = showHero ? (isDesktop ? 500.0 : 420.0) : 0.0;
 
     return ConstrainedBox(
       constraints: BoxConstraints(minHeight: heroMinHeight),
       child: Stack(
         children: [
           Positioned.fill(
-            child: HermesArtworkImage(
-              uri: heroUri,
-              fallbackTitle: hero.title,
-              fallbackIcon:
-                  movie != null ? Icons.movie_outlined : Icons.tv_outlined,
-              borderRadius: BorderRadius.zero,
-              showFallbackLabel: false,
-            ),
+            child: showHero
+                ? HermesArtworkImage(
+                    uri: heroUri,
+                    fallbackTitle: hero.title,
+                    fallbackIcon:
+                        movie != null ? Icons.movie_outlined : Icons.tv_outlined,
+                    borderRadius: BorderRadius.zero,
+                    showFallbackLabel: false,
+                  )
+                : const SizedBox.shrink(),
           ),
           Positioned.fill(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.centerLeft,
-                  end: Alignment.centerRight,
-                  stops: const [0.0, 0.34, 0.70],
-                  colors: [
-                    tokens.pageWash,
-                    tokens.pageWash.withValues(alpha: 0.78),
-                    Colors.transparent,
-                  ],
-                ),
-              ),
-            ),
+            child: showHero
+                ? DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.centerLeft,
+                        end: Alignment.centerRight,
+                        stops: const [0.0, 0.34, 0.70],
+                        colors: [
+                          tokens.pageWash,
+                          tokens.pageWash.withValues(alpha: 0.78),
+                          Colors.transparent,
+                        ],
+                      ),
+                    ),
+                  )
+                : const SizedBox.shrink(),
           ),
           Positioned.fill(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.bottomCenter,
-                  end: Alignment.topCenter,
-                  stops: const [0.0, 0.42, 0.80, 1.0],
-                  colors: [
-                    tokens.bg,
-                    Colors.transparent,
-                    Colors.transparent,
-                    Colors.black.withValues(alpha: 0.45),
-                  ],
-                ),
-              ),
-            ),
+            child: showHero
+                ? DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.bottomCenter,
+                        end: Alignment.topCenter,
+                        stops: const [0.0, 0.42, 0.80, 1.0],
+                        colors: [
+                          tokens.bg,
+                          Colors.transparent,
+                          Colors.transparent,
+                          Colors.black.withValues(alpha: 0.45),
+                        ],
+                      ),
+                    ),
+                  )
+                : const SizedBox.shrink(),
           ),
           Padding(
             padding: EdgeInsets.fromLTRB(
               horizontalPad,
               22,
               horizontalPad,
-              44,
+              showHero ? 44 : 20,
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                _buildTopbar(tokens, isDesktop, darkGlass: true),
-                SizedBox(height: isDesktop ? 90 : 44),
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 560),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        hero.title,
-                        style: TextStyle(
-                          fontFamily: 'Figtree',
-                          fontSize: isDesktop ? 48 : 34,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: -1.1,
-                          height: 1.03,
-                          color: Colors.white,
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      CinemaHeroMetaLine(
-                        rating: hero.rating,
-                        year: hero.year,
-                        lengthLabel: lengthLabel,
-                        genres: hero.genres,
-                        qualityTag: primarySource?.shortTag,
-                      ),
-                      if (hero.overview != null &&
-                          hero.overview!.trim().isNotEmpty) ...[
-                        const SizedBox(height: 12),
+                _buildTopbar(tokens, isDesktop, darkGlass: showHero),
+                if (showHero) ...[
+                  SizedBox(height: isDesktop ? 90 : 44),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 560),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
                         Text(
-                          hero.overview!,
-                          maxLines: 3,
-                          overflow: TextOverflow.ellipsis,
+                          hero.title,
                           style: TextStyle(
                             fontFamily: 'Figtree',
-                            fontSize: 15,
-                            height: 1.55,
-                            color: Colors.white.withValues(alpha: 0.8),
+                            fontSize: isDesktop ? 48 : 34,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: -1.1,
+                            height: 1.03,
+                            color: Colors.white,
                           ),
                         ),
-                      ],
-                      const SizedBox(height: 24),
-                      Wrap(
-                        spacing: 12,
-                        runSpacing: 10,
-                        children: [
-                          CinemaPlayPillButton(
-                            label: resume?.playLabel ?? 'Play',
-                            onPressed: primarySource == null
-                                ? null
-                                : () => _launchPlayback(
-                                      primarySource,
-                                      widget.defaultQuality,
-                                      movie: movie,
-                                      series: show,
-                                      episodeEntry: resume?.episodeEntry,
-                                      initialPositionMs: playInitialPos,
-                                    ),
-                          ),
-                          CinemaGlassButton(
-                            key: const Key('hero-watchlist-btn'),
-                            icon: HermesBookmarkIcon(
-                              size: 18,
-                              filled: hero.isInWatchlist,
-                              color: hero.isInWatchlist
-                                  ? tokens.accent
-                                  : Colors.white,
+                        const SizedBox(height: 14),
+                        CinemaHeroMetaLine(
+                          rating: hero.rating,
+                          year: hero.year,
+                          lengthLabel: lengthLabel,
+                          genres: hero.genres,
+                          qualityTag: primarySource?.shortTag,
+                        ),
+                        if (hero.overview != null &&
+                            hero.overview!.trim().isNotEmpty) ...[
+                          const SizedBox(height: 12),
+                          Text(
+                            hero.overview!,
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontFamily: 'Figtree',
+                              fontSize: 15,
+                              height: 1.55,
+                              color: Colors.white.withValues(alpha: 0.8),
                             ),
-                            label: hero.isInWatchlist
-                                ? 'In Watchlist'
-                                : 'Watchlist',
-                            onPressed: () {
-                              if (movie != null) {
-                                unawaited(_toggleMovieWatchlist(movie));
-                              } else if (show != null) {
-                                unawaited(_toggleSeriesWatchlist(show));
-                              }
-                            },
-                          ),
-                          CinemaGlassButton(
-                            key: const Key('hero-details-btn'),
-                            icon: const Icon(
-                              Icons.info_outline_rounded,
-                              size: 18,
-                              color: Colors.white,
-                            ),
-                            label: 'Details',
-                            onPressed: () => setState(() {
-                              _selectedMovieId = movie?.id;
-                              _selectedSeriesId = show?.id;
-                            }),
                           ),
                         ],
-                      ),
-                    ],
+                        const SizedBox(height: 24),
+                        Wrap(
+                          spacing: 12,
+                          runSpacing: 10,
+                          children: [
+                            CinemaPlayPillButton(
+                              label: resume?.playLabel ?? 'Play',
+                              onPressed: primarySource == null
+                                  ? null
+                                  : () => _launchPlayback(
+                                        primarySource,
+                                        widget.defaultQuality,
+                                        movie: movie,
+                                        series: show,
+                                        episodeEntry: resume?.episodeEntry,
+                                        initialPositionMs: playInitialPos,
+                                      ),
+                            ),
+                            CinemaGlassButton(
+                              key: const Key('hero-watchlist-btn'),
+                              icon: HermesBookmarkIcon(
+                                size: 18,
+                                filled: hero.isInWatchlist,
+                                color: hero.isInWatchlist
+                                    ? tokens.accent
+                                    : Colors.white,
+                              ),
+                              label: hero.isInWatchlist
+                                  ? 'In Watchlist'
+                                  : 'Watchlist',
+                              onPressed: () {
+                                if (movie != null) {
+                                  unawaited(_toggleMovieWatchlist(movie));
+                                } else if (show != null) {
+                                  unawaited(_toggleSeriesWatchlist(show));
+                                }
+                              },
+                            ),
+                            CinemaGlassButton(
+                              key: const Key('hero-details-btn'),
+                              icon: const Icon(
+                                Icons.info_outline_rounded,
+                                size: 18,
+                                color: Colors.white,
+                              ),
+                              label: 'Details',
+                              onPressed: () => setState(() {
+                                _selectedMovieId = movie?.id;
+                                _selectedSeriesId = show?.id;
+                              }),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
-                ),
+                ],
               ],
             ),
           ),

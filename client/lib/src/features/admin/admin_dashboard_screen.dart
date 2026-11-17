@@ -650,7 +650,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 const SizedBox(height: 4),
                 Text(
                   scanning
-                      ? 'Scanning...'
+                      ? (lib.scanTotalFiles > 0
+                          ? 'Scanning ${lib.scanProcessedFiles} / ${lib.scanTotalFiles}…'
+                          : 'Scanning…')
                       : '${lib.contentsLabel} • ${lib.formattedSize} • ${_formatScanTime(lib)}',
                   style: TextStyle(fontSize: 12, color: tokens.text2),
                 ),

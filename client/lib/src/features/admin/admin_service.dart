@@ -35,7 +35,57 @@ class AdminService {
     }
 
     final decoded = jsonDecode(response.body) as List<dynamic>;
-    return decoded.map((e) => LibraryRootModel.fromJson(e as Map<String, dynamic>)).toList();
+    final roots = decoded
+        .map((e) => LibraryRootModel.fromJson(e as Map<String, dynamic>))
+        .toList();
+    return _enrichMissingLibraryCounts(roots);
+  }
+
+  Future<List<LibraryRootModel>> _enrichMissingLibraryCounts(
+    List<LibraryRootModel> roots,
+  ) async {
+    final missingTypes = roots
+        .where((r) => !r.hasReportedCount && r.lastScanCompletedAtUtc != null)
+        .map((r) => r.mediaType)
+        .toSet();
+    if (missingTypes.isEmpty) {
+      return roots;
+    }
+
+    final countsByType = <int, int>{};
+    for (final mediaType in missingTypes) {
+      // Only attribute catalog totals cleanly when there is a single root of that media type.
+      if (roots.where((r) => r.mediaType == mediaType).length != 1) {
+        continue;
+      }
+      final path = switch (mediaType) {
+        0 => '/api/v1/cinema/movies',
+        1 => '/api/v1/cinema/series',
+        _ => '/api/v1/music/songs',
+      };
+      try {
+        final resp = await httpClient.get(baseUri.resolve(path), headers: _headers);
+        if (resp.statusCode == 200) {
+          final items = jsonDecode(resp.body);
+          if (items is List) {
+            countsByType[mediaType] = items.length;
+          }
+        }
+      } catch (_) {
+        // Leave hasReportedCount false so UI stays accurate ("Scanned") rather than showing 0.
+      }
+    }
+
+    if (countsByType.isEmpty) {
+      return roots;
+    }
+    return roots.map((r) {
+      final fallback = countsByType[r.mediaType];
+      if (!r.hasReportedCount && fallback != null) {
+        return r.copyWith(itemCount: fallback, hasReportedCount: true);
+      }
+      return r;
+    }).toList();
   }
 
   Future<LibraryRootModel> createLibrary({

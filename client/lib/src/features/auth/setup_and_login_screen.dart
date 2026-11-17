@@ -269,6 +269,8 @@ class _SetupAndLoginScreenState extends State<SetupAndLoginScreen> {
           hintText: 'https://hermes.tailnet.ts.net',
           monospace: true,
           autofocus: true,
+          textInputAction: TextInputAction.next,
+          onSubmitted: (_) => _loading ? null : _connectEndpoint(),
           tokens: tokens,
         ),
         const SizedBox(height: 14),
@@ -277,6 +279,8 @@ class _SetupAndLoginScreenState extends State<SetupAndLoginScreen> {
           controller: _lanUrlController,
           hintText: 'http://192.168.1.50:5258',
           monospace: true,
+          textInputAction: TextInputAction.done,
+          onSubmitted: (_) => _loading ? null : _connectEndpoint(),
           tokens: tokens,
         ),
         if (_error != null) ...[
@@ -478,6 +482,14 @@ class _SetupAndLoginScreenState extends State<SetupAndLoginScreen> {
           label: 'Password',
           controller: _passwordController,
           obscureText: true,
+          textInputAction: _mode == HermesAuthMode.invite
+              ? TextInputAction.next
+              : TextInputAction.done,
+          onSubmitted: (_) {
+            if (_mode != HermesAuthMode.invite && !_loading) {
+              _submitAuth();
+            }
+          },
           tokens: tokens,
         ),
         if (_mode == HermesAuthMode.invite) ...[
@@ -487,6 +499,8 @@ class _SetupAndLoginScreenState extends State<SetupAndLoginScreen> {
             controller: _inviteCodeController,
             hintText: 'HRM-9421-X8TQ',
             monospace: true,
+            textInputAction: TextInputAction.done,
+            onSubmitted: (_) => _loading ? null : _submitAuth(),
             tokens: tokens,
           ),
         ],
@@ -589,6 +603,8 @@ class _AuthField extends StatelessWidget {
     this.obscureText = false,
     this.monospace = false,
     this.autofocus = false,
+    this.textInputAction,
+    this.onSubmitted,
   });
 
   final String label;
@@ -598,6 +614,8 @@ class _AuthField extends StatelessWidget {
   final bool obscureText;
   final bool monospace;
   final bool autofocus;
+  final TextInputAction? textInputAction;
+  final ValueChanged<String>? onSubmitted;
 
   @override
   Widget build(BuildContext context) {
@@ -618,6 +636,8 @@ class _AuthField extends StatelessWidget {
           controller: controller,
           obscureText: obscureText,
           autofocus: autofocus,
+          textInputAction: textInputAction,
+          onSubmitted: onSubmitted,
           style: TextStyle(
             fontFamily: monospace ? 'monospace' : 'Figtree',
             fontSize: monospace ? 13 : 14,
