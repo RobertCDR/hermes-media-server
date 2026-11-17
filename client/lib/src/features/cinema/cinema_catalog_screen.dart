@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
 
+import '../../core/network/hermes_sync_client.dart';
 import '../../core/settings/hermes_preferences.dart';
 import '../../core/theme/hermes_theme_tokens.dart';
 import '../../core/widgets/hermes_artwork_image.dart';
@@ -75,6 +76,7 @@ class CinemaCatalogScreen extends StatefulWidget {
     required this.defaultQuality,
     this.accountPreferences = const HermesAccountPreferences(),
     this.reduceMotion = false,
+    this.watchProgressUpdates,
   });
 
   final CinemaService cinemaService;
@@ -82,6 +84,7 @@ class CinemaCatalogScreen extends StatefulWidget {
   final VideoQualityPreset defaultQuality;
   final HermesAccountPreferences accountPreferences;
   final bool reduceMotion;
+  final Stream<WatchProgressUpdatedEvent>? watchProgressUpdates;
 
   @override
   State<CinemaCatalogScreen> createState() => _CinemaCatalogScreenState();
@@ -100,18 +103,91 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
   String _searchQuery = '';
   String? _selectedMovieId;
   String? _selectedSeriesId;
+  StreamSubscription<WatchProgressUpdatedEvent>? _watchProgressSub;
 
   @override
   void initState() {
     super.initState();
+    _subscribeWatchProgress();
     _loadCatalog();
   }
 
   @override
+  void didUpdateWidget(covariant CinemaCatalogScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.watchProgressUpdates != widget.watchProgressUpdates) {
+      unawaited(_watchProgressSub?.cancel());
+      _subscribeWatchProgress();
+    }
+  }
+
+  @override
   void dispose() {
+    unawaited(_watchProgressSub?.cancel());
     _searchFocusNode.dispose();
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _subscribeWatchProgress() {
+    _watchProgressSub = widget.watchProgressUpdates?.listen(
+      _applyWatchProgressEvent,
+    );
+  }
+
+  void _applyWatchProgressEvent(WatchProgressUpdatedEvent event) {
+    if (!mounted) return;
+    final incoming = WatchProgressModel(
+      positionMs: event.positionMs,
+      durationMs: event.durationMs,
+      isWatched: event.isWatched,
+      updatedAtUtc: event.updatedAtUtc,
+    );
+
+    if (event.movieId != null) {
+      final idx = _movies.indexWhere((m) => m.id == event.movieId);
+      if (idx >= 0) {
+        final existing = _movies[idx].watchProgress;
+        if (existing != null &&
+            event.updatedAtUtc.isBefore(existing.updatedAtUtc)) {
+          return;
+        }
+        setState(() {
+          _movies = List<MovieSummary>.from(_movies)
+            ..[idx] = _movies[idx].copyWith(watchProgress: incoming);
+        });
+      }
+      return;
+    }
+
+    if (event.episodeId != null) {
+      for (var sIdx = 0; sIdx < _series.length; sIdx++) {
+        final show = _series[sIdx];
+        for (var snIdx = 0; snIdx < show.seasons.length; snIdx++) {
+          final season = show.seasons[snIdx];
+          final epIdx = season.episodes.indexWhere(
+            (e) => e.id == event.episodeId,
+          );
+          if (epIdx < 0) continue;
+
+          final existing = season.episodes[epIdx].watchProgress;
+          if (existing != null &&
+              event.updatedAtUtc.isBefore(existing.updatedAtUtc)) {
+            return;
+          }
+
+          final updatedEpisodes = List<EpisodeSummary>.from(season.episodes)
+            ..[epIdx] = season.episodes[epIdx].copyWith(watchProgress: incoming);
+          final updatedSeasons = List<TvSeasonModel>.from(show.seasons)
+            ..[snIdx] = season.copyWith(episodes: updatedEpisodes);
+          setState(() {
+            _series = List<TvSeriesSummary>.from(_series)
+              ..[sIdx] = show.copyWith(seasons: updatedSeasons);
+          });
+          return;
+        }
+      }
+    }
   }
 
   Future<void> _loadCatalog() async {
