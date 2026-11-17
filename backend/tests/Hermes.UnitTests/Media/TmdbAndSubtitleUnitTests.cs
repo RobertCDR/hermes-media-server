@@ -379,6 +379,42 @@ public class TmdbAndSubtitleUnitTests
         }
     }
 
+    [Fact]
+    public async Task LibraryScanProgressTracker_TracksProgress_AndSerializesConcurrentScansPerLibrary()
+    {
+        var tracker = new LibraryScanProgressTracker();
+        var libA = Guid.NewGuid();
+        var libB = Guid.NewGuid();
+
+        tracker.BeginScan(libA, 4, DateTimeOffset.UtcNow);
+        tracker.Advance(libA);
+        var snap = tracker.GetProgress(libA);
+        snap.Should().NotBeNull();
+        snap!.IsScanning.Should().BeTrue();
+        snap.ProcessedFiles.Should().Be(1);
+        snap.TotalFiles.Should().Be(4);
+        tracker.Complete(libA);
+        tracker.GetProgress(libA).Should().BeNull();
+
+        using var firstLock = await tracker.AcquireScanLockAsync(libA, CancellationToken.None);
+        var secondAcquired = false;
+        var waitingTask = Task.Run(async () =>
+        {
+            using var second = await tracker.AcquireScanLockAsync(libA, CancellationToken.None);
+            secondAcquired = true;
+        });
+
+        // Different library acquires immediately without waiting for libA.
+        using (await tracker.AcquireScanLockAsync(libB, CancellationToken.None))
+        {
+            secondAcquired.Should().BeFalse();
+        }
+
+        firstLock.Dispose();
+        await waitingTask;
+        secondAcquired.Should().BeTrue();
+    }
+
     private static HttpResponseMessage JsonOk(string json) =>
         new(HttpStatusCode.OK)
         {

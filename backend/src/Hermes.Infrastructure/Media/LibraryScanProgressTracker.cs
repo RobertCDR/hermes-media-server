@@ -22,6 +22,27 @@ public sealed class LibraryScanProgressTracker
     }
 
     private readonly ConcurrentDictionary<Guid, MutableScanState> _active = new();
+    private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _locks = new();
+
+    public async Task<IDisposable> AcquireScanLockAsync(Guid libraryRootId, CancellationToken cancellationToken)
+    {
+        var gate = _locks.GetOrAdd(libraryRootId, static _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken);
+        return new LockReleaser(gate);
+    }
+
+    private sealed class LockReleaser(SemaphoreSlim gate) : IDisposable
+    {
+        private int _disposed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 0)
+            {
+                gate.Release();
+            }
+        }
+    }
 
     public void BeginScan(Guid libraryRootId, int totalFiles, DateTimeOffset? utcNow = null)
     {

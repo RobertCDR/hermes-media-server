@@ -33,6 +33,10 @@ public sealed partial class LibraryScannerService(
 
     public async Task<LibraryScanResult?> ScanLibraryAsync(Guid libraryRootId, CancellationToken cancellationToken)
     {
+        using var scanLock = scanProgress is null
+            ? null
+            : await scanProgress.AcquireScanLockAsync(libraryRootId, cancellationToken);
+
         var root = await db.MediaLibraryRoots.SingleOrDefaultAsync(r => r.Id == libraryRootId, cancellationToken);
         if (root is null)
         {
