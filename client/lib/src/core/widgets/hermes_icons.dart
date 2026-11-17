@@ -351,6 +351,7 @@ class HermesFlatDropdown<T> extends StatelessWidget {
         child: DropdownButtonHideUnderline(
           child: DropdownButton<T>(
             value: value,
+            menuMaxHeight: 340,
             dropdownColor: tokens.surface,
             icon: Icon(
               Icons.keyboard_arrow_down_rounded,

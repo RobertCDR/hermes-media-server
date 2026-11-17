@@ -11,6 +11,7 @@ import 'package:hermes_client/src/features/admin/admin_dashboard_screen.dart';
 import 'package:hermes_client/src/features/admin/admin_models.dart';
 import 'package:hermes_client/src/features/admin/admin_service.dart';
 import 'package:hermes_client/src/features/cinema/cinema_catalog_screen.dart';
+import 'package:hermes_client/src/features/cinema/cinema_detail_page.dart';
 import 'package:hermes_client/src/features/cinema/cinema_models.dart';
 import 'package:hermes_client/src/features/cinema/cinema_service.dart';
 import 'package:hermes_client/src/features/cinema/cinema_shared_widgets.dart';
@@ -873,6 +874,100 @@ void main() {
         debugDefaultTargetPlatformOverride = null;
         semanticsHandle.dispose();
       }
+    });
+
+    testWidgets('CinemaDetailPage renders Episodes vertically and scrolls through full season', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1280, 860));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final tokens = HermesThemeTokens.resolve(themeId: HermesThemeId.crimson);
+      final series = TvSeriesSummary.fromJson({
+        'id': 'ser-1',
+        'title': 'Severance',
+        'year': 2022,
+        'overview': 'Work and personal memories separated.',
+        'isInWatchlist': false,
+        'seasons': [
+          {
+            'id': 'sn-1',
+            'seasonNumber': 1,
+            'title': 'Season 1',
+            'expectedEpisodeCount': 10,
+            'episodes': List.generate(
+              8,
+              (i) => {
+                'id': 'ep-$i',
+                'episodeNumber': i + 1,
+                'title': 'Episode Title ${i + 1}',
+                'overview': 'Overview for episode ${i + 1}.',
+                'sources': [
+                  {
+                    'id': 'src-$i',
+                    'sourceLabel': '1080p',
+                    'container': 'mkv',
+                    'videoCodec': 'h264',
+                    'audioCodec': 'aac',
+                    'width': 1920,
+                    'height': 1080,
+                    'isHdr': false,
+                    'bitrateBps': 8000000,
+                    'durationMs': 2700000,
+                    'isAvailable': true,
+                    'streams': [],
+                  },
+                ],
+              },
+            ),
+          },
+        ],
+      });
+
+      final service = CinemaService(
+        baseUri: Uri.parse('http://localhost:5258'),
+        accessToken: 'jwt',
+        httpClient: MockClient((_) async => _json([])),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: tokens.toThemeData(),
+          home: Scaffold(
+            body: CinemaDetailPage(
+              series: series,
+              cinemaService: service,
+              defaultQuality: VideoQualityPreset.directPlay,
+              onBack: () {},
+              onPlay: (_, _, {episodeEntry, initialPositionMs = 0, movie, series}) {},
+              onToggleWatchlist: () {},
+              onToggleWatched: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.scrollUntilVisible(
+        find.text('Episode Title 1'),
+        250,
+        scrollable: find.byType(Scrollable).first,
+      );
+      final ep1Rect = tester.getRect(find.text('Episode Title 1'));
+
+      await tester.scrollUntilVisible(
+        find.text('Episode Title 2'),
+        250,
+        scrollable: find.byType(Scrollable).first,
+      );
+      final ep2Rect = tester.getRect(find.text('Episode Title 2'));
+      expect(ep2Rect.top, greaterThan(ep1Rect.bottom));
+
+      await tester.scrollUntilVisible(
+        find.text('Episode Title 8'),
+        300,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(find.text('Episode Title 8'), findsOneWidget);
+      expect(find.text('2 episodes aren\'t on the server'), findsOneWidget);
     });
   });
 }
