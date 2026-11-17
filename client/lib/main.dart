@@ -8,6 +8,7 @@ import 'src/core/auth/auth_service.dart';
 import 'src/core/auth/authenticated_http_client.dart';
 import 'src/core/auth/session_store.dart';
 import 'src/core/network/endpoint_resolver.dart';
+import 'src/core/network/hermes_sync_client.dart';
 import 'src/core/settings/hermes_preferences.dart';
 import 'src/core/theme/hermes_theme_tokens.dart';
 import 'src/core/widgets/hermes_artwork_image.dart';
@@ -35,17 +36,28 @@ void main() {
   runApp(const HermesApp());
 }
 
+typedef HermesSyncClientFactory = HermesSyncClient Function({
+  required Uri baseUri,
+  required http.Client httpClient,
+  required String Function() getAccessToken,
+  required String deviceId,
+  required String deviceName,
+  required String platform,
+});
+
 class HermesApp extends StatefulWidget {
   const HermesApp({
     super.key,
     this.sessionStore,
     this.preferencesStore,
     this.httpClient,
+    this.syncClientFactory,
   });
 
   final SessionStore? sessionStore;
   final DevicePreferencesStore? preferencesStore;
   final http.Client? httpClient;
+  final HermesSyncClientFactory? syncClientFactory;
 
   @override
   State<HermesApp> createState() => _HermesAppState();
@@ -84,6 +96,25 @@ class _HermesAppState extends State<HermesApp> {
   final MusicNavigationController _musicNav = MusicNavigationController();
   bool _connectPopoverOpen = false;
   List<OnlineDeviceModel> _connectDevices = const [];
+  HermesSyncClient? _syncClient;
+  StreamSubscription<PlaybackSessionState>? _syncSessionSub;
+  StreamSubscription<List<OnlineDeviceModel>>? _syncDevicesSub;
+  StreamSubscription<WatchProgressUpdatedEvent>? _syncWatchProgressSub;
+  final StreamController<WatchProgressUpdatedEvent> _watchProgressController =
+      StreamController<WatchProgressUpdatedEvent>.broadcast();
+
+  String get _deviceName => kIsWeb ? 'Web Browser' : Platform.localHostname;
+
+  String get _platformName => kIsWeb
+      ? 'Web'
+      : switch (defaultTargetPlatform) {
+          TargetPlatform.android => 'Android',
+          TargetPlatform.iOS => 'iOS',
+          TargetPlatform.windows => 'Windows',
+          TargetPlatform.macOS => 'macOS',
+          TargetPlatform.linux => 'Linux',
+          _ => Platform.operatingSystem,
+        };
 
   @override
   void initState() {
@@ -198,12 +229,50 @@ class _HermesAppState extends State<HermesApp> {
 
   @override
   void dispose() {
+    unawaited(_stopSyncClient());
+    unawaited(_watchProgressController.close());
     _worldNotifier.dispose();
     _musicCoordinator?.dispose();
     if (_ownsHttpClient) {
       _rawHttpClient.close();
     }
     super.dispose();
+  }
+
+  Future<void> _stopSyncClient() {
+    final sessionSub = _syncSessionSub;
+    final devicesSub = _syncDevicesSub;
+    final watchSub = _syncWatchProgressSub;
+    final syncClient = _syncClient;
+    _syncSessionSub = null;
+    _syncDevicesSub = null;
+    _syncWatchProgressSub = null;
+    _syncClient = null;
+    final disposeFuture = syncClient?.dispose();
+    return Future.wait([
+      ?sessionSub?.cancel(),
+      ?devicesSub?.cancel(),
+      ?watchSub?.cancel(),
+      ?disposeFuture,
+    ]);
+  }
+
+  HermesSyncClient _defaultSyncClientFactory({
+    required Uri baseUri,
+    required http.Client httpClient,
+    required String Function() getAccessToken,
+    required String deviceId,
+    required String deviceName,
+    required String platform,
+  }) {
+    return HermesSyncClient(
+      baseUri: baseUri,
+      httpClient: httpClient,
+      getAccessToken: getAccessToken,
+      deviceId: deviceId,
+      deviceName: deviceName,
+      platform: platform,
+    );
   }
 
   void _openMusicRoute(MusicPageRoute route) {
@@ -217,11 +286,12 @@ class _HermesAppState extends State<HermesApp> {
     MusicPlaybackCoordinator coordinator,
     HermesSession session,
   ) async {
-    List<OnlineDeviceModel> devices = const [];
+    List<OnlineDeviceModel> devices = _connectDevices;
     try {
-      devices = await musicService.getOnlineDevices();
+      devices = await (coordinator.transport?.getOnlineDevices() ??
+          musicService.getOnlineDevices());
     } catch (_) {
-      devices = const [];
+      devices = _connectDevices;
     }
     if (!ctx.mounted) return;
 
@@ -289,19 +359,53 @@ class _HermesAppState extends State<HermesApp> {
   }
 
   void _onAuthenticated(HermesSession nextSession, ResolvedEndpoint nextEndpoint) {
+    unawaited(_stopSyncClient());
+
     final musicService = MusicService(
       baseUri: nextEndpoint.baseUri,
       accessToken: nextSession.accessToken,
       httpClient: _apiHttpClient,
+    );
+    final syncClient = (widget.syncClientFactory ?? _defaultSyncClientFactory)(
+      baseUri: nextEndpoint.baseUri,
+      httpClient: _apiHttpClient,
+      getAccessToken: () => _session?.accessToken ?? '',
+      deviceId: nextSession.deviceId,
+      deviceName: _deviceName,
+      platform: _platformName,
+    );
+    final connectTransport = SignalRConnectTransport(
+      syncClient: syncClient,
+      musicService: musicService,
+      localDeviceId: nextSession.deviceId,
+      localDeviceName: _deviceName,
     );
     final coordinator = MusicPlaybackCoordinator(
       localDeviceId: nextSession.deviceId,
       musicService: musicService,
       audioEngine: _audioEngine,
       mediaBridge: _mediaBridge,
+      transport: connectTransport,
     );
 
     coordinator.updateQualityPolicy(_devicePrefs.toAudioQualityPolicy());
+
+    _syncClient = syncClient;
+    _syncSessionSub = syncClient.sessionStream.listen((remoteState) {
+      if (!mounted || _musicCoordinator != coordinator) return;
+      unawaited(coordinator.applyServerSession(remoteState));
+    });
+    _syncDevicesSub = syncClient.devicesStream.listen((devices) {
+      if (!mounted || _syncClient != syncClient) return;
+      setState(() {
+        _connectDevices = devices;
+      });
+    });
+    _syncWatchProgressSub = syncClient.watchProgressStream.listen((event) {
+      if (!_watchProgressController.isClosed) {
+        _watchProgressController.add(event);
+      }
+    });
 
     setState(() {
       _musicCoordinator?.dispose();
@@ -311,10 +415,12 @@ class _HermesAppState extends State<HermesApp> {
       _initialPrimaryUrl = nextSession.serverPrimaryUrl;
       _initialLanUrl = nextSession.serverLanFallbackUrl ?? '';
       _switchingServer = false;
+      _connectDevices = const [];
       _musicService = musicService;
       _musicCoordinator = coordinator;
     });
 
+    syncClient.start();
     unawaited(_loadAccountPreferences(nextSession, nextEndpoint));
   }
 
@@ -367,12 +473,15 @@ class _HermesAppState extends State<HermesApp> {
   }
 
   Future<void> _signOut() async {
+    await _stopSyncClient();
     await _authService.signOut();
     _musicCoordinator?.dispose();
     if (!mounted) return;
     setState(() {
       _session = null;
       _switchingServer = false;
+      _connectPopoverOpen = false;
+      _connectDevices = const [];
       _musicCoordinator = null;
       _musicService = null;
       _accountPrefs = const HermesAccountPreferences();
@@ -454,7 +563,7 @@ class _HermesAppState extends State<HermesApp> {
                   endpointResolver: _endpointResolver,
                   authService: _authService,
                   deviceId: _deviceId,
-                  deviceName: kIsWeb ? 'Web Browser' : Platform.localHostname,
+                  deviceName: _deviceName,
                   initialPrimaryUrl:
                       session?.serverPrimaryUrl ?? _initialPrimaryUrl,
                   initialLanUrl:
@@ -536,6 +645,7 @@ class _HermesAppState extends State<HermesApp> {
                     defaultQuality: _defaultVideoQuality,
                     accountPreferences: _accountPrefs,
                     reduceMotion: _devicePrefs.reduceMotion,
+                    watchProgressUpdates: _watchProgressController.stream,
                   ),
                   musicBuilder: (_) => MusicWorldScreen(
                     musicService: musicService,
