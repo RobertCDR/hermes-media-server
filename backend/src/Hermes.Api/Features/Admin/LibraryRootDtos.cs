@@ -6,7 +6,14 @@ public sealed record CreateLibraryRootRequest(
     string Name,
     LibraryMediaType MediaType,
     string RootPath,
-    bool WatchEnabled = true);
+    bool WatchEnabled = true,
+    bool FetchMetadata = true);
+
+public sealed record UpdateLibraryRootRequest(
+    string Name,
+    string RootPath,
+    bool WatchEnabled = true,
+    bool FetchMetadata = true);
 
 public sealed record LibraryRootResponse(
     Guid Id,
@@ -20,7 +27,32 @@ public sealed record LibraryRootResponse(
     long TotalSizeBytes = 0,
     bool IsScanning = false,
     int ScanProcessedFiles = 0,
-    int ScanTotalFiles = 0);
+    int ScanTotalFiles = 0,
+    bool FetchMetadata = true);
+
+public sealed record ServerSettingsResponse(
+    Guid ServerId,
+    string ServerName,
+    bool TranscodingEnabled,
+    int MaxConcurrentVideoTranscodes,
+    int MaxConcurrentAudioTranscodes,
+    int? MaxRemoteVideoBitrateBps,
+    HardwareAccelerationMode HardwareAccelerationMode,
+    DateTimeOffset UpdatedAtUtc,
+    long TotalMediaSizeBytes,
+    int LibraryCount,
+    int TotalMovies,
+    int TotalSeries,
+    int TotalEpisodes,
+    int TotalSongs);
+
+public sealed record UpdateServerSettingsRequest(
+    string ServerName,
+    bool TranscodingEnabled,
+    int MaxConcurrentVideoTranscodes,
+    int MaxConcurrentAudioTranscodes,
+    int? MaxRemoteVideoBitrateBps,
+    HardwareAccelerationMode HardwareAccelerationMode);
 
 public sealed record LibraryScanSummaryDto(
     Guid LibraryRootId,

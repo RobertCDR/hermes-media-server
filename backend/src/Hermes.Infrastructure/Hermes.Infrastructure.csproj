@@ -11,6 +11,10 @@
     <PackageReference Include="TagLibSharp" />
   </ItemGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="Hermes.UnitTests" />
+    <InternalsVisibleTo Include="Hermes.IntegrationTests" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\Hermes.Domain\Hermes.Domain.csproj" />
   </ItemGroup>
 </Project>

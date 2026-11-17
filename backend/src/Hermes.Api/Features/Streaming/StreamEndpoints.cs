@@ -84,6 +84,7 @@ public static class StreamEndpoints
         }
 
         var maxSlots = settings?.MaxConcurrentVideoTranscodes ?? 2;
+        var hardwareAcceleration = settings?.HardwareAccelerationMode ?? HardwareAccelerationMode.None;
         var lease = await transcodeManager.TryStartVideoHlsSessionAsync(
             userId,
             mediaSourceId,
@@ -92,7 +93,8 @@ public static class StreamEndpoints
             audioStreamIndex,
             startSeconds,
             maxSlots,
-            cancellationToken);
+            cancellationToken,
+            hardwareAcceleration);
 
         if (lease is null)
         {
@@ -215,17 +217,25 @@ public static class StreamEndpoints
             return Results.NotFound(new { error = "audio_source_not_found" });
         }
 
+        var settings = await db.ServerSettings.AsNoTracking().FirstOrDefaultAsync(cancellationToken);
         var preset = ParseAudioQuality(quality);
         var targetBitrateBps = GetTargetAudioBitrateBps(preset);
 
-        // Enforce strict no-upscale invariant: Lossless or source <= target plays directly.
-        if (preset == AudioQualityPreset.Lossless || (sourceBitrate > 0 && sourceBitrate <= targetBitrateBps))
+        // Enforce strict no-upscale invariant and transcode policy: Lossless, disabled transcoding, or source <= target plays directly.
+        if (preset == AudioQualityPreset.Lossless ||
+            settings is { TranscodingEnabled: false } ||
+            (sourceBitrate > 0 && sourceBitrate <= targetBitrateBps))
         {
             httpContext.Response.Headers["X-Hermes-Delivery"] = "DirectPlay";
             return Results.File(filePath, GetAudioMimeType(sourceCodec), enableRangeProcessing: true);
         }
 
-        var transcoded = await sessionManager.TryTranscodeAudioToMp3Async(filePath, targetBitrateBps, cancellationToken);
+        var maxAudioSlots = settings?.MaxConcurrentAudioTranscodes ?? 4;
+        var transcoded = await sessionManager.TryTranscodeAudioToMp3Async(
+            filePath,
+            targetBitrateBps,
+            cancellationToken,
+            maxAudioSlots);
         if (transcoded is { Length: > 0 })
         {
             httpContext.Response.Headers["X-Hermes-Delivery"] = "Transcoded";

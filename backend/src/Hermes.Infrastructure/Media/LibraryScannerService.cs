@@ -29,6 +29,25 @@ public sealed partial class LibraryScannerService(
     private static readonly HashSet<string> AudioExtensions =
         new([".flac", ".mp3", ".m4a", ".ogg", ".wav", ".opus"], StringComparer.OrdinalIgnoreCase);
 
+    private static readonly HashSet<string> SubtitleExtensions =
+        new([".srt", ".vtt", ".ass", ".ssa", ".sub"], StringComparer.OrdinalIgnoreCase);
+
+    internal static bool IsSupportedMediaFileExtension(LibraryMediaType mediaType, string extensionOrPath)
+    {
+        var ext = extensionOrPath.StartsWith('.') ? extensionOrPath : Path.GetExtension(extensionOrPath);
+        if (string.IsNullOrEmpty(ext))
+        {
+            return false;
+        }
+
+        return mediaType switch
+        {
+            LibraryMediaType.Movies or LibraryMediaType.Series => VideoExtensions.Contains(ext) || SubtitleExtensions.Contains(ext),
+            LibraryMediaType.Music => AudioExtensions.Contains(ext),
+            _ => false
+        };
+    }
+
     private static readonly string[] IgnoredTokens = ["extras", "trailers", "trailer", "sample"];
 
     public async Task<LibraryScanResult?> ScanLibraryAsync(Guid libraryRootId, CancellationToken cancellationToken)
@@ -112,7 +131,10 @@ public sealed partial class LibraryScannerService(
                 moviesByKey[movieKey] = movie;
             }
 
-            await TryEnrichMovieFromTmdbAsync(movie, title, year, cancellationToken);
+            if (root.FetchMetadata)
+            {
+                await TryEnrichMovieFromTmdbAsync(movie, title, year, cancellationToken);
+            }
 
             var probed = await mediaProbeService.ProbeAsync(filePath, cancellationToken);
             if (probed is null)
@@ -145,11 +167,14 @@ public sealed partial class LibraryScannerService(
             upserted++;
         }
 
-        foreach (var movie in moviesByKey.Values)
+        if (root.FetchMetadata)
         {
-            if (movie.TmdbId is not null && movie.GenresCsv is null && movie.Rating is null)
+            foreach (var movie in moviesByKey.Values)
             {
-                await CinemaMetadataEnricher.EnrichMovieAsync(tmdbClient, artworkStore, movie, cancellationToken);
+                if (movie.TmdbId is not null && movie.GenresCsv is null && movie.Rating is null)
+                {
+                    await CinemaMetadataEnricher.EnrichMovieAsync(tmdbClient, artworkStore, movie, cancellationToken);
+                }
             }
         }
 
@@ -210,7 +235,10 @@ public sealed partial class LibraryScannerService(
                 seriesByKey[seriesKey] = series;
             }
 
-            await TryEnrichSeriesFromTmdbAsync(series, seriesTitle, year, cancellationToken);
+            if (root.FetchMetadata)
+            {
+                await TryEnrichSeriesFromTmdbAsync(series, seriesTitle, year, cancellationToken);
+            }
 
             var season = series.Seasons.FirstOrDefault(s => s.SeasonNumber == seasonNumber);
             if (season is null)
@@ -259,17 +287,20 @@ public sealed partial class LibraryScannerService(
             upserted++;
         }
 
-        foreach (var series in seriesByKey.Values)
+        if (root.FetchMetadata)
         {
-            await TryEnrichSeriesFromTmdbAsync(series, series.Title, series.Year, cancellationToken);
-            if (series.TmdbId is int seriesTmdbId)
+            foreach (var series in seriesByKey.Values)
             {
-                if ((series.GenresCsv is null && series.Rating is null) ||
-                    series.Seasons.Any(sn => sn.ExpectedEpisodeCount is null))
+                await TryEnrichSeriesFromTmdbAsync(series, series.Title, series.Year, cancellationToken);
+                if (series.TmdbId is int seriesTmdbId)
                 {
-                    await CinemaMetadataEnricher.EnrichSeriesAsync(tmdbClient, artworkStore, series, cancellationToken);
+                    if ((series.GenresCsv is null && series.Rating is null) ||
+                        series.Seasons.Any(sn => sn.ExpectedEpisodeCount is null))
+                    {
+                        await CinemaMetadataEnricher.EnrichSeriesAsync(tmdbClient, artworkStore, series, cancellationToken);
+                    }
+                    await TryEnrichSeriesEpisodesFromTmdbAsync(series, seriesTmdbId, cancellationToken);
                 }
-                await TryEnrichSeriesEpisodesFromTmdbAsync(series, seriesTmdbId, cancellationToken);
             }
         }
 
@@ -307,7 +338,9 @@ public sealed partial class LibraryScannerService(
             scanProgress?.Advance(root.Id);
             if (songsByPath.TryGetValue(filePath, out var existingSong))
             {
-                existingSong.MarkPresent();
+                var existingInfo = new FileInfo(filePath);
+                var existingWriteUtc = new DateTimeOffset(existingInfo.LastWriteTimeUtc, TimeSpan.Zero);
+                existingSong.UpdateFileFingerprint(existingInfo.Length, existingWriteUtc);
                 continue;
             }
 
