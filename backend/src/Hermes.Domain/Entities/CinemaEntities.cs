@@ -10,7 +10,7 @@ public sealed class MediaLibraryRoot
         RootPath = string.Empty;
     }
 
-    public MediaLibraryRoot(string name, LibraryMediaType mediaType, string rootPath, bool watchEnabled)
+    public MediaLibraryRoot(string name, LibraryMediaType mediaType, string rootPath, bool watchEnabled, bool fetchMetadata = true)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ArgumentException.ThrowIfNullOrWhiteSpace(rootPath);
@@ -20,6 +20,7 @@ public sealed class MediaLibraryRoot
         MediaType = mediaType;
         RootPath = rootPath.Trim();
         WatchEnabled = watchEnabled;
+        FetchMetadata = fetchMetadata;
         CreatedAtUtc = DateTimeOffset.UtcNow;
     }
 
@@ -28,8 +29,20 @@ public sealed class MediaLibraryRoot
     public LibraryMediaType MediaType { get; private set; }
     public string RootPath { get; private set; }
     public bool WatchEnabled { get; private set; }
+    public bool FetchMetadata { get; private set; } = true;
     public DateTimeOffset CreatedAtUtc { get; private set; }
     public DateTimeOffset? LastScanCompletedAtUtc { get; private set; }
+
+    public void UpdateOptions(string name, string rootPath, bool watchEnabled, bool fetchMetadata = true)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ArgumentException.ThrowIfNullOrWhiteSpace(rootPath);
+
+        Name = name.Trim();
+        RootPath = rootPath.Trim();
+        WatchEnabled = watchEnabled;
+        FetchMetadata = fetchMetadata;
+    }
 
     public void MarkScanCompleted(DateTimeOffset utcNow) => LastScanCompletedAtUtc = utcNow;
 }
