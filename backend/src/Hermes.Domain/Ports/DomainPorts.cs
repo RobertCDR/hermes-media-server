@@ -116,7 +116,8 @@ public interface ITranscodeSessionManager
         int audioStreamIndex,
         long startSeconds,
         int maxConcurrentSlots,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        HardwareAccelerationMode hardwareAcceleration = HardwareAccelerationMode.None);
 
     Task StopSessionAsync(Guid sessionId, CancellationToken cancellationToken);
     string? ResolveHlsAssetPath(Guid sessionId, string fileName);
