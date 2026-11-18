@@ -1,15 +1,77 @@
 import 'dart:async';
 
+import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:material_ui/material_ui.dart';
 
 import '../../core/theme/hermes_theme_tokens.dart';
 import '../../core/widgets/hermes_artwork_image.dart';
+import '../../core/widgets/hermes_marquee_text.dart';
 import 'music_models.dart';
 import 'music_playback_coordinator.dart';
 import 'music_service.dart';
 import 'music_shared_widgets.dart';
 
 enum NowPlayingTab { queue, lyrics }
+
+class _LyricsAutoScrollTracker {
+  final ScrollController scrollController = ScrollController();
+  List<GlobalKey> lineKeys = const [];
+  int _lastIndex = -1;
+  DateTime? _pausedUntil;
+
+  void setLineCount(int count) {
+    lineKeys = count <= 0 ? const [] : List.generate(count, (_) => GlobalKey());
+    _lastIndex = -1;
+  }
+
+  void resumeNow() {
+    _pausedUntil = null;
+    _lastIndex = -1;
+  }
+
+  void pauseTemporarily([Duration duration = const Duration(seconds: 4)]) {
+    _pausedUntil = DateTime.now().add(duration);
+  }
+
+  bool handleUserScroll(UserScrollNotification notification) {
+    if (notification.direction != ScrollDirection.idle) {
+      pauseTemporarily();
+    }
+    return false;
+  }
+
+  void scheduleIfNeeded({
+    required int activeIndex,
+    required bool Function() isMounted,
+    double alignment = 0.35,
+  }) {
+    if (activeIndex < 0 || activeIndex >= lineKeys.length) return;
+    if (activeIndex == _lastIndex) return;
+    final pausedUntil = _pausedUntil;
+    if (pausedUntil != null && DateTime.now().isBefore(pausedUntil)) {
+      return;
+    }
+    _lastIndex = activeIndex;
+    final key = lineKeys[activeIndex];
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!isMounted()) return;
+      final ctx = key.currentContext;
+      if (ctx == null) return;
+      unawaited(
+        Scrollable.ensureVisible(
+          ctx,
+          alignment: alignment,
+          duration: const Duration(milliseconds: 260),
+          curve: Curves.easeOutCubic,
+        ),
+      );
+    });
+  }
+
+  void dispose() {
+    scrollController.dispose();
+  }
+}
 
 /// Figma v4 `.np-panel` side panel showing current cover, Queue management, Lyrics, and active device.
 class NowPlayingPanel extends StatefulWidget {
@@ -41,6 +103,7 @@ class _NowPlayingPanelState extends State<NowPlayingPanel> {
   String? _loadedSongId;
   SongLyricsModel? _lyrics;
   bool _loadingLyrics = false;
+  final _LyricsAutoScrollTracker _lyricsTracker = _LyricsAutoScrollTracker();
 
   @override
   void initState() {
@@ -61,6 +124,7 @@ class _NowPlayingPanelState extends State<NowPlayingPanel> {
 
   @override
   void dispose() {
+    _lyricsTracker.dispose();
     widget.coordinator.removeListener(_onCoordinatorChanged);
     super.dispose();
   }
@@ -79,6 +143,7 @@ class _NowPlayingPanelState extends State<NowPlayingPanel> {
           _loadedSongId = null;
           _lyrics = null;
           _loadingLyrics = false;
+          _lyricsTracker.setLineCount(0);
         });
       }
       return;
@@ -92,6 +157,7 @@ class _NowPlayingPanelState extends State<NowPlayingPanel> {
     setState(() {
       _loadingLyrics = true;
       _lyrics = null;
+      _lyricsTracker.setLineCount(0);
     });
 
     try {
@@ -100,6 +166,7 @@ class _NowPlayingPanelState extends State<NowPlayingPanel> {
         setState(() {
           _lyrics = fetched;
           _loadingLyrics = false;
+          _lyricsTracker.setLineCount(fetched.lines.length);
         });
       }
     } catch (_) {
@@ -112,6 +179,7 @@ class _NowPlayingPanelState extends State<NowPlayingPanel> {
             lines: const [],
           );
           _loadingLyrics = false;
+          _lyricsTracker.setLineCount(0);
         });
       }
     }
@@ -183,9 +251,12 @@ class _NowPlayingPanelState extends State<NowPlayingPanel> {
             ),
           ),
           Expanded(
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-              children: [
+            child: NotificationListener<UserScrollNotification>(
+              onNotification: _lyricsTracker.handleUserScroll,
+              child: ListView(
+                controller: _lyricsTracker.scrollController,
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                children: [
                 AspectRatio(
                   aspectRatio: 1,
                   child: LayoutBuilder(
@@ -215,15 +286,13 @@ class _NowPlayingPanelState extends State<NowPlayingPanel> {
                   children: [
                     Expanded(
                       child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           InkWell(
                             onTap: () =>
                                 widget.onNavigate(MusicPageRoute.album(song.albumId)),
-                            child: Text(
+                            child: HermesMarqueeText(
                               song.title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
                               style: TextStyle(
                                 fontSize: 20,
                                 fontWeight: FontWeight.w800,
@@ -266,7 +335,10 @@ class _NowPlayingPanelState extends State<NowPlayingPanel> {
                     _UnderlineTabButton(
                       label: 'Lyrics',
                       selected: _tab == NowPlayingTab.lyrics,
-                      onTap: () => setState(() => _tab = NowPlayingTab.lyrics),
+                      onTap: () {
+                        _lyricsTracker.resumeNow();
+                        setState(() => _tab = NowPlayingTab.lyrics);
+                      },
                     ),
                   ],
                 ),
@@ -326,6 +398,7 @@ class _NowPlayingPanelState extends State<NowPlayingPanel> {
                   ),
                 ),
               ],
+            ),
             ),
           ),
         ],
@@ -567,6 +640,10 @@ class _NowPlayingPanelState extends State<NowPlayingPanel> {
           activeIndex = i;
         }
       }
+      _lyricsTracker.scheduleIfNeeded(
+        activeIndex: activeIndex,
+        isMounted: () => mounted,
+      );
     }
 
     return Padding(
@@ -576,12 +653,18 @@ class _NowPlayingPanelState extends State<NowPlayingPanel> {
         children: [
           for (var i = 0; i < lyrics.lines.length; i++)
             Padding(
+              key: i < _lyricsTracker.lineKeys.length
+                  ? _lyricsTracker.lineKeys[i]
+                  : null,
               padding: const EdgeInsets.symmetric(vertical: 4),
               child: InkWell(
                 onTap: lyrics.lines[i].timestampMs != null
-                    ? () => unawaited(
-                        widget.coordinator.seekTo(lyrics.lines[i].timestampMs!),
-                      )
+                    ? () {
+                        _lyricsTracker.resumeNow();
+                        unawaited(
+                          widget.coordinator.seekTo(lyrics.lines[i].timestampMs!),
+                        );
+                      }
                     : null,
                 child: Text(
                   lyrics.lines[i].text,
@@ -751,6 +834,7 @@ class _MobileNowPlayingPageState extends State<MobileNowPlayingPage> {
   String? _loadedSongId;
   SongLyricsModel? _lyrics;
   bool _loadingLyrics = false;
+  final _LyricsAutoScrollTracker _lyricsTracker = _LyricsAutoScrollTracker();
 
   @override
   void initState() {
@@ -771,6 +855,7 @@ class _MobileNowPlayingPageState extends State<MobileNowPlayingPage> {
 
   @override
   void dispose() {
+    _lyricsTracker.dispose();
     widget.coordinator.removeListener(_onCoordinatorChanged);
     super.dispose();
   }
@@ -789,6 +874,7 @@ class _MobileNowPlayingPageState extends State<MobileNowPlayingPage> {
           _loadedSongId = null;
           _lyrics = null;
           _loadingLyrics = false;
+          _lyricsTracker.setLineCount(0);
         });
       }
       return;
@@ -800,6 +886,7 @@ class _MobileNowPlayingPageState extends State<MobileNowPlayingPage> {
       _loadedSongId = songId;
       _loadingLyrics = true;
       _lyrics = null;
+      _lyricsTracker.setLineCount(0);
     });
 
     try {
@@ -808,6 +895,7 @@ class _MobileNowPlayingPageState extends State<MobileNowPlayingPage> {
         setState(() {
           _lyrics = fetched;
           _loadingLyrics = false;
+          _lyricsTracker.setLineCount(fetched.lines.length);
         });
       }
     } catch (_) {
@@ -820,6 +908,7 @@ class _MobileNowPlayingPageState extends State<MobileNowPlayingPage> {
             lines: const [],
           );
           _loadingLyrics = false;
+          _lyricsTracker.setLineCount(0);
         });
       }
     }
@@ -832,8 +921,6 @@ class _MobileNowPlayingPageState extends State<MobileNowPlayingPage> {
     final session = coordinator.session;
     final song = coordinator.currentSong;
     final isPlaying = session?.state == PlaybackState.playing;
-    final queueCount =
-        coordinator.upNext.length + coordinator.upcomingFromSource.length;
     final bgTop =
         Color.lerp(const Color(0xFF050507), tokens.accent, 0.18) ??
         const Color(0xFF14070B);
@@ -910,55 +997,25 @@ class _MobileNowPlayingPageState extends State<MobileNowPlayingPage> {
                         ],
                       ),
                     ),
-                    Stack(
-                      clipBehavior: Clip.none,
-                      children: [
-                        IconButton(
-                          key: const Key('mobile-player-queue-toggle'),
-                          tooltip: _view == _MobilePlayerView.queue
-                              ? 'Back to player'
-                              : 'View queue',
-                          onPressed: () {
-                            setState(() {
-                              _view = _view == _MobilePlayerView.queue
-                                  ? _MobilePlayerView.player
-                                  : _MobilePlayerView.queue;
-                            });
-                          },
-                          icon: Icon(
-                            Icons.queue_music_rounded,
-                            size: 22,
-                            color: _view == _MobilePlayerView.queue
-                                ? tokens.accent
-                                : tokens.text,
-                          ),
-                        ),
-                        if (queueCount > 0)
-                          Positioned(
-                            right: 6,
-                            top: 6,
-                            child: IgnorePointer(
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 4,
-                                  vertical: 1,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: tokens.accent,
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Text(
-                                  '$queueCount',
-                                  style: TextStyle(
-                                    fontSize: 9,
-                                    fontWeight: FontWeight.w800,
-                                    color: tokens.accentInk,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                      ],
+                    IconButton(
+                      key: const Key('mobile-player-queue-toggle'),
+                      tooltip: _view == _MobilePlayerView.queue
+                          ? 'Back to player'
+                          : 'View queue',
+                      onPressed: () {
+                        setState(() {
+                          _view = _view == _MobilePlayerView.queue
+                              ? _MobilePlayerView.player
+                              : _MobilePlayerView.queue;
+                        });
+                      },
+                      icon: Icon(
+                        Icons.queue_music_rounded,
+                        size: 22,
+                        color: _view == _MobilePlayerView.queue
+                            ? tokens.accent
+                            : tokens.text,
+                      ),
                     ),
                   ],
                 ),
@@ -1068,7 +1125,7 @@ class _MobileNowPlayingPageState extends State<MobileNowPlayingPage> {
                       children: [
                         Expanded(
                           child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
                               InkWell(
                                 onTap: song.albumId.isNotEmpty
@@ -1076,10 +1133,8 @@ class _MobileNowPlayingPageState extends State<MobileNowPlayingPage> {
                                           MusicPageRoute.album(song.albumId),
                                         )
                                     : null,
-                                child: Text(
+                                child: HermesMarqueeText(
                                   song.title,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
                                     fontSize: 22,
                                     fontWeight: FontWeight.w800,
@@ -1095,10 +1150,8 @@ class _MobileNowPlayingPageState extends State<MobileNowPlayingPage> {
                                           MusicPageRoute.artist(song.artistId),
                                         )
                                     : null,
-                                child: Text(
+                                child: HermesMarqueeText(
                                   song.artistName,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
                                     fontSize: 15,
                                     color: tokens.text2,
@@ -1308,9 +1361,12 @@ class _MobileNowPlayingPageState extends State<MobileNowPlayingPage> {
                         IconButton(
                           key: const Key('mobile-player-lyrics-toggle'),
                           tooltip: 'Lyrics',
-                          onPressed: () => setState(
-                            () => _view = _MobilePlayerView.lyrics,
-                          ),
+                          onPressed: () {
+                            _lyricsTracker.resumeNow();
+                            setState(
+                              () => _view = _MobilePlayerView.lyrics,
+                            );
+                          },
                           icon: Icon(
                             Icons.lyrics_outlined,
                             size: 20,
@@ -1502,6 +1558,10 @@ class _MobileNowPlayingPageState extends State<MobileNowPlayingPage> {
           activeIndex = i;
         }
       }
+      _lyricsTracker.scheduleIfNeeded(
+        activeIndex: activeIndex,
+        isMounted: () => mounted,
+      );
     }
 
     return Container(
@@ -1509,38 +1569,51 @@ class _MobileNowPlayingPageState extends State<MobileNowPlayingPage> {
       child: Column(
         children: [
           Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
-              itemCount: lyrics.lines.length,
-              itemBuilder: (_, i) {
-                final line = lyrics.lines[i];
-                final active = i == activeIndex;
-                return InkWell(
-                  onTap: line.timestampMs != null
-                      ? () => unawaited(
-                            widget.coordinator.seekTo(line.timestampMs!),
-                          )
-                      : null,
-                  borderRadius: BorderRadius.circular(8),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 8,
-                      horizontal: 4,
-                    ),
-                    child: Text(
-                      line.text,
-                      style: TextStyle(
-                        fontSize: active ? 20 : 17,
-                        height: 1.35,
-                        fontWeight: FontWeight.w700,
-                        color: !lyrics.isSynced || active
-                            ? tokens.text
-                            : tokens.text3,
+            child: NotificationListener<UserScrollNotification>(
+              onNotification: _lyricsTracker.handleUserScroll,
+              child: SingleChildScrollView(
+                controller: _lyricsTracker.scrollController,
+                padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    for (var i = 0; i < lyrics.lines.length; i++)
+                      InkWell(
+                        key: i < _lyricsTracker.lineKeys.length
+                            ? _lyricsTracker.lineKeys[i]
+                            : null,
+                        onTap: lyrics.lines[i].timestampMs != null
+                            ? () {
+                                _lyricsTracker.resumeNow();
+                                unawaited(
+                                  widget.coordinator.seekTo(
+                                    lyrics.lines[i].timestampMs!,
+                                  ),
+                                );
+                              }
+                            : null,
+                        borderRadius: BorderRadius.circular(8),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            vertical: 8,
+                            horizontal: 4,
+                          ),
+                          child: Text(
+                            lyrics.lines[i].text,
+                            style: TextStyle(
+                              fontSize: i == activeIndex ? 20 : 17,
+                              height: 1.35,
+                              fontWeight: FontWeight.w700,
+                              color: !lyrics.isSynced || i == activeIndex
+                                  ? tokens.text
+                                  : tokens.text3,
+                            ),
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
-                );
-              },
+                  ],
+                ),
+              ),
             ),
           ),
           Padding(

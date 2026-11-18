@@ -84,6 +84,7 @@ class CinemaService {
     required VideoQualityPreset quality,
     int audioStreamIndex = 1,
     int startSeconds = 0,
+    String? clientSession,
   }) {
     if (quality == VideoQualityPreset.directPlay) {
       return baseUri.resolve('/api/v1/streams/$mediaSourceId/direct').replace(
@@ -96,10 +97,32 @@ class CinemaService {
       'ticket': ticket,
       'audioStreamIndex': audioStreamIndex.toString(),
       if (startSeconds > 0) 'startSeconds': startSeconds.toString(),
+      if (clientSession != null && clientSession.isNotEmpty)
+        'clientSession': clientSession,
     };
     return baseUri
         .resolve('/api/v1/streams/$mediaSourceId/video/master.m3u8')
         .replace(queryParameters: params);
+  }
+
+  Future<void> stopClientHlsSessions({
+    required String mediaSourceId,
+    required String clientSession,
+    required String ticket,
+  }) async {
+    if (clientSession.isEmpty || ticket.isEmpty) {
+      return;
+    }
+    try {
+      final uri = baseUri
+          .resolve(
+            '/api/v1/streams/$mediaSourceId/hls/by-client/${Uri.encodeComponent(clientSession)}',
+          )
+          .replace(queryParameters: {'ticket': ticket});
+      await httpClient.delete(uri, headers: _authHeaders);
+    } catch (_) {
+      // Best-effort cleanup when closing the video player.
+    }
   }
 
   Uri buildSubtitleVttUri({

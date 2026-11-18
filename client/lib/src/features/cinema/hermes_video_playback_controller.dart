@@ -114,6 +114,7 @@ class MediaKitVideoPlaybackController implements HermesVideoPlaybackController {
   bool _propertiesApplied = false;
   bool _mediaLoaded = false;
   bool _disposed = false;
+  int _openGeneration = 0;
 
   @override
   bool get hasVideoOutput => true;
@@ -206,8 +207,11 @@ class MediaKitVideoPlaybackController implements HermesVideoPlaybackController {
     }
   }
 
-  Future<void> _syncPendingSubtitle() async {
+  Future<void> _syncPendingSubtitle([int? expectedGeneration]) async {
     if (_disposed || !_mediaLoaded) return;
+    if (expectedGeneration != null && expectedGeneration != _openGeneration) {
+      return;
+    }
     final desired = _desiredSubtitleUri;
     if (desired == _appliedSubtitleUri) return;
 
@@ -236,6 +240,7 @@ class MediaKitVideoPlaybackController implements HermesVideoPlaybackController {
     bool autoPlay = true,
   }) async {
     if (_disposed) return;
+    final gen = ++_openGeneration;
     _mediaLoaded = false;
     _appliedSubtitleUri = null;
     _desiredSubtitleUri = subtitleUri;
@@ -243,6 +248,7 @@ class MediaKitVideoPlaybackController implements HermesVideoPlaybackController {
     _desiredSubtitleLanguage = subtitleLanguage;
 
     await _ensureMpvProperties();
+    if (_disposed || gen != _openGeneration) return;
     await _player.open(
       Media(
         streamUri.toString(),
@@ -252,8 +258,9 @@ class MediaKitVideoPlaybackController implements HermesVideoPlaybackController {
       ),
       play: autoPlay,
     );
+    if (_disposed || gen != _openGeneration) return;
     if (_mediaLoaded) {
-      await _syncPendingSubtitle();
+      await _syncPendingSubtitle(gen);
     }
   }
 
