@@ -8,15 +8,33 @@ namespace Hermes.Infrastructure.Media;
 
 public sealed class FfmpegTranscodeSessionManager : ITranscodeSessionManager, IAsyncDisposable, IDisposable
 {
+    internal delegate Process? HlsProcessLauncher(
+        string sourceFilePath,
+        VideoQualityPreset quality,
+        int audioStreamIndex,
+        long startSeconds,
+        string segmentDir,
+        string playlistPath,
+        HardwareAccelerationMode hardwareAcceleration);
+
     private readonly string _transcodeRoot;
+    private readonly HlsProcessLauncher _launchHlsProcess;
     private readonly Lock _gate = new();
     private readonly Dictionary<Guid, ActiveSession> _sessions = [];
     private int _activeAudioTranscodes;
 
     public FfmpegTranscodeSessionManager(string transcodeRootDirectory)
+        : this(transcodeRootDirectory, null)
+    {
+    }
+
+    internal FfmpegTranscodeSessionManager(
+        string transcodeRootDirectory,
+        HlsProcessLauncher? launchHlsProcess)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(transcodeRootDirectory);
         _transcodeRoot = Path.GetFullPath(transcodeRootDirectory);
+        _launchHlsProcess = launchHlsProcess ?? TryLaunchHlsFfmpeg;
     }
 
     public async Task<TranscodeSessionLease?> TryStartVideoHlsSessionAsync(
@@ -28,21 +46,70 @@ public sealed class FfmpegTranscodeSessionManager : ITranscodeSessionManager, IA
         long startSeconds,
         int maxConcurrentSlots,
         CancellationToken cancellationToken,
-        HardwareAccelerationMode hardwareAcceleration = HardwareAccelerationMode.None)
+        HardwareAccelerationMode hardwareAcceleration = HardwareAccelerationMode.None,
+        string? clientSession = null)
     {
         if (maxConcurrentSlots <= 0 || !File.Exists(sourceFilePath))
         {
             return null;
         }
 
+        var normalizedClientSession = string.IsNullOrWhiteSpace(clientSession) ? null : clientSession.Trim();
         var sessionId = Guid.NewGuid();
         var segmentDir = Path.Combine(_transcodeRoot, sessionId.ToString("N"));
         var playlistPath = Path.Combine(segmentDir, "index.m3u8");
+        var now = DateTimeOffset.UtcNow;
+        var evictedSessions = new List<ActiveSession>();
 
         lock (_gate)
         {
+            foreach (var existing in _sessions.Values)
+            {
+                if (existing.UserId == userId &&
+                    existing.MediaSourceId == mediaSourceId &&
+                    existing.Quality == quality &&
+                    existing.AudioStreamIndex == audioStreamIndex &&
+                    existing.StartSeconds == startSeconds &&
+                    string.Equals(existing.ClientSession, normalizedClientSession, StringComparison.Ordinal) &&
+                    IsReusableSession(existing, now))
+                {
+                    var existingPlaylist = Path.Combine(existing.SegmentDirectory, "index.m3u8");
+                    if (File.Exists(existingPlaylist))
+                    {
+                        _sessions[existing.SessionId] = existing with { LastAccessedUtc = now };
+                        return new TranscodeSessionLease(
+                            existing.SessionId,
+                            existingPlaylist,
+                            existing.SegmentDirectory);
+                    }
+                }
+            }
+
+            foreach (var existing in _sessions.Values)
+            {
+                var sameClientPrior = normalizedClientSession is not null &&
+                                      existing.UserId == userId &&
+                                      string.Equals(existing.ClientSession, normalizedClientSession, StringComparison.Ordinal);
+                var staleExited = (existing.Process is null || HasExitedSafe(existing.Process)) &&
+                                  (now - existing.LastAccessedUtc) > TimeSpan.FromMinutes(2);
+                if (sameClientPrior || staleExited)
+                {
+                    evictedSessions.Add(existing);
+                }
+            }
+
+            foreach (var evicted in evictedSessions)
+            {
+                _sessions.Remove(evicted.SessionId);
+            }
+
             if (_sessions.Count >= maxConcurrentSlots)
             {
+                foreach (var evicted in evictedSessions)
+                {
+                    CleanupSessionResources(evicted);
+                }
+
                 return null;
             }
 
@@ -50,16 +117,26 @@ public sealed class FfmpegTranscodeSessionManager : ITranscodeSessionManager, IA
                 sessionId,
                 userId,
                 mediaSourceId,
+                quality,
+                audioStreamIndex,
+                startSeconds,
+                normalizedClientSession,
                 segmentDir,
                 quality.ToString(),
-                DateTimeOffset.UtcNow,
+                now,
+                now,
                 null);
+        }
+
+        foreach (var evicted in evictedSessions)
+        {
+            CleanupSessionResources(evicted);
         }
 
         try
         {
             Directory.CreateDirectory(segmentDir);
-            var process = TryLaunchHlsFfmpeg(sourceFilePath, quality, audioStreamIndex, startSeconds, segmentDir, playlistPath, hardwareAcceleration);
+            var process = _launchHlsProcess(sourceFilePath, quality, audioStreamIndex, startSeconds, segmentDir, playlistPath, hardwareAcceleration);
 
             lock (_gate)
             {
@@ -89,7 +166,7 @@ public sealed class FfmpegTranscodeSessionManager : ITranscodeSessionManager, IA
                 hardwareAcceleration != HardwareAccelerationMode.None)
             {
                 process?.Dispose();
-                process = TryLaunchHlsFfmpeg(
+                process = _launchHlsProcess(
                     sourceFilePath,
                     quality,
                     audioStreamIndex,
@@ -156,6 +233,34 @@ public sealed class FfmpegTranscodeSessionManager : ITranscodeSessionManager, IA
         return Task.CompletedTask;
     }
 
+    public Task StopClientSessionsAsync(Guid userId, string clientSession, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(clientSession))
+        {
+            return Task.CompletedTask;
+        }
+
+        var normalized = clientSession.Trim();
+        List<ActiveSession> toStop;
+        lock (_gate)
+        {
+            toStop = _sessions.Values
+                .Where(s => s.UserId == userId && string.Equals(s.ClientSession, normalized, StringComparison.Ordinal))
+                .ToList();
+            foreach (var session in toStop)
+            {
+                _sessions.Remove(session.SessionId);
+            }
+        }
+
+        foreach (var session in toStop)
+        {
+            CleanupSessionResources(session);
+        }
+
+        return Task.CompletedTask;
+    }
+
     public string? ResolveHlsAssetPath(Guid sessionId, string fileName)
     {
         if (string.IsNullOrWhiteSpace(fileName) || Path.GetFileName(fileName) != fileName)
@@ -170,10 +275,14 @@ public sealed class FfmpegTranscodeSessionManager : ITranscodeSessionManager, IA
             return null;
         }
 
-        string? segmentDir;
+        string? segmentDir = null;
         lock (_gate)
         {
-            segmentDir = _sessions.TryGetValue(sessionId, out var session) ? session.SegmentDirectory : null;
+            if (_sessions.TryGetValue(sessionId, out var session))
+            {
+                _sessions[sessionId] = session with { LastAccessedUtc = DateTimeOffset.UtcNow };
+                segmentDir = session.SegmentDirectory;
+            }
         }
 
         if (segmentDir is null)
@@ -383,10 +492,14 @@ public sealed class FfmpegTranscodeSessionManager : ITranscodeSessionManager, IA
                     args.Add("veryfast");
                     args.Add("-crf");
                     args.Add("22");
+                    args.Add("-sc_threshold");
+                    args.Add("0");
                     break;
             }
         }
 
+        args.Add("-force_key_frames");
+        args.Add("expr:gte(t,n_forced*2)");
         args.Add("-c:a");
         args.Add("aac");
         args.Add("-ac");
@@ -531,12 +644,54 @@ public sealed class FfmpegTranscodeSessionManager : ITranscodeSessionManager, IA
         }
     }
 
+    private static bool HasExitedSafe(Process process)
+    {
+        try
+        {
+            return process.HasExited;
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    private static bool IsReusableSession(ActiveSession session, DateTimeOffset now)
+    {
+        if (session.Process is not null && !HasExitedSafe(session.Process))
+        {
+            return true;
+        }
+
+        if (session.Process is not null)
+        {
+            try
+            {
+                if (session.Process.ExitCode != 0)
+                {
+                    return false;
+                }
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        return (now - session.StartedAtUtc) < TimeSpan.FromSeconds(15);
+    }
+
     private sealed record ActiveSession(
         Guid SessionId,
         Guid UserId,
         Guid MediaSourceId,
+        VideoQualityPreset Quality,
+        int AudioStreamIndex,
+        long StartSeconds,
+        string? ClientSession,
         string SegmentDirectory,
         string QualityLabel,
         DateTimeOffset StartedAtUtc,
+        DateTimeOffset LastAccessedUtc,
         Process? Process);
 }

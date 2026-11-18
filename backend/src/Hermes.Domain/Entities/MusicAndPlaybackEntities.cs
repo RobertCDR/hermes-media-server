@@ -272,12 +272,41 @@ public sealed class PlaybackSession
         UpdatedAtUtc = utcNow;
     }
 
-    public void ApplyRemoteTransport(PlaybackState state, int? currentIndex, long? positionMs, DateTimeOffset utcNow, RepeatMode? repeatMode = null, bool? shuffle = null, double? volume = null)
+    public void ApplyRemoteTransport(
+        PlaybackState state,
+        int? currentIndex,
+        long? positionMs,
+        DateTimeOffset utcNow,
+        RepeatMode? repeatMode = null,
+        bool? shuffle = null,
+        double? volume = null,
+        IReadOnlyList<Guid>? queueSongIds = null,
+        string? callerDeviceId = null,
+        string? callerDeviceName = null)
     {
+        if (queueSongIds is { Count: > 0 })
+        {
+            QueueSongIds = [.. queueSongIds];
+        }
+
         State = state;
         if (currentIndex is int idx && QueueSongIds.Length > 0)
         {
             CurrentIndex = Math.Clamp(idx, 0, QueueSongIds.Length - 1);
+        }
+        else if (QueueSongIds.Length > 0)
+        {
+            CurrentIndex = Math.Clamp(CurrentIndex, 0, QueueSongIds.Length - 1);
+        }
+
+        if (ActiveRendererDeviceId is null &&
+            state == PlaybackState.Playing &&
+            !string.IsNullOrWhiteSpace(callerDeviceId))
+        {
+            ActiveRendererDeviceId = callerDeviceId;
+            ActiveRendererDeviceName = string.IsNullOrWhiteSpace(callerDeviceName)
+                ? "Hermes Client"
+                : callerDeviceName;
         }
 
         if (positionMs is long pos)

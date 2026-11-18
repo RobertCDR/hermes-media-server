@@ -84,7 +84,11 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<LibraryWatcherServ
 builder.Services.AddSingleton<IDevicePresenceRegistry, InMemoryDevicePresenceRegistry>();
 builder.Services.AddSingleton<PlaybackSessionLockProvider>();
 builder.Services.AddScoped<PlaybackConnectService>();
-builder.Services.AddSignalR();
+builder.Services.AddSignalR(options =>
+{
+    options.KeepAliveInterval = TimeSpan.FromSeconds(5);
+    options.ClientTimeoutInterval = TimeSpan.FromSeconds(15);
+});
 
 builder.Services.AddDbContext<HermesDbContext>((sp, options) =>
 {

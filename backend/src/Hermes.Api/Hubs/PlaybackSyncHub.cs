@@ -79,8 +79,13 @@ public sealed class PlaybackSyncHub(
 
     public async Task<PlaybackSessionDto> SendTransportCommand(RemoteTransportCommand command)
     {
-        var (userId, _, _, _) = GetCallerIdentity();
-        var updated = await connectService.ApplyTransportAsync(userId, command, Context.ConnectionAborted);
+        var (userId, deviceId, deviceName, _) = GetCallerIdentity();
+        var updated = await connectService.ApplyTransportAsync(
+            userId,
+            command,
+            Context.ConnectionAborted,
+            callerDeviceId: deviceId,
+            callerDeviceName: deviceName);
 
         await Clients.Group(UserGroupName(userId))
             .SendAsync("SessionStateUpdated", updated, Context.ConnectionAborted);

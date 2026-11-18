@@ -1,6 +1,7 @@
 using FluentAssertions;
 using Hermes.Domain.Common;
 using Hermes.Domain.Entities;
+using Hermes.Domain.Enums;
 using Xunit;
 
 namespace Hermes.UnitTests.Domain;
@@ -73,5 +74,46 @@ public class ParityDomainTests
         session.ActiveRendererDeviceId.Should().Be("dev-b");
         session.PositionMs.Should().Be(47_500);
         session.Version.Should().Be(initialVersion + 2);
+    }
+
+    [Fact]
+    public void PlaybackSession_ApplyRemoteTransport_ReplacesShuffledQueueAtomically_AndClaimsNullRendererOnPlay()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var s1 = Guid.NewGuid();
+        var s2 = Guid.NewGuid();
+        var s3 = Guid.NewGuid();
+        var session = PlaybackSession.CreateForUser(Guid.NewGuid());
+        session.StartPlayback("dev-pc", "Windows PC", [s1, s2, s3], 0, now);
+
+        session.ApplyRemoteTransport(
+            PlaybackState.Playing,
+            currentIndex: 0,
+            positionMs: 12_000,
+            now.AddSeconds(5),
+            shuffle: true,
+            queueSongIds: [s2, s3, s1]);
+
+        session.Shuffle.Should().BeTrue();
+        session.QueueSongIds.Should().Equal(s2, s3, s1);
+        session.CurrentIndex.Should().Be(0);
+        session.CurrentSongId.Should().Be(s2);
+        session.PositionMs.Should().Be(12_000);
+        session.ActiveRendererDeviceId.Should().Be("dev-pc");
+
+        session.HandleDeviceDisconnected("dev-pc", now.AddSeconds(10)).Should().BeTrue();
+        session.ActiveRendererDeviceId.Should().BeNull();
+
+        session.ApplyRemoteTransport(
+            PlaybackState.Playing,
+            currentIndex: null,
+            positionMs: null,
+            now.AddSeconds(12),
+            callerDeviceId: "dev-phone",
+            callerDeviceName: "Honor Phone");
+
+        session.ActiveRendererDeviceId.Should().Be("dev-phone");
+        session.ActiveRendererDeviceName.Should().Be("Honor Phone");
+        session.State.Should().Be(PlaybackState.Playing);
     }
 }
