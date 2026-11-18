@@ -129,7 +129,7 @@ public sealed record RemoteTransportCommand(
     bool? Shuffle = null,
     double? Volume = null);
 
-public sealed record TransferOutputCommand(string TargetDeviceId);
+public sealed record TransferOutputCommand(string TargetDeviceId, long? PositionMs = null);
 
 public sealed record ProgressHeartbeatCommand(long PositionMs);
 

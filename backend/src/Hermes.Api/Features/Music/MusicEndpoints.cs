@@ -496,6 +496,7 @@ public static class MusicEndpoints
 
     internal static IQueryable<Song> IncludeSongDetails(this IQueryable<Song> query) =>
         query
+            .AsSplitQuery()
             .Include(s => s.Artist)
             .Include(s => s.Album)
             .Include(s => s.SongArtists)

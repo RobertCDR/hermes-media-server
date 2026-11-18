@@ -304,13 +304,18 @@ public sealed class PlaybackSession
         UpdatedAtUtc = utcNow;
     }
 
-    public void TransferOutput(string targetDeviceId, string targetDeviceName, DateTimeOffset utcNow)
+    public void TransferOutput(string targetDeviceId, string targetDeviceName, DateTimeOffset utcNow, long? positionMs = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(targetDeviceId);
         ArgumentException.ThrowIfNullOrWhiteSpace(targetDeviceName);
 
         ActiveRendererDeviceId = targetDeviceId;
         ActiveRendererDeviceName = targetDeviceName;
+        if (positionMs is long pos)
+        {
+            PositionMs = Math.Max(0, pos);
+        }
+
         Version++;
         UpdatedAtUtc = utcNow;
     }
@@ -318,6 +323,7 @@ public sealed class PlaybackSession
     public void UpdateProgress(long positionMs, DateTimeOffset utcNow)
     {
         PositionMs = Math.Max(0, positionMs);
+        Version++;
         UpdatedAtUtc = utcNow;
     }
 

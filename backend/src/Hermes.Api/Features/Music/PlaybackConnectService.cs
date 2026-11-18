@@ -119,7 +119,7 @@ public sealed class PlaybackConnectService(
         try
         {
             var session = await EnsureSessionAsync(userId, cancellationToken);
-            session.TransferOutput(target.DeviceId, target.DeviceName, timeProvider.GetUtcNow());
+            session.TransferOutput(target.DeviceId, target.DeviceName, timeProvider.GetUtcNow(), command.PositionMs);
             await db.SaveChangesAsync(cancellationToken);
             return MapSession(session);
         }

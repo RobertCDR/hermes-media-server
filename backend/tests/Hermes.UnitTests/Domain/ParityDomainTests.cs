@@ -56,4 +56,22 @@ public class ParityDomainTests
         list.Name.Should().Be("Modern Classics");
         list.Description.Should().BeNull();
     }
+
+    [Fact]
+    public void PlaybackSession_UpdateProgressAndTransferOutput_IncrementVersionAndPreservePosition()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var session = PlaybackSession.CreateForUser(Guid.NewGuid());
+        session.StartPlayback("dev-a", "Phone", [Guid.NewGuid()], 0, now);
+        var initialVersion = session.Version;
+
+        session.UpdateProgress(45_000, now.AddSeconds(5));
+        session.PositionMs.Should().Be(45_000);
+        session.Version.Should().Be(initialVersion + 1);
+
+        session.TransferOutput("dev-b", "Windows", now.AddSeconds(6), positionMs: 47_500);
+        session.ActiveRendererDeviceId.Should().Be("dev-b");
+        session.PositionMs.Should().Be(47_500);
+        session.Version.Should().Be(initialVersion + 2);
+    }
 }
