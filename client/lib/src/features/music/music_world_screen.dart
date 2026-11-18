@@ -28,12 +28,14 @@ class MusicWorldScreen extends StatefulWidget {
     required this.coordinator,
     this.navigationController,
     this.reduceMotion = false,
+    this.externalMobileNav = false,
   });
 
   final MusicService musicService;
   final MusicPlaybackCoordinator coordinator;
   final MusicNavigationController? navigationController;
   final bool reduceMotion;
+  final bool externalMobileNav;
 
   @override
   State<MusicWorldScreen> createState() => _MusicWorldScreenState();
@@ -89,12 +91,17 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
       _loading = false;
     }
     widget.coordinator.addListener(_onCoordinatorChanged);
-    widget.navigationController?.onRequestRoute = _navigate;
+    _attachNavigationController(widget.navigationController);
     final pending = widget.navigationController?.takePendingRoute();
     if (pending != null && pending != _currentRoute) {
       _history.add(pending);
       _historyIdx = _history.length - 1;
     }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _publishCurrentRoute();
+      }
+    });
     _scrollController.addListener(_onScroll);
     unawaited(_performLoad(silent: !_loading));
   }
@@ -107,18 +114,19 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
       widget.coordinator.addListener(_onCoordinatorChanged);
     }
     if (oldWidget.navigationController != widget.navigationController) {
-      if (oldWidget.navigationController?.onRequestRoute == _navigate) {
-        oldWidget.navigationController?.onRequestRoute = null;
-      }
-      widget.navigationController?.onRequestRoute = _navigate;
+      _detachNavigationController(oldWidget.navigationController);
+      _attachNavigationController(widget.navigationController);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _publishCurrentRoute();
+        }
+      });
     }
   }
 
   @override
   void dispose() {
-    if (widget.navigationController?.onRequestRoute == _navigate) {
-      widget.navigationController?.onRequestRoute = null;
-    }
+    _detachNavigationController(widget.navigationController);
     widget.coordinator.removeListener(_onCoordinatorChanged);
     _scrollController
       ..removeListener(_onScroll)
@@ -126,6 +134,58 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
     _searchFocusNode.dispose();
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _attachNavigationController(MusicNavigationController? controller) {
+    if (controller == null) return;
+    controller.onRequestRoute = _navigate;
+    controller.onHandleBack = _handleBack;
+  }
+
+  void _detachNavigationController(MusicNavigationController? controller) {
+    if (controller == null) return;
+    if (controller.onRequestRoute == _navigate) {
+      controller.onRequestRoute = null;
+    }
+    if (controller.onHandleBack == _handleBack) {
+      controller.onHandleBack = null;
+    }
+  }
+
+  void _publishCurrentRoute() {
+    final controller = widget.navigationController;
+    if (controller != null &&
+        controller.currentRouteNotifier.value != _currentRoute) {
+      controller.currentRouteNotifier.value = _currentRoute;
+    }
+  }
+
+  bool _handleBack() {
+    if (!mounted) return false;
+    if (_searchQuery.isNotEmpty) {
+      _searchController.clear();
+      setState(() => _searchQuery = '');
+      return true;
+    }
+    if (_historyIdx > 0) {
+      _goBack();
+      return true;
+    }
+    if (_currentRoute.kind != MusicPageKind.home) {
+      setState(() {
+        _hoverTint = null;
+        _history
+          ..clear()
+          ..add(const MusicPageRoute.home());
+        _historyIdx = 0;
+      });
+      _publishCurrentRoute();
+      if (_scrollController.hasClients) {
+        _scrollController.jumpTo(0);
+      }
+      return true;
+    }
+    return false;
   }
 
   void _onCoordinatorChanged() {
@@ -233,6 +293,7 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
         _historyIdx = _history.length - 1;
       }
     });
+    _publishCurrentRoute();
     if (_scrollController.hasClients) {
       _scrollController.jumpTo(0);
     }
@@ -249,6 +310,7 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
       _hoverTint = null;
       _historyIdx--;
     });
+    _publishCurrentRoute();
     if (_scrollController.hasClients) {
       _scrollController.jumpTo(0);
     }
@@ -625,6 +687,11 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final wide = constraints.maxWidth >= 760;
+        final useExternalMobile = !wide && widget.externalMobileNav;
+        final isMobileMainTab = useExternalMobile &&
+            (_currentRoute.kind == MusicPageKind.home ||
+                _currentRoute.kind == MusicPageKind.search ||
+                _currentRoute.kind == MusicPageKind.library);
 
         final mainSurface = Container(
           decoration: BoxDecoration(
@@ -660,24 +727,35 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
               ),
               Column(
                 children: [
-                  _MusicTopbar(
-                    canGoBack: _historyIdx > 0,
-                    scrolled: _scrolled,
-                    tint: tint,
-                    controller: _searchController,
-                    focusNode: _searchFocusNode,
-                    hasQuery: _searchQuery.isNotEmpty,
-                    onBack: _goBack,
-                    onQueryChanged: (val) => setState(() => _searchQuery = val.trim()),
-                    onClearSearch: () {
-                      _searchController.clear();
-                      setState(() => _searchQuery = '');
-                    },
-                  ),
-                  if (!wide)
-                    _MusicMobileNavBar(
-                      currentKind: _currentRoute.kind,
-                      onSelect: _navigate,
+                  if (!useExternalMobile) ...[
+                    _MusicTopbar(
+                      canGoBack: _historyIdx > 0,
+                      scrolled: _scrolled,
+                      tint: tint,
+                      controller: _searchController,
+                      focusNode: _searchFocusNode,
+                      hasQuery: _searchQuery.isNotEmpty,
+                      onBack: _goBack,
+                      onQueryChanged: (val) =>
+                          setState(() => _searchQuery = val.trim()),
+                      onClearSearch: () {
+                        _searchController.clear();
+                        setState(() => _searchQuery = '');
+                      },
+                    ),
+                    if (!wide)
+                      _MusicMobileNavBar(
+                        currentKind: _currentRoute.kind,
+                        onSelect: _navigate,
+                      ),
+                  ] else if (!isMobileMainTab)
+                    _MusicMobileSubpageBar(
+                      title: _routeTitle(_currentRoute),
+                      onBack: () {
+                        if (!_handleBack()) {
+                          _navigate(const MusicPageRoute.home());
+                        }
+                      },
                     ),
                   Expanded(
                     child: RefreshIndicator(
@@ -691,7 +769,10 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
                           40,
                         ),
                         children: [
-                          if (_searchQuery.isNotEmpty)
+                          if (useExternalMobile &&
+                              _currentRoute.kind == MusicPageKind.search)
+                            _buildMobileSearchView(context, tokens)
+                          else if (_searchQuery.isNotEmpty)
                             _buildSearchResults(context, tokens)
                           else
                             _buildRouteContent(context, tokens),
@@ -845,6 +926,8 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
     switch (route.kind) {
       case MusicPageKind.home:
         return _buildHome(context, tokens);
+      case MusicPageKind.search:
+        return _buildMobileSearchView(context, tokens);
       case MusicPageKind.albums:
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1189,6 +1272,110 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
     );
   }
 
+  String _routeTitle(MusicPageRoute route) => switch (route.kind) {
+        MusicPageKind.home => 'Home',
+        MusicPageKind.search => 'Search',
+        MusicPageKind.albums => 'Albums',
+        MusicPageKind.artists => 'Artists',
+        MusicPageKind.songs => 'Songs',
+        MusicPageKind.library => 'Your Library',
+        MusicPageKind.liked => 'Liked Songs',
+        MusicPageKind.history => 'Recently played',
+        MusicPageKind.smart => SmartPlaylistKind.values
+            .firstWhere(
+              (k) => k.id == route.targetId,
+              orElse: () => SmartPlaylistKind.recentlyAdded,
+            )
+            .title,
+        MusicPageKind.album => _albums
+                .where((a) => a.id == route.targetId)
+                .firstOrNull
+                ?.title ??
+            'Album',
+        MusicPageKind.artist => _artists
+                .where((a) => a.id == route.targetId)
+                .firstOrNull
+                ?.name ??
+            'Artist',
+        MusicPageKind.playlist => _playlists
+                .where((p) => p.id == route.targetId)
+                .firstOrNull
+                ?.name ??
+            'Playlist',
+      };
+
+  Widget _buildMobileSearchView(
+    BuildContext context,
+    HermesThemeTokens tokens,
+  ) {
+    return Column(
+      key: const Key('music-mobile-search-view'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _ShelfTitle('Search', tokens),
+        const SizedBox(height: 12),
+        HermesSearchPill(
+          inputKey: const Key('music-search-input'),
+          clearKey: const Key('music-search-clear'),
+          controller: _searchController,
+          focusNode: _searchFocusNode,
+          hintText: 'Songs, artists, albums, playlists...',
+          hasQuery: _searchQuery.isNotEmpty,
+          onChanged: (val) => setState(() => _searchQuery = val.trim()),
+          onClear: () {
+            _searchController.clear();
+            setState(() => _searchQuery = '');
+          },
+        ),
+        const SizedBox(height: 20),
+        if (_searchQuery.isNotEmpty)
+          _buildSearchResults(context, tokens)
+        else ...[
+          Text(
+            'Browse your music',
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+              color: tokens.text,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              ActionChip(
+                avatar: Icon(Icons.favorite_rounded, size: 16, color: tokens.accent),
+                label: const Text('Liked Songs'),
+                onPressed: () => _navigate(const MusicPageRoute.liked()),
+              ),
+              ActionChip(
+                avatar: Icon(Icons.music_note_rounded, size: 16, color: tokens.text2),
+                label: const Text('Songs'),
+                onPressed: () => _navigate(const MusicPageRoute.songs()),
+              ),
+              ActionChip(
+                avatar: Icon(Icons.album_rounded, size: 16, color: tokens.text2),
+                label: const Text('Albums'),
+                onPressed: () => _navigate(const MusicPageRoute.albums()),
+              ),
+              ActionChip(
+                avatar: Icon(Icons.person_rounded, size: 16, color: tokens.text2),
+                label: const Text('Artists'),
+                onPressed: () => _navigate(const MusicPageRoute.artists()),
+              ),
+              ActionChip(
+                avatar: Icon(Icons.history_rounded, size: 16, color: tokens.text2),
+                label: const Text('Recently played'),
+                onPressed: () => _navigate(const MusicPageRoute.history()),
+              ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+
   Widget _buildMobileLibraryView(BuildContext context, HermesThemeTokens tokens) {
     final liked = _likedSongs();
     return Column(
@@ -1207,6 +1394,41 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
               label: const Text('New playlist'),
             ),
           ],
+        ),
+        const SizedBox(height: 12),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              ActionChip(
+                key: const Key('music-lib-songs'),
+                avatar: Icon(Icons.music_note_rounded, size: 16, color: tokens.text2),
+                label: const Text('Songs'),
+                onPressed: () => _navigate(const MusicPageRoute.songs()),
+              ),
+              const SizedBox(width: 8),
+              ActionChip(
+                key: const Key('music-lib-albums'),
+                avatar: Icon(Icons.album_rounded, size: 16, color: tokens.text2),
+                label: const Text('Albums'),
+                onPressed: () => _navigate(const MusicPageRoute.albums()),
+              ),
+              const SizedBox(width: 8),
+              ActionChip(
+                key: const Key('music-lib-artists'),
+                avatar: Icon(Icons.person_rounded, size: 16, color: tokens.text2),
+                label: const Text('Artists'),
+                onPressed: () => _navigate(const MusicPageRoute.artists()),
+              ),
+              const SizedBox(width: 8),
+              ActionChip(
+                key: const Key('music-lib-history'),
+                avatar: Icon(Icons.history_rounded, size: 16, color: tokens.text2),
+                label: const Text('History'),
+                onPressed: () => _navigate(const MusicPageRoute.history()),
+              ),
+            ],
+          ),
         ),
         const SizedBox(height: 12),
         _LibraryRowButton(
@@ -2283,6 +2505,51 @@ class _PlaylistNameDialogState extends State<_PlaylistNameDialog> {
           child: Text(widget.confirmLabel),
         ),
       ],
+    );
+  }
+}
+
+class _MusicMobileSubpageBar extends StatelessWidget {
+  const _MusicMobileSubpageBar({
+    required this.title,
+    required this.onBack,
+  });
+
+  final String title;
+  final VoidCallback onBack;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = HermesThemeTokens.of(context);
+    return Container(
+      height: 44,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: tokens.lineSoft)),
+      ),
+      child: Row(
+        children: [
+          IconButton(
+            key: const Key('music-mobile-back-btn'),
+            tooltip: 'Back',
+            onPressed: onBack,
+            icon: Icon(Icons.arrow_back_rounded, size: 20, color: tokens.text),
+          ),
+          const SizedBox(width: 4),
+          Expanded(
+            child: Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                color: tokens.text,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

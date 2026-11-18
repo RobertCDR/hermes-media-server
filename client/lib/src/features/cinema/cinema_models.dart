@@ -706,3 +706,29 @@ Color deriveTitleTint(String title) {
   }
   return _titleTintPalette[hash % _titleTintPalette.length];
 }
+
+enum CinemaMobileTab { home, search, library }
+
+class CinemaNavigationController {
+  CinemaNavigationController({
+    this.onSelectMobileTab,
+    this.onHandleBack,
+  });
+
+  final ValueNotifier<CinemaMobileTab> mobileTabNotifier =
+      ValueNotifier<CinemaMobileTab>(CinemaMobileTab.home);
+
+  void Function(CinemaMobileTab tab)? onSelectMobileTab;
+  bool Function()? onHandleBack;
+
+  void selectMobileTab(CinemaMobileTab tab) {
+    mobileTabNotifier.value = tab;
+    onSelectMobileTab?.call(tab);
+  }
+
+  bool handleBack() => onHandleBack?.call() ?? false;
+
+  void dispose() {
+    mobileTabNotifier.dispose();
+  }
+}

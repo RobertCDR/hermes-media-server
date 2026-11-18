@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:ui' show AppExitResponse;
 import 'package:flutter/foundation.dart'
-    show TargetPlatform, defaultTargetPlatform, kIsWeb;
+    show TargetPlatform, defaultTargetPlatform, kIsWeb, visibleForTesting;
 import 'package:http/http.dart' as http;
 import 'package:material_ui/material_ui.dart';
 import 'src/core/auth/auth_service.dart';
@@ -60,6 +60,7 @@ class HermesApp extends StatefulWidget {
     this.syncClientFactory,
     this.audioEngine,
     this.mediaBridge,
+    @visibleForTesting this.isMobilePlatformOverride,
   });
 
   final SessionStore? sessionStore;
@@ -68,6 +69,7 @@ class HermesApp extends StatefulWidget {
   final HermesSyncClientFactory? syncClientFactory;
   final AudioEngineAdapter? audioEngine;
   final PlatformMediaBridge? mediaBridge;
+  final bool? isMobilePlatformOverride;
 
   @override
   State<HermesApp> createState() => _HermesAppState();
@@ -103,10 +105,17 @@ class _HermesAppState extends State<HermesApp> {
   String? _serverNameOverride;
   MusicPlaybackCoordinator? _musicCoordinator;
   MusicService? _musicService;
-  final ValueNotifier<HermesWorld> _worldNotifier = ValueNotifier<HermesWorld>(
-    HermesWorld.cinema,
-  );
+  bool get _isMobileStartup =>
+      widget.isMobilePlatformOverride ??
+      (!kIsWeb && (Platform.isAndroid || Platform.isIOS));
+
+  late final ValueNotifier<HermesWorld> _worldNotifier =
+      ValueNotifier<HermesWorld>(
+        _isMobileStartup ? HermesWorld.music : HermesWorld.cinema,
+      );
+  late HermesWorld _lastContentWorld = _worldNotifier.value;
   final MusicNavigationController _musicNav = MusicNavigationController();
+  final CinemaNavigationController _cinemaNav = CinemaNavigationController();
   bool _connectPopoverOpen = false;
   List<OnlineDeviceModel> _connectDevices = const [];
   HermesSyncClient? _syncClient;
@@ -181,7 +190,21 @@ class _HermesAppState extends State<HermesApp> {
       );
     }
 
+    _worldNotifier.addListener(_onShellNavChanged);
+    _musicNav.currentRouteNotifier.addListener(_onShellNavChanged);
+    _cinemaNav.mobileTabNotifier.addListener(_onShellNavChanged);
+
     unawaited(_bootstrapApp());
+  }
+
+  void _onShellNavChanged() {
+    final w = _worldNotifier.value;
+    if (w == HermesWorld.music || w == HermesWorld.cinema) {
+      _lastContentWorld = w;
+    }
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   Future<String?> _refreshActiveAccessToken() async {
@@ -273,9 +296,14 @@ class _HermesAppState extends State<HermesApp> {
   @override
   void dispose() {
     _lifecycleListener?.dispose();
+    _worldNotifier.removeListener(_onShellNavChanged);
+    _musicNav.currentRouteNotifier.removeListener(_onShellNavChanged);
+    _cinemaNav.mobileTabNotifier.removeListener(_onShellNavChanged);
     unawaited(_stopSyncClient());
     unawaited(_watchProgressController.close());
     _worldNotifier.dispose();
+    _musicNav.dispose();
+    _cinemaNav.dispose();
     _musicCoordinator?.dispose();
     final audioEngine = _audioEngine;
     if (_ownsAudioEngine && audioEngine is MediaKitAudioEngineAdapter) {
@@ -655,9 +683,46 @@ class _HermesAppState extends State<HermesApp> {
                       tokens: _tokens,
                       rendererBackend: _rendererBackend,
                     );
+                    final activeContentWorld =
+                        (_worldNotifier.value == HermesWorld.music ||
+                                _worldNotifier.value == HermesWorld.cinema)
+                            ? _worldNotifier.value
+                            : _lastContentWorld;
+                    final activeMobileTabIndex =
+                        activeContentWorld == HermesWorld.music
+                            ? switch (_musicNav.currentRouteNotifier.value.kind) {
+                                MusicPageKind.home => 0,
+                                MusicPageKind.search => 1,
+                                _ => 2,
+                              }
+                            : _cinemaNav.mobileTabNotifier.value.index;
 
                     return DualWorldShell(
                       worldNotifier: _worldNotifier,
+                      initialWorld: _isMobileStartup
+                          ? HermesWorld.music
+                          : HermesWorld.cinema,
+                      activeMobileTabIndex: activeMobileTabIndex,
+                      onSelectMobileTab: (idx) {
+                        if (activeContentWorld == HermesWorld.music) {
+                          final target = switch (idx) {
+                            0 => const MusicPageRoute.home(),
+                            1 => const MusicPageRoute.search(),
+                            _ => const MusicPageRoute.library(),
+                          };
+                          _musicNav.navigate(target);
+                        } else {
+                          final tab = CinemaMobileTab
+                              .values[idx.clamp(0, CinemaMobileTab.values.length - 1)];
+                          _cinemaNav.selectMobileTab(tab);
+                        }
+                      },
+                      onHandleBack: () {
+                        if (activeContentWorld == HermesWorld.music) {
+                          return _musicNav.handleBack();
+                        }
+                        return _cinemaNav.handleBack();
+                      },
                       username: session.username,
                       isAdmin: session.isAdmin,
                       serverName: _serverNameOverride ?? endpoint.info.serverName,
@@ -729,12 +794,15 @@ class _HermesAppState extends State<HermesApp> {
                     accountPreferences: _accountPrefs,
                     reduceMotion: _devicePrefs.reduceMotion,
                     watchProgressUpdates: _watchProgressController.stream,
+                    navigationController: _cinemaNav,
+                    externalMobileNav: true,
                   ),
                   musicBuilder: (_) => MusicWorldScreen(
                     musicService: musicService,
                     coordinator: musicCoordinator,
                     navigationController: _musicNav,
                     reduceMotion: _devicePrefs.reduceMotion,
+                    externalMobileNav: true,
                   ),
                   sidePanelBuilder: (_) => AnimatedBuilder(
                     animation: musicCoordinator,

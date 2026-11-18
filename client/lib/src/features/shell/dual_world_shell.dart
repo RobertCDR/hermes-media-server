@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -32,6 +34,9 @@ class DualWorldShell extends StatefulWidget {
     this.onPreviousTrack,
     this.onToggleMute,
     this.initialWorld = HermesWorld.cinema,
+    this.activeMobileTabIndex = 0,
+    this.onSelectMobileTab,
+    this.onHandleBack,
   });
 
   final String username;
@@ -57,6 +62,9 @@ class DualWorldShell extends StatefulWidget {
   final VoidCallback? onPreviousTrack;
   final VoidCallback? onToggleMute;
   final HermesWorld initialWorld;
+  final int activeMobileTabIndex;
+  final ValueChanged<int>? onSelectMobileTab;
+  final bool Function()? onHandleBack;
 
   @override
   State<DualWorldShell> createState() => _DualWorldShellState();
@@ -64,6 +72,7 @@ class DualWorldShell extends StatefulWidget {
 
 class _DualWorldShellState extends State<DualWorldShell> {
   late HermesWorld _world;
+  late HermesWorld _lastContentWorld;
   bool _popoverOpen = false;
   final FocusNode _shellFocusNode = FocusNode();
 
@@ -71,6 +80,10 @@ class _DualWorldShellState extends State<DualWorldShell> {
   void initState() {
     super.initState();
     _world = widget.worldNotifier?.value ?? widget.initialWorld;
+    _lastContentWorld =
+        (_world == HermesWorld.music || _world == HermesWorld.cinema)
+            ? _world
+            : HermesWorld.cinema;
     widget.worldNotifier?.addListener(_syncWorldFromNotifier);
   }
 
@@ -82,6 +95,9 @@ class _DualWorldShellState extends State<DualWorldShell> {
       widget.worldNotifier?.addListener(_syncWorldFromNotifier);
       if (widget.worldNotifier != null) {
         _world = widget.worldNotifier!.value;
+        if (_world == HermesWorld.music || _world == HermesWorld.cinema) {
+          _lastContentWorld = _world;
+        }
       }
     }
   }
@@ -161,6 +177,9 @@ class _DualWorldShellState extends State<DualWorldShell> {
       setState(() {
         _popoverOpen = false;
         _world = target;
+        if (target == HermesWorld.music || target == HermesWorld.cinema) {
+          _lastContentWorld = target;
+        }
       });
     }
   }
@@ -177,6 +196,9 @@ class _DualWorldShellState extends State<DualWorldShell> {
         return;
       }
       _world = world;
+      if (world == HermesWorld.music || world == HermesWorld.cinema) {
+        _lastContentWorld = world;
+      }
       widget.worldNotifier?.value = world;
     });
   }
@@ -191,10 +213,35 @@ class _DualWorldShellState extends State<DualWorldShell> {
       }
       if (widget.settingsBuilder != null) {
         _world = HermesWorld.settings;
+        widget.worldNotifier?.value = HermesWorld.settings;
       } else if (!accountTab) {
         widget.onOpenSettings?.call();
       }
     });
+  }
+
+  void _handleSystemBack() {
+    if (_popoverOpen) {
+      setState(() => _popoverOpen = false);
+      return;
+    }
+    if (_world == HermesWorld.settings || _world == HermesWorld.admin) {
+      _selectWorld(_lastContentWorld);
+      return;
+    }
+    if (widget.onHandleBack?.call() == true) {
+      return;
+    }
+    if (widget.activeMobileTabIndex != 0 && widget.onSelectMobileTab != null) {
+      widget.onSelectMobileTab!(0);
+      return;
+    }
+    final nav = Navigator.maybeOf(context);
+    if (nav != null && nav.canPop()) {
+      nav.pop();
+      return;
+    }
+    unawaited(SystemNavigator.pop());
   }
 
   String get _avatarInitial {
@@ -221,7 +268,14 @@ class _DualWorldShellState extends State<DualWorldShell> {
     final sidePanel = widget.sidePanelBuilder?.call(context);
     final floatingOverlay = widget.floatingOverlayBuilder?.call(context);
 
-    return LayoutBuilder(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) {
+          _handleSystemBack();
+        }
+      },
+      child: LayoutBuilder(
       builder: (context, constraints) {
         final isDesktop = constraints.maxWidth >= 840;
 
@@ -298,19 +352,32 @@ class _DualWorldShellState extends State<DualWorldShell> {
         }
 
         // Mobile / compact viewport
-        final mobileWorlds = <HermesWorld>[
-          HermesWorld.cinema,
-          HermesWorld.music,
-          if (widget.isAdmin) HermesWorld.admin,
-          HermesWorld.settings,
-        ];
-        final selectedIndex = mobileWorlds.indexOf(_world).clamp(0, mobileWorlds.length - 1);
+        final activeContentWorld =
+            (_world == HermesWorld.music || _world == HermesWorld.cinema)
+                ? _world
+                : _lastContentWorld;
+        final showOverlayBack =
+            _world == HermesWorld.settings || _world == HermesWorld.admin;
 
         return Scaffold(
           backgroundColor: tokens.bg,
           body: SafeArea(
             bottom: false,
-            child: _buildActiveWorld(context),
+            child: Column(
+              children: [
+                _MobileTopBar(
+                  activeWorld: _world,
+                  showBack: showOverlayBack,
+                  avatarInitial: _avatarInitial,
+                  onBackFromOverlay: () => _selectWorld(_lastContentWorld),
+                  onSelectMusic: () => _selectWorld(HermesWorld.music),
+                  onSelectCinema: () => _selectWorld(HermesWorld.cinema),
+                  onOpenAccountMenu: () =>
+                      unawaited(_openMobileAccountSheet(context)),
+                ),
+                Expanded(child: _buildActiveWorld(context)),
+              ],
+            ),
           ),
           bottomNavigationBar: Column(
             mainAxisSize: MainAxisSize.min,
@@ -326,32 +393,46 @@ class _DualWorldShellState extends State<DualWorldShell> {
                   backgroundColor: Colors.transparent,
                   surfaceTintColor: Colors.transparent,
                   indicatorColor: tokens.accent.withValues(alpha: 0.16),
-                  selectedIndex: selectedIndex,
+                  selectedIndex: widget.activeMobileTabIndex.clamp(0, 2),
                   labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
                   onDestinationSelected: (index) {
-                    _selectWorld(mobileWorlds[index]);
+                    if (_world == HermesWorld.settings ||
+                        _world == HermesWorld.admin) {
+                      _selectWorld(_lastContentWorld);
+                    }
+                    widget.onSelectMobileTab?.call(index);
                   },
                   destinations: [
                     NavigationDestination(
-                      icon: Icon(Icons.movie_outlined, color: tokens.text3),
-                      selectedIcon: Icon(Icons.movie_rounded, color: tokens.accent),
-                      label: 'Cinema',
-                    ),
-                    NavigationDestination(
-                      icon: Icon(Icons.music_note_outlined, color: tokens.text3),
-                      selectedIcon: Icon(Icons.music_note_rounded, color: tokens.accent),
-                      label: 'Music',
-                    ),
-                    if (widget.isAdmin)
-                      NavigationDestination(
-                        icon: Icon(Icons.dns_outlined, color: tokens.text3),
-                        selectedIcon: Icon(Icons.dns_rounded, color: tokens.accent),
-                        label: 'Server',
+                      icon: Icon(Icons.home_outlined, color: tokens.text3),
+                      selectedIcon: Icon(
+                        Icons.home_rounded,
+                        color: tokens.accent,
                       ),
+                      label: 'Home',
+                    ),
                     NavigationDestination(
-                      icon: Icon(Icons.settings_outlined, color: tokens.text3),
-                      selectedIcon: Icon(Icons.settings_rounded, color: tokens.accent),
-                      label: 'Settings',
+                      icon: Icon(Icons.search_outlined, color: tokens.text3),
+                      selectedIcon: Icon(
+                        Icons.search_rounded,
+                        color: tokens.accent,
+                      ),
+                      label: 'Search',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(
+                        activeContentWorld == HermesWorld.music
+                            ? Icons.library_music_outlined
+                            : Icons.video_library_outlined,
+                        color: tokens.text3,
+                      ),
+                      selectedIcon: Icon(
+                        activeContentWorld == HermesWorld.music
+                            ? Icons.library_music_rounded
+                            : Icons.video_library_rounded,
+                        color: tokens.accent,
+                      ),
+                      label: 'Library',
                     ),
                   ],
                 ),
@@ -360,6 +441,258 @@ class _DualWorldShellState extends State<DualWorldShell> {
           ),
         );
       },
+    ),
+    );
+  }
+
+  Future<void> _openMobileAccountSheet(BuildContext ctx) async {
+    final tokens = HermesThemeTokens.of(ctx);
+    final roleLabel = widget.isAdmin ? 'Owner' : 'Member';
+    final connectionText =
+        widget.endpointLabel != null && widget.endpointLabel!.isNotEmpty
+            ? '${widget.serverName} · ${widget.endpointLabel}'
+            : widget.serverName;
+
+    await showModalBottomSheet<void>(
+      context: ctx,
+      backgroundColor: tokens.surface2,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (sheetCtx) => SafeArea(
+        child: Container(
+          key: const Key('mobile-account-sheet'),
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(10, 4, 10, 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${widget.username} · $roleLabel',
+                      style: TextStyle(
+                        fontFamily: 'Figtree',
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                        color: tokens.text,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      connectionText,
+                      style: TextStyle(
+                        fontFamily: 'Figtree',
+                        fontSize: 12,
+                        color: tokens.text2,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Divider(height: 1, thickness: 1, color: tokens.line),
+              const SizedBox(height: 6),
+              _PopoverActionRow(
+                icon: Icons.settings_outlined,
+                label: 'Settings',
+                onTap: () {
+                  Navigator.of(sheetCtx).pop();
+                  _openSettings(accountTab: false);
+                },
+              ),
+              _PopoverActionRow(
+                icon: Icons.person_outline_rounded,
+                label: 'Account settings',
+                onTap: () {
+                  Navigator.of(sheetCtx).pop();
+                  _openSettings(accountTab: true);
+                },
+              ),
+              if (widget.isAdmin)
+                _PopoverActionRow(
+                  icon: Icons.dns_outlined,
+                  label: 'Server dashboard',
+                  onTap: () {
+                    Navigator.of(sheetCtx).pop();
+                    _selectWorld(HermesWorld.admin);
+                  },
+                ),
+              _PopoverActionRow(
+                icon: Icons.swap_horiz_rounded,
+                label: 'Switch server / Setup UI',
+                onTap: () {
+                  Navigator.of(sheetCtx).pop();
+                  widget.onSwitchServer?.call();
+                },
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Divider(height: 1, thickness: 1, color: tokens.line),
+              ),
+              _PopoverActionRow(
+                icon: Icons.logout_rounded,
+                label: 'Sign out',
+                onTap: () {
+                  Navigator.of(sheetCtx).pop();
+                  widget.onSignOut?.call();
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MobileTopBar extends StatelessWidget {
+  const _MobileTopBar({
+    required this.activeWorld,
+    required this.showBack,
+    required this.avatarInitial,
+    required this.onBackFromOverlay,
+    required this.onSelectMusic,
+    required this.onSelectCinema,
+    required this.onOpenAccountMenu,
+  });
+
+  final HermesWorld activeWorld;
+  final bool showBack;
+  final String avatarInitial;
+  final VoidCallback onBackFromOverlay;
+  final VoidCallback onSelectMusic;
+  final VoidCallback onSelectCinema;
+  final VoidCallback onOpenAccountMenu;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = HermesThemeTokens.of(context);
+    return Container(
+      height: 52,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: tokens.bg,
+        border: Border(bottom: BorderSide(color: tokens.lineSoft)),
+      ),
+      child: Row(
+        children: [
+          if (showBack) ...[
+            IconButton(
+              key: const Key('mobile-overlay-back-btn'),
+              tooltip: 'Back',
+              onPressed: onBackFromOverlay,
+              icon: Icon(
+                Icons.arrow_back_rounded,
+                size: 20,
+                color: tokens.text,
+              ),
+            ),
+            const SizedBox(width: 4),
+          ],
+          Container(
+            key: const Key('mobile-world-pill'),
+            padding: const EdgeInsets.all(3),
+            decoration: BoxDecoration(
+              color: tokens.surface2,
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(color: tokens.line),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _WorldPillIconButton(
+                  buttonKey: const Key('mobile-world-pill-music'),
+                  tooltip: 'Music',
+                  icon: Icons.music_note_rounded,
+                  selected: activeWorld == HermesWorld.music,
+                  onTap: onSelectMusic,
+                ),
+                const SizedBox(width: 2),
+                _WorldPillIconButton(
+                  buttonKey: const Key('mobile-world-pill-cinema'),
+                  tooltip: 'Cinema',
+                  icon: Icons.movie_rounded,
+                  selected: activeWorld == HermesWorld.cinema,
+                  onTap: onSelectCinema,
+                ),
+              ],
+            ),
+          ),
+          const Spacer(),
+          Tooltip(
+            message: 'Account & Server',
+            child: InkWell(
+              key: const Key('mobile-account-btn'),
+              onTap: onOpenAccountMenu,
+              customBorder: const CircleBorder(),
+              child: Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: tokens.surface3,
+                  border: Border.all(color: tokens.line),
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  avatarInitial,
+                  style: TextStyle(
+                    fontFamily: 'Figtree',
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    color: tokens.text,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _WorldPillIconButton extends StatelessWidget {
+  const _WorldPillIconButton({
+    required this.buttonKey,
+    required this.tooltip,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final Key buttonKey;
+  final String tooltip;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = HermesThemeTokens.of(context);
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: selected ? tokens.accent : Colors.transparent,
+        borderRadius: BorderRadius.circular(18),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          key: buttonKey,
+          onTap: onTap,
+          child: SizedBox(
+            width: 38,
+            height: 30,
+            child: Icon(
+              icon,
+              size: 18,
+              color: selected ? tokens.accentInk : tokens.text2,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

@@ -19,9 +19,21 @@ enum _CinemaFilter {
   movies('Movies'),
   series('TV Shows'),
   watchlist('Watchlist'),
-  lists('Lists');
+  lists('Lists'),
+  history('History');
 
   const _CinemaFilter(this.label);
+  final String label;
+}
+
+enum _CinemaLibrarySection {
+  watchlist('Watchlist'),
+  lists('Lists'),
+  movies('Movies'),
+  series('TV Shows'),
+  history('History');
+
+  const _CinemaLibrarySection(this.label);
   final String label;
 }
 
@@ -78,6 +90,8 @@ class CinemaCatalogScreen extends StatefulWidget {
     this.accountPreferences = const HermesAccountPreferences(),
     this.reduceMotion = false,
     this.watchProgressUpdates,
+    this.navigationController,
+    this.externalMobileNav = false,
   });
 
   final CinemaService cinemaService;
@@ -86,6 +100,8 @@ class CinemaCatalogScreen extends StatefulWidget {
   final HermesAccountPreferences accountPreferences;
   final bool reduceMotion;
   final Stream<WatchProgressUpdatedEvent>? watchProgressUpdates;
+  final CinemaNavigationController? navigationController;
+  final bool externalMobileNav;
 
   @override
   State<CinemaCatalogScreen> createState() => _CinemaCatalogScreenState();
@@ -102,6 +118,8 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
   List<CustomListModel> _customLists = const [];
 
   _CinemaFilter _filter = _CinemaFilter.all;
+  CinemaMobileTab _mobileTab = CinemaMobileTab.home;
+  _CinemaLibrarySection _librarySection = _CinemaLibrarySection.watchlist;
   String _searchQuery = '';
   String? _selectedMovieId;
   String? _selectedSeriesId;
@@ -110,6 +128,10 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
   @override
   void initState() {
     super.initState();
+    _mobileTab =
+        widget.navigationController?.mobileTabNotifier.value ??
+        CinemaMobileTab.home;
+    _attachNavigationController(widget.navigationController);
     if (widget.cinemaService.hasCachedCatalog) {
       _movies = List<MovieSummary>.from(widget.cinemaService.cachedMovies!);
       _series =
@@ -130,14 +152,71 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
       unawaited(_watchProgressSub?.cancel());
       _subscribeWatchProgress();
     }
+    if (oldWidget.navigationController != widget.navigationController) {
+      _detachNavigationController(oldWidget.navigationController);
+      _attachNavigationController(widget.navigationController);
+    }
   }
 
   @override
   void dispose() {
+    _detachNavigationController(widget.navigationController);
     unawaited(_watchProgressSub?.cancel());
     _searchFocusNode.dispose();
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _attachNavigationController(CinemaNavigationController? controller) {
+    if (controller == null) return;
+    controller.onSelectMobileTab = _onSelectMobileTab;
+    controller.onHandleBack = _handleBack;
+  }
+
+  void _detachNavigationController(CinemaNavigationController? controller) {
+    if (controller == null) return;
+    if (controller.onSelectMobileTab == _onSelectMobileTab) {
+      controller.onSelectMobileTab = null;
+    }
+    if (controller.onHandleBack == _handleBack) {
+      controller.onHandleBack = null;
+    }
+  }
+
+  void _onSelectMobileTab(CinemaMobileTab tab) {
+    if (!mounted) return;
+    setState(() {
+      _selectedMovieId = null;
+      _selectedSeriesId = null;
+      _mobileTab = tab;
+    });
+  }
+
+  bool _handleBack() {
+    if (!mounted) return false;
+    if (_selectedMovieId != null || _selectedSeriesId != null) {
+      setState(() {
+        _selectedMovieId = null;
+        _selectedSeriesId = null;
+      });
+      return true;
+    }
+    if (_searchQuery.isNotEmpty) {
+      _searchController.clear();
+      setState(() => _searchQuery = '');
+      return true;
+    }
+    if (widget.externalMobileNav && _mobileTab != CinemaMobileTab.home) {
+      setState(() => _mobileTab = CinemaMobileTab.home);
+      widget.navigationController?.mobileTabNotifier.value =
+          CinemaMobileTab.home;
+      return true;
+    }
+    if (_filter != _CinemaFilter.all) {
+      setState(() => _filter = _CinemaFilter.all);
+      return true;
+    }
+    return false;
   }
 
   void _subscribeWatchProgress() {
@@ -854,6 +933,52 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
           builder: (context, constraints) {
             final isDesktop = constraints.maxWidth >= 760;
             final horizontalPad = isDesktop ? 48.0 : 20.0;
+            final useExternalMobile = !isDesktop && widget.externalMobileNav;
+
+            if (useExternalMobile) {
+              if (_mobileTab == CinemaMobileTab.search) {
+                return _buildMobileSearchView(
+                  context,
+                  tokens,
+                  poolMovies,
+                  poolSeries,
+                  query,
+                  horizontalPad,
+                );
+              }
+              if (_mobileTab == CinemaMobileTab.library) {
+                return _buildMobileLibraryView(
+                  context,
+                  tokens,
+                  query,
+                  horizontalPad,
+                );
+              }
+              return ListView(
+                padding: const EdgeInsets.only(bottom: 56),
+                children: [
+                  _buildPersistentHeader(
+                    context,
+                    heroTokens,
+                    hero,
+                    showHero: !hero.isEmpty,
+                    isDesktop: false,
+                    horizontalPad: horizontalPad,
+                    hideNavigationBar: true,
+                  ),
+                  _buildHomeRows(
+                    context,
+                    heroTokens,
+                    _movies,
+                    _series,
+                    continueWatching,
+                    horizontalPad,
+                  ),
+                ],
+              );
+            }
+
+            final isHistoryTab = _filter == _CinemaFilter.history;
 
             return ListView(
               padding: const EdgeInsets.only(bottom: 56),
@@ -862,7 +987,7 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
                   context,
                   heroTokens,
                   hero,
-                  showHero: showHero && !hero.isEmpty,
+                  showHero: showHero && !isHistoryTab && !hero.isEmpty,
                   isDesktop: isDesktop,
                   horizontalPad: horizontalPad,
                 ),
@@ -878,6 +1003,12 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
                     context,
                     heroTokens,
                     query,
+                    horizontalPad,
+                  )
+                else if (isHistoryTab)
+                  _buildWatchHistoryView(
+                    context,
+                    heroTokens,
                     horizontalPad,
                   )
                 else if (query.isNotEmpty)
@@ -906,10 +1037,38 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
     );
   }
 
+  Widget _buildSearchInputBox({
+    required bool isDesktop,
+    required bool darkGlass,
+  }) {
+    return ConstrainedBox(
+      constraints: BoxConstraints(
+        maxWidth: isDesktop ? 320 : double.infinity,
+      ),
+      child: HermesSearchPill(
+        inputKey: const Key('cinema-search-input'),
+        clearKey: const Key('cinema-search-clear'),
+        controller: _searchController,
+        focusNode: _searchFocusNode,
+        hintText: 'Search titles, genres, cast...',
+        darkGlass: darkGlass,
+        height: 40,
+        iconSize: 16,
+        hasQuery: _searchQuery.isNotEmpty,
+        onChanged: (value) => setState(() => _searchQuery = value),
+        onClear: () {
+          _searchController.clear();
+          setState(() => _searchQuery = '');
+        },
+      ),
+    );
+  }
+
   Widget _buildTopbar(
     HermesThemeTokens tokens,
     bool isDesktop, {
     required bool darkGlass,
+    bool hideNavigationBar = false,
   }) {
     final activeTextColor = darkGlass ? Colors.white : tokens.text;
     final inactiveTextColor = darkGlass
@@ -918,6 +1077,23 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
     final refreshIconColor = darkGlass
         ? Colors.white.withValues(alpha: 0.72)
         : tokens.text2;
+
+    if (hideNavigationBar) {
+      return Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          IconButton(
+            tooltip: 'Refresh catalog',
+            onPressed: _loadCatalog,
+            icon: Icon(
+              Icons.refresh_rounded,
+              size: 20,
+              color: refreshIconColor,
+            ),
+          ),
+        ],
+      );
+    }
 
     final tabs = SingleChildScrollView(
       scrollDirection: Axis.horizontal,
@@ -949,26 +1125,9 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
       ),
     );
 
-    final searchBox = ConstrainedBox(
-      constraints: BoxConstraints(
-        maxWidth: isDesktop ? 320 : double.infinity,
-      ),
-      child: HermesSearchPill(
-        inputKey: const Key('cinema-search-input'),
-        clearKey: const Key('cinema-search-clear'),
-        controller: _searchController,
-        focusNode: _searchFocusNode,
-        hintText: 'Search titles, genres, cast...',
-        darkGlass: darkGlass,
-        height: 40,
-        iconSize: 16,
-        hasQuery: _searchQuery.isNotEmpty,
-        onChanged: (value) => setState(() => _searchQuery = value),
-        onClear: () {
-          _searchController.clear();
-          setState(() => _searchQuery = '');
-        },
-      ),
+    final searchBox = _buildSearchInputBox(
+      isDesktop: isDesktop,
+      darkGlass: darkGlass,
     );
 
     if (isDesktop) {
@@ -1021,6 +1180,7 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
     required bool showHero,
     required bool isDesktop,
     required double horizontalPad,
+    bool hideNavigationBar = false,
   }) {
     final movie = hero.movie;
     final show = hero.series;
@@ -1128,7 +1288,12 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                _buildTopbar(tokens, isDesktop, darkGlass: showHero),
+                _buildTopbar(
+                  tokens,
+                  isDesktop,
+                  darkGlass: showHero,
+                  hideNavigationBar: hideNavigationBar,
+                ),
                 if (showHero) ...[
                   SizedBox(height: isDesktop ? 90 : 44),
                   ConstrainedBox(
@@ -1879,6 +2044,256 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
         _selectedSeriesId = show.id;
         _selectedMovieId = null;
       }),
+    );
+  }
+
+  Widget _buildMobileSearchView(
+    BuildContext context,
+    HermesThemeTokens tokens,
+    List<MovieSummary> poolMovies,
+    List<TvSeriesSummary> poolSeries,
+    String query,
+    double horizontalPad,
+  ) {
+    return ListView(
+      key: const Key('cinema-mobile-search-view'),
+      padding: const EdgeInsets.only(top: 12, bottom: 56),
+      children: [
+        Padding(
+          padding: EdgeInsets.symmetric(horizontal: horizontalPad),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Search',
+                style: TextStyle(
+                  fontFamily: 'Figtree',
+                  fontSize: 28,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.5,
+                  color: tokens.text,
+                ),
+              ),
+              const SizedBox(height: 12),
+              _buildSearchInputBox(isDesktop: false, darkGlass: false),
+            ],
+          ),
+        ),
+        const SizedBox(height: 20),
+        if (query.isNotEmpty)
+          _buildSearchResults(
+            context,
+            tokens,
+            poolMovies,
+            poolSeries,
+            query,
+            horizontalPad,
+          )
+        else ...[
+          Padding(
+            padding: EdgeInsets.symmetric(horizontal: horizontalPad),
+            child: Text(
+              'Search your movies, shows, episodes, genres, and cast.',
+              style: TextStyle(fontSize: 13, color: tokens.text2),
+            ),
+          ),
+          if (_movies.isNotEmpty || _series.isNotEmpty) ...[
+            const SizedBox(height: 20),
+            _RowHeader(title: 'Browse Cinema', horizontalPad: horizontalPad),
+            const SizedBox(height: 12),
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: horizontalPad),
+              child: _ResponsivePosterGrid(
+                children: [
+                  ..._movies.take(6).map(_buildMoviePoster),
+                  ..._series.take(6).map(_buildSeriesPoster),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ],
+    );
+  }
+
+  Widget _buildMobileLibraryView(
+    BuildContext context,
+    HermesThemeTokens tokens,
+    String query,
+    double horizontalPad,
+  ) {
+    return ListView(
+      key: const Key('cinema-mobile-library-view'),
+      padding: const EdgeInsets.only(top: 12, bottom: 56),
+      children: [
+        Padding(
+          padding: EdgeInsets.symmetric(horizontal: horizontalPad),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Library',
+                style: TextStyle(
+                  fontFamily: 'Figtree',
+                  fontSize: 28,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.5,
+                  color: tokens.text,
+                ),
+              ),
+              IconButton(
+                tooltip: 'Refresh catalog',
+                onPressed: _loadCatalog,
+                icon: Icon(
+                  Icons.refresh_rounded,
+                  size: 20,
+                  color: tokens.text2,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          padding: EdgeInsets.symmetric(horizontal: horizontalPad),
+          child: Row(
+            children: [
+              for (final section in _CinemaLibrarySection.values) ...[
+                ChoiceChip(
+                  key: Key('cinema-library-chip-${section.name}'),
+                  label: Text(section.label),
+                  selected: _librarySection == section,
+                  onSelected: (_) => setState(() => _librarySection = section),
+                  selectedColor: tokens.accent.withValues(alpha: 0.22),
+                  backgroundColor: tokens.surface2,
+                  labelStyle: TextStyle(
+                    fontFamily: 'Figtree',
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: _librarySection == section
+                        ? tokens.accent
+                        : tokens.text2,
+                  ),
+                  side: BorderSide(
+                    color: _librarySection == section
+                        ? tokens.accent
+                        : tokens.line,
+                  ),
+                ),
+                const SizedBox(width: 8),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(height: 20),
+        switch (_librarySection) {
+          _CinemaLibrarySection.watchlist => _buildWatchlistView(
+              context,
+              tokens,
+              query,
+              horizontalPad,
+            ),
+          _CinemaLibrarySection.lists => _buildCustomListsView(
+              context,
+              tokens,
+              query,
+              horizontalPad,
+            ),
+          _CinemaLibrarySection.movies => _buildPosterSectionGrid(
+              tokens: tokens,
+              title: 'Movies',
+              emptyMessage: 'No movies in your library yet.',
+              items: _movies.map(_buildMoviePoster).toList(growable: false),
+              horizontalPad: horizontalPad,
+            ),
+          _CinemaLibrarySection.series => _buildPosterSectionGrid(
+              tokens: tokens,
+              title: 'TV Shows',
+              emptyMessage: 'No TV series in your library yet.',
+              items: _series.map(_buildSeriesPoster).toList(growable: false),
+              horizontalPad: horizontalPad,
+            ),
+          _CinemaLibrarySection.history => _buildWatchHistoryView(
+              context,
+              tokens,
+              horizontalPad,
+            ),
+        },
+      ],
+    );
+  }
+
+  Widget _buildPosterSectionGrid({
+    required HermesThemeTokens tokens,
+    required String title,
+    required String emptyMessage,
+    required List<Widget> items,
+    required double horizontalPad,
+  }) {
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: horizontalPad),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              fontFamily: 'Figtree',
+              fontSize: 22,
+              fontWeight: FontWeight.w800,
+              color: tokens.text,
+            ),
+          ),
+          const SizedBox(height: 16),
+          if (items.isEmpty)
+            Text(
+              emptyMessage,
+              style: TextStyle(fontSize: 14, color: tokens.text2),
+            )
+          else
+            _ResponsivePosterGrid(children: items),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWatchHistoryView(
+    BuildContext context,
+    HermesThemeTokens tokens,
+    double horizontalPad,
+  ) {
+    final entries = <(DateTime, Widget)>[];
+    for (final movie in _movies) {
+      final wp = movie.watchProgress;
+      if (wp != null && (wp.isWatched || wp.positionMs > 0)) {
+        entries.add((wp.updatedAtUtc, _buildMoviePoster(movie)));
+      }
+    }
+    for (final show in _series) {
+      DateTime? latest;
+      for (final season in show.seasons) {
+        for (final ep in season.episodes) {
+          final wp = ep.watchProgress;
+          if (wp != null && (wp.isWatched || wp.positionMs > 0)) {
+            if (latest == null || wp.updatedAtUtc.isAfter(latest)) {
+              latest = wp.updatedAtUtc;
+            }
+          }
+        }
+      }
+      if (latest != null) {
+        entries.add((latest, _buildSeriesPoster(show)));
+      }
+    }
+    entries.sort((a, b) => b.$1.compareTo(a.$1));
+
+    return _buildPosterSectionGrid(
+      tokens: tokens,
+      title: 'Watch history',
+      emptyMessage: 'No watch history yet',
+      items: entries.map((e) => e.$2).toList(growable: false),
+      horizontalPad: horizontalPad,
     );
   }
 }

@@ -1,4 +1,4 @@
-import 'package:material_ui/material_ui.dart' show Color, HSLColor;
+import 'package:material_ui/material_ui.dart' show Color, HSLColor, ValueNotifier;
 
 enum AudioQualityPreset {
   lossless('Lossless', 'Lossless'),
@@ -624,6 +624,7 @@ enum SmartPlaylistKind {
 
 enum MusicPageKind {
   home,
+  search,
   albums,
   artists,
   songs,
@@ -640,6 +641,7 @@ class MusicPageRoute {
   const MusicPageRoute._({required this.kind, this.targetId});
 
   const MusicPageRoute.home() : this._(kind: MusicPageKind.home);
+  const MusicPageRoute.search() : this._(kind: MusicPageKind.search);
   const MusicPageRoute.albums() : this._(kind: MusicPageKind.albums);
   const MusicPageRoute.artists() : this._(kind: MusicPageKind.artists);
   const MusicPageRoute.songs() : this._(kind: MusicPageKind.songs);
@@ -668,9 +670,16 @@ class MusicPageRoute {
 
 /// Coordinates cross-surface navigation into Music routes (e.g. clicking song title -> Album).
 class MusicNavigationController {
-  MusicNavigationController({this.onRequestRoute});
+  MusicNavigationController({
+    this.onRequestRoute,
+    this.onHandleBack,
+  });
+
+  final ValueNotifier<MusicPageRoute> currentRouteNotifier =
+      ValueNotifier<MusicPageRoute>(const MusicPageRoute.home());
 
   void Function(MusicPageRoute route)? onRequestRoute;
+  bool Function()? onHandleBack;
   MusicPageRoute? _pendingRoute;
 
   void navigate(MusicPageRoute route) {
@@ -683,10 +692,16 @@ class MusicNavigationController {
     }
   }
 
+  bool handleBack() => onHandleBack?.call() ?? false;
+
   MusicPageRoute? takePendingRoute() {
     final next = _pendingRoute;
     _pendingRoute = null;
     return next;
+  }
+
+  void dispose() {
+    currentRouteNotifier.dispose();
   }
 }
 
