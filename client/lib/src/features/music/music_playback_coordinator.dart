@@ -88,6 +88,7 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
   final List<String> _upNextSongIds = [];
   NetworkTransportMode _networkMode = NetworkTransportMode.wifi;
   PlaybackSessionState? _session;
+  String? _lastRecordedListenSongId;
   int _lastAppliedVersion = 0;
   String? _activeSourceLabel;
   MusicPageRoute? _activeSourceRoute;
@@ -262,6 +263,30 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
       if (cb != null) {
         unawaited(cb(positionMs));
       }
+    }
+
+    final track = currentSong;
+    if (track != null && _lastRecordedListenSongId != track.id) {
+      final dur = track.durationMs;
+      final threshold = dur > 0 ? min(30000, max(5000, dur ~/ 3)) : 5000;
+      if (positionMs >= threshold) {
+        _lastRecordedListenSongId = track.id;
+        unawaited(_recordListenSafely(track, positionMs));
+      }
+    }
+  }
+
+  Future<void> _recordListenSafely(SongModel track, int positionMs) async {
+    try {
+      await musicService.recordListen(
+        songId: track.id,
+        positionMs: positionMs,
+        durationMs: track.durationMs,
+        deviceId: localDeviceId,
+        contextLabel: activeSourceLabel,
+      );
+    } catch (_) {
+      // History sync is best-effort and must never interrupt playback.
     }
   }
 

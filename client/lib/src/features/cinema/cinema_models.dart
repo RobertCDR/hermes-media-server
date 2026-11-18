@@ -611,6 +611,81 @@ String formatCinemaMinutes(int minutes) {
   return hours > 0 ? '${hours}h ${mins}m' : '${mins}m';
 }
 
+class CustomListItemModel {
+  const CustomListItemModel({
+    required this.id,
+    this.movieId,
+    this.tvSeriesId,
+    required this.mediaKind,
+    required this.title,
+    this.year,
+    this.artworkHash,
+    this.rating,
+    required this.position,
+    required this.addedAtUtc,
+  });
+
+  final String id;
+  final String? movieId;
+  final String? tvSeriesId;
+  final String mediaKind;
+  final String title;
+  final int? year;
+  final String? artworkHash;
+  final double? rating;
+  final int position;
+  final DateTime addedAtUtc;
+
+  bool get isMovie => mediaKind == 'movie' || movieId != null;
+
+  factory CustomListItemModel.fromJson(Map<String, dynamic> json) {
+    return CustomListItemModel(
+      id: json['id'] as String? ?? '',
+      movieId: json['movieId'] as String?,
+      tvSeriesId: json['tvSeriesId'] as String?,
+      mediaKind: json['mediaKind'] as String? ?? 'movie',
+      title: json['title'] as String? ?? '',
+      year: json['year'] as int?,
+      artworkHash: json['artworkHash'] as String?,
+      rating: (json['rating'] as num?)?.toDouble(),
+      position: json['position'] as int? ?? 0,
+      addedAtUtc: DateTime.parse(json['addedAtUtc'] as String),
+    );
+  }
+}
+
+class CustomListModel {
+  const CustomListModel({
+    required this.id,
+    required this.name,
+    this.description,
+    required this.createdAtUtc,
+    required this.updatedAtUtc,
+    this.items = const [],
+  });
+
+  final String id;
+  final String name;
+  final String? description;
+  final DateTime createdAtUtc;
+  final DateTime updatedAtUtc;
+  final List<CustomListItemModel> items;
+
+  factory CustomListModel.fromJson(Map<String, dynamic> json) {
+    final rawItems = json['items'] as List<dynamic>? ?? const [];
+    return CustomListModel(
+      id: json['id'] as String? ?? '',
+      name: json['name'] as String? ?? '',
+      description: json['description'] as String?,
+      createdAtUtc: DateTime.parse(json['createdAtUtc'] as String),
+      updatedAtUtc: DateTime.parse(json['updatedAtUtc'] as String),
+      items: rawItems
+          .map((e) => CustomListItemModel.fromJson(e as Map<String, dynamic>))
+          .toList(),
+    );
+  }
+}
+
 const List<Color> _titleTintPalette = [
   Color(0xFFDC143C),
   Color(0xFF5B8CFF),

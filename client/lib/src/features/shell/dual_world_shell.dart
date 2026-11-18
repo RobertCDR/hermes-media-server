@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../../core/theme/hermes_theme_tokens.dart';
@@ -26,6 +27,10 @@ class DualWorldShell extends StatefulWidget {
     this.onOpenAccountSettings,
     this.onSwitchServer,
     this.onSignOut,
+    this.onTogglePlayPause,
+    this.onNextTrack,
+    this.onPreviousTrack,
+    this.onToggleMute,
     this.initialWorld = HermesWorld.cinema,
   });
 
@@ -47,6 +52,10 @@ class DualWorldShell extends StatefulWidget {
   final VoidCallback? onOpenAccountSettings;
   final VoidCallback? onSwitchServer;
   final VoidCallback? onSignOut;
+  final VoidCallback? onTogglePlayPause;
+  final VoidCallback? onNextTrack;
+  final VoidCallback? onPreviousTrack;
+  final VoidCallback? onToggleMute;
   final HermesWorld initialWorld;
 
   @override
@@ -56,6 +65,7 @@ class DualWorldShell extends StatefulWidget {
 class _DualWorldShellState extends State<DualWorldShell> {
   late HermesWorld _world;
   bool _popoverOpen = false;
+  final FocusNode _shellFocusNode = FocusNode();
 
   @override
   void initState() {
@@ -79,7 +89,70 @@ class _DualWorldShellState extends State<DualWorldShell> {
   @override
   void dispose() {
     widget.worldNotifier?.removeListener(_syncWorldFromNotifier);
+    _shellFocusNode.dispose();
     super.dispose();
+  }
+
+  bool _isTextInputFocused() {
+    final ctx = FocusManager.instance.primaryFocus?.context;
+    if (ctx == null) return false;
+    if (ctx.widget is EditableText) return true;
+    return ctx.findAncestorWidgetOfExactType<EditableText>() != null;
+  }
+
+  KeyEventResult _handleGlobalKeyEvent(FocusNode _, KeyEvent event) {
+    if (event is! KeyDownEvent) {
+      return KeyEventResult.ignored;
+    }
+
+    if (!(ModalRoute.of(context)?.isCurrent ?? true)) {
+      return KeyEventResult.ignored;
+    }
+
+    final key = event.logicalKey;
+    final hw = HardwareKeyboard.instance;
+    final ctrlOrMeta = hw.isControlPressed || hw.isMetaPressed;
+
+    if (ctrlOrMeta && key == LogicalKeyboardKey.keyK) {
+      widget.onOpenSearch?.call();
+      return KeyEventResult.handled;
+    }
+
+    if (key == LogicalKeyboardKey.escape && _popoverOpen) {
+      setState(() => _popoverOpen = false);
+      return KeyEventResult.handled;
+    }
+
+    if (_isTextInputFocused()) {
+      return KeyEventResult.ignored;
+    }
+
+    if (key == LogicalKeyboardKey.slash) {
+      widget.onOpenSearch?.call();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.space && widget.onTogglePlayPause != null) {
+      widget.onTogglePlayPause!();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.keyM && widget.onToggleMute != null) {
+      widget.onToggleMute!();
+      return KeyEventResult.handled;
+    }
+    if ((key == LogicalKeyboardKey.mediaTrackNext ||
+            (hw.isAltPressed && key == LogicalKeyboardKey.arrowRight)) &&
+        widget.onNextTrack != null) {
+      widget.onNextTrack!();
+      return KeyEventResult.handled;
+    }
+    if ((key == LogicalKeyboardKey.mediaTrackPrevious ||
+            (hw.isAltPressed && key == LogicalKeyboardKey.arrowLeft)) &&
+        widget.onPreviousTrack != null) {
+      widget.onPreviousTrack!();
+      return KeyEventResult.handled;
+    }
+
+    return KeyEventResult.ignored;
   }
 
   void _syncWorldFromNotifier() {
@@ -153,10 +226,14 @@ class _DualWorldShellState extends State<DualWorldShell> {
         final isDesktop = constraints.maxWidth >= 840;
 
         if (isDesktop) {
-          return Scaffold(
-            backgroundColor: tokens.bg,
-            body: Stack(
-              children: [
+          return Focus(
+            focusNode: _shellFocusNode,
+            autofocus: true,
+            onKeyEvent: _handleGlobalKeyEvent,
+            child: Scaffold(
+              backgroundColor: tokens.bg,
+              body: Stack(
+                children: [
                 Column(
                   children: [
                     Expanded(
@@ -215,6 +292,7 @@ class _DualWorldShellState extends State<DualWorldShell> {
                   ),
                 ],
               ],
+            ),
             ),
           );
         }

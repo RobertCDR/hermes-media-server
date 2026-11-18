@@ -80,6 +80,43 @@ class MusicService {
     return decoded.map((e) => SongModel.fromJson(e as Map<String, dynamic>)).toList();
   }
 
+  Future<List<ListeningHistoryItemModel>> listHistory({int limit = 40}) async {
+    final uri = baseUri.resolve('/api/v1/music/history').replace(
+      queryParameters: {'limit': '$limit'},
+    );
+    final response = await httpClient.get(uri, headers: _headers);
+    if (response.statusCode != 200) {
+      throw MusicApiException('Failed to load listening history', statusCode: response.statusCode);
+    }
+    final decoded = jsonDecode(response.body) as List<dynamic>;
+    return decoded
+        .map((e) => ListeningHistoryItemModel.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<void> recordListen({
+    required String songId,
+    required int positionMs,
+    required int durationMs,
+    String? deviceId,
+    String? contextLabel,
+  }) async {
+    final response = await httpClient.post(
+      baseUri.resolve('/api/v1/music/history'),
+      headers: _headers,
+      body: jsonEncode({
+        'songId': songId,
+        'positionMs': positionMs,
+        'durationMs': durationMs,
+        'deviceId': ?deviceId,
+        'contextLabel': ?contextLabel,
+      }),
+    );
+    if (response.statusCode != 201 && response.statusCode != 200) {
+      throw MusicApiException('Failed to record listen', statusCode: response.statusCode);
+    }
+  }
+
   Future<bool> toggleLikeSong(String songId) async {
     final response = await httpClient.post(baseUri.resolve('/api/v1/music/songs/$songId/like'), headers: _headers);
     if (response.statusCode != 200) {

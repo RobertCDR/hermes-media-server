@@ -661,6 +661,13 @@ class _HermesAppState extends State<HermesApp> {
                       ),
                       onSwitchServer: () => setState(() => _switchingServer = true),
                       onSignOut: () => unawaited(_signOut()),
+                      onTogglePlayPause: () =>
+                          unawaited(musicCoordinator.togglePlayPause()),
+                      onNextTrack: () => unawaited(musicCoordinator.skipNext()),
+                      onPreviousTrack: () =>
+                          unawaited(musicCoordinator.skipPrevious()),
+                      onToggleMute: () =>
+                          unawaited(musicCoordinator.toggleMute()),
                       adminBuilder: (_) => AdminDashboardScreen(
                         adminService: adminService,
                         onServerNameChanged: (name) =>

@@ -113,6 +113,23 @@ class AlbumSummaryModel {
   }
 }
 
+class ArtistCreditModel {
+  const ArtistCreditModel({
+    required this.artistId,
+    required this.name,
+  });
+
+  final String artistId;
+  final String name;
+
+  factory ArtistCreditModel.fromJson(Map<String, dynamic> json) {
+    return ArtistCreditModel(
+      artistId: json['artistId'] as String? ?? '',
+      name: json['name'] as String? ?? '',
+    );
+  }
+}
+
 class SongModel {
   const SongModel({
     required this.id,
@@ -132,6 +149,7 @@ class SongModel {
     required this.isLiked,
     required this.isMissing,
     this.fileLastWriteUtc,
+    this.artistCredits = const [],
   });
 
   final String id;
@@ -151,6 +169,13 @@ class SongModel {
   final bool isLiked;
   final bool isMissing;
   final DateTime? fileLastWriteUtc;
+  final List<ArtistCreditModel> artistCredits;
+
+  List<ArtistCreditModel> get effectiveArtistCredits {
+    if (artistCredits.isNotEmpty) return artistCredits;
+    if (artistName.trim().isEmpty) return const [];
+    return [ArtistCreditModel(artistId: artistId, name: artistName)];
+  }
 
   SongModel copyWith({bool? isLiked}) {
     return SongModel(
@@ -171,11 +196,13 @@ class SongModel {
       isLiked: isLiked ?? this.isLiked,
       isMissing: isMissing,
       fileLastWriteUtc: fileLastWriteUtc,
+      artistCredits: artistCredits,
     );
   }
 
   factory SongModel.fromJson(Map<String, dynamic> json) {
     final rawModified = json['fileLastWriteUtc'] as String?;
+    final rawCredits = json['artistCredits'] as List<dynamic>? ?? const [];
     return SongModel(
       id: json['id'] as String,
       artistId: json['artistId'] as String,
@@ -194,6 +221,35 @@ class SongModel {
       isLiked: json['isLiked'] as bool? ?? false,
       isMissing: json['isMissing'] as bool? ?? false,
       fileLastWriteUtc: rawModified == null ? null : DateTime.tryParse(rawModified),
+      artistCredits: rawCredits
+          .map((e) => ArtistCreditModel.fromJson(e as Map<String, dynamic>))
+          .toList(),
+    );
+  }
+}
+
+class ListeningHistoryItemModel {
+  const ListeningHistoryItemModel({
+    required this.id,
+    required this.listenedAtUtc,
+    this.deviceId,
+    this.contextLabel,
+    required this.song,
+  });
+
+  final String id;
+  final DateTime listenedAtUtc;
+  final String? deviceId;
+  final String? contextLabel;
+  final SongModel song;
+
+  factory ListeningHistoryItemModel.fromJson(Map<String, dynamic> json) {
+    return ListeningHistoryItemModel(
+      id: json['id'] as String? ?? '',
+      listenedAtUtc: DateTime.parse(json['listenedAtUtc'] as String),
+      deviceId: json['deviceId'] as String?,
+      contextLabel: json['contextLabel'] as String?,
+      song: SongModel.fromJson(json['song'] as Map<String, dynamic>),
     );
   }
 }
@@ -573,6 +629,7 @@ enum MusicPageKind {
   songs,
   library,
   liked,
+  history,
   album,
   artist,
   playlist,
@@ -588,6 +645,7 @@ class MusicPageRoute {
   const MusicPageRoute.songs() : this._(kind: MusicPageKind.songs);
   const MusicPageRoute.library() : this._(kind: MusicPageKind.library);
   const MusicPageRoute.liked() : this._(kind: MusicPageKind.liked);
+  const MusicPageRoute.history() : this._(kind: MusicPageKind.history);
   const MusicPageRoute.album(String id) : this._(kind: MusicPageKind.album, targetId: id);
   const MusicPageRoute.artist(String id) : this._(kind: MusicPageKind.artist, targetId: id);
   const MusicPageRoute.playlist(String id) : this._(kind: MusicPageKind.playlist, targetId: id);

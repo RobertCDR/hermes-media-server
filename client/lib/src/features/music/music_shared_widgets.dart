@@ -627,6 +627,7 @@ class MusicTrackTable extends StatelessWidget {
               },
               onGoToAlbum: () => onNavigate(MusicPageRoute.album(song.albumId)),
               onGoToArtist: () => onNavigate(MusicPageRoute.artist(song.artistId)),
+              onGoToArtistId: (artistId) => onNavigate(MusicPageRoute.artist(artistId)),
               onAddToPlaylist: onAddToPlaylist,
               onRemoveFromPlaylist: onRemoveFromPlaylist,
             ),
@@ -706,6 +707,7 @@ class _TrackTableRow extends StatefulWidget {
     required this.onPlayNext,
     required this.onGoToAlbum,
     required this.onGoToArtist,
+    this.onGoToArtistId,
     this.playlistIdForRemoval,
     this.onAddToPlaylist,
     this.onRemoveFromPlaylist,
@@ -727,6 +729,7 @@ class _TrackTableRow extends StatefulWidget {
   final VoidCallback onPlayNext;
   final VoidCallback onGoToAlbum;
   final VoidCallback onGoToArtist;
+  final ValueChanged<String>? onGoToArtistId;
   final String? playlistIdForRemoval;
   final Future<void> Function(String playlistId, SongModel song)? onAddToPlaylist;
   final Future<void> Function(String playlistId, int position)? onRemoveFromPlaylist;
@@ -860,11 +863,11 @@ class _TrackTableRowState extends State<_TrackTableRow> {
                             ),
                           ),
                           const SizedBox(height: 1),
-                          Text(
-                            song.artistName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                          ArtistCreditLine(
+                            song: song,
                             style: TextStyle(fontSize: 12, color: tokens.text2),
+                            onTapArtist: widget.onGoToArtistId ??
+                                (_) => widget.onGoToArtist(),
                           ),
                         ],
                       ),
@@ -1122,6 +1125,64 @@ class _MusicBrowseCardState extends State<MusicBrowseCard> {
         ),
       ),
     ),
+    );
+  }
+}
+
+/// Renders single or comma-separated clickable multi-artist credits without text overflow.
+class ArtistCreditLine extends StatelessWidget {
+  const ArtistCreditLine({
+    super.key,
+    required this.song,
+    required this.style,
+    this.onTapArtist,
+  });
+
+  final SongModel song;
+  final TextStyle style;
+  final ValueChanged<String>? onTapArtist;
+
+  @override
+  Widget build(BuildContext context) {
+    final credits = song.effectiveArtistCredits;
+    if (credits.length <= 1) {
+      final label = credits.length == 1 ? credits.first.name : song.artistName;
+      final artistId = credits.length == 1 ? credits.first.artistId : song.artistId;
+      final text = Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: style,
+      );
+      if (onTapArtist == null || artistId.isEmpty) {
+        return text;
+      }
+      return InkWell(
+        onTap: () => onTapArtist!(artistId),
+        borderRadius: BorderRadius.circular(3),
+        child: text,
+      );
+    }
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      physics: const NeverScrollableScrollPhysics(),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (var i = 0; i < credits.length; i++) ...[
+            if (i > 0) Text(', ', style: style),
+            if (onTapArtist != null && credits[i].artistId.isNotEmpty)
+              InkWell(
+                onTap: () => onTapArtist!(credits[i].artistId),
+                borderRadius: BorderRadius.circular(3),
+                child: Text(credits[i].name, style: style),
+              )
+            else
+              Text(credits[i].name, style: style),
+          ],
+        ],
+      ),
     );
   }
 }

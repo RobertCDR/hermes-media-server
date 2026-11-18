@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../../core/media/hermes_media_runtime.dart';
@@ -176,6 +177,8 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
   bool _controlsHidden = false;
   bool _upNextDismissed = false;
   bool _completionHandled = false;
+  bool _isFullscreen = false;
+  final FocusNode _playerFocusNode = FocusNode();
   List<String> _liveSubtitleLines = const [];
   String? _playbackError;
   Timer? _idleTimer;
@@ -307,6 +310,10 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
     unawaited(_errorSub?.cancel());
     unawaited(_reporter.reportNow());
     _reporter.dispose();
+    if (_isFullscreen) {
+      unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
+    }
+    _playerFocusNode.dispose();
     unawaited(_playback.dispose());
     super.dispose();
   }
@@ -467,6 +474,64 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
     unawaited(_seekToPositionMs(_positionMs + deltaSeconds * 1000));
   }
 
+  void _toggleMute() {
+    final nextMuted = !_muted;
+    setState(() => _muted = nextMuted);
+    unawaited(_playback.setVolume(nextMuted ? 0 : _volume));
+    _wakeControls();
+  }
+
+  void _toggleFullscreenMode() {
+    final next = !_isFullscreen;
+    setState(() => _isFullscreen = next);
+    unawaited(
+      SystemChrome.setEnabledSystemUIMode(
+        next ? SystemUiMode.immersiveSticky : SystemUiMode.edgeToEdge,
+      ),
+    );
+    _wakeControls();
+  }
+
+  KeyEventResult _handleKeyEvent(FocusNode _, KeyEvent event) {
+    if (event is! KeyDownEvent) {
+      return KeyEventResult.ignored;
+    }
+
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.space || key == LogicalKeyboardKey.keyK) {
+      _togglePlayPause();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowLeft || key == LogicalKeyboardKey.keyJ) {
+      _skipSeconds(-10);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowRight || key == LogicalKeyboardKey.keyL) {
+      _skipSeconds(10);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.keyM) {
+      _toggleMute();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.keyF) {
+      _toggleFullscreenMode();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.escape) {
+      if (_panelOpen) {
+        setState(() => _panelOpen = false);
+      } else if (_isFullscreen) {
+        _toggleFullscreenMode();
+      } else {
+        unawaited(Navigator.of(context).maybePop());
+      }
+      return KeyEventResult.handled;
+    }
+
+    return KeyEventResult.ignored;
+  }
+
   String _formatClock(int ms) {
     final totalSec = (ms / 1000).floor().clamp(0, 86400);
     final h = totalSec ~/ 3600;
@@ -513,9 +578,13 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
                     : 'WebVTT Subtitles Ready (#D8D8D8)')
                 : '');
 
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: MouseRegion(
+    return Focus(
+      focusNode: _playerFocusNode,
+      autofocus: true,
+      onKeyEvent: _handleKeyEvent,
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: MouseRegion(
         cursor:
             _controlsHidden ? SystemMouseCursors.none : SystemMouseCursors.basic,
         onHover: (_) => _wakeControls(),
@@ -954,16 +1023,8 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
                                     ),
                                   ),
                                   IconButton(
-                                    tooltip: _muted ? 'Unmute' : 'Mute',
-                                    onPressed: () {
-                                      final nextMuted = !_muted;
-                                      setState(() => _muted = nextMuted);
-                                      unawaited(
-                                        _playback.setVolume(
-                                          nextMuted ? 0 : _volume,
-                                        ),
-                                      );
-                                    },
+                                    tooltip: _muted ? 'Unmute (M)' : 'Mute (M)',
+                                    onPressed: _toggleMute,
                                     icon: Icon(
                                       _muted || _volume == 0
                                           ? Icons.volume_off_rounded
@@ -1071,6 +1132,7 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
           ),
         ),
       ),
+    ),
     );
   }
 }
