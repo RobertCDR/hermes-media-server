@@ -960,13 +960,13 @@ class _SubtitlePreviewBox extends StatelessWidget {
     final shadows = switch (subtitleBackground) {
       SubtitleBackgroundStyle.shadow => const [
           Shadow(
-            color: Color(0xE6000000),
-            offset: Offset(0, 2),
-            blurRadius: 4,
+            color: Color(0xF2000000),
+            offset: Offset(0, 1.5),
+            blurRadius: 5,
           ),
           Shadow(
             color: Color(0xE6000000),
-            offset: Offset(0, 0),
+            offset: Offset(1, 1),
             blurRadius: 2,
           ),
         ],
@@ -979,62 +979,48 @@ class _SubtitlePreviewBox extends StatelessWidget {
       width: double.infinity,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(8),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            tokens.surface3,
-            tokens.bgSunken,
-            Color.lerp(tokens.surface2, tokens.accent, 0.16)!,
-          ],
-        ),
+        color: tokens.bgSunken,
       ),
-      child: Stack(
-        children: [
-          Positioned.fill(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(8),
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Colors.black.withValues(alpha: 0.12),
-                    Colors.black.withValues(alpha: 0.45),
-                  ],
-                ),
-              ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Image.asset(
+              'assets/images/subtitle_preview_scene.jpg',
+              fit: BoxFit.cover,
+              filterQuality: FilterQuality.medium,
             ),
-          ),
-          Align(
-            alignment: Alignment.bottomCenter,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 18),
-              child: Container(
-                padding: subtitleBackground == SubtitleBackgroundStyle.box
-                    ? const EdgeInsets.symmetric(horizontal: 12, vertical: 4)
-                    : EdgeInsets.zero,
-                decoration: subtitleBackground == SubtitleBackgroundStyle.box
-                    ? BoxDecoration(
-                        color: const Color(0xBF000000),
-                        borderRadius: BorderRadius.circular(4),
-                      )
-                    : null,
-                child: Text(
-                  'We only ever found half the signal.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontFamily: 'Figtree',
-                    fontSize: subtitleSize.previewFontSize,
-                    fontWeight: FontWeight.w600,
-                    color: tokens.subtitleSafeColor,
-                    shadows: shadows,
+            Align(
+              alignment: Alignment.bottomCenter,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 18),
+                child: Container(
+                  padding: subtitleBackground == SubtitleBackgroundStyle.box
+                      ? const EdgeInsets.symmetric(horizontal: 12, vertical: 4)
+                      : EdgeInsets.zero,
+                  decoration: subtitleBackground == SubtitleBackgroundStyle.box
+                      ? BoxDecoration(
+                          color: const Color(0xBF000000),
+                          borderRadius: BorderRadius.circular(4),
+                        )
+                      : null,
+                  child: Text(
+                    'We only ever found half the signal.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontFamily: 'Figtree',
+                      fontSize: subtitleSize.previewFontSize,
+                      fontWeight: FontWeight.w600,
+                      color: tokens.subtitleSafeColor,
+                      shadows: shadows,
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
