@@ -127,7 +127,8 @@ public sealed record RemoteTransportCommand(
     long? PositionMs = null,
     RepeatMode? RepeatMode = null,
     bool? Shuffle = null,
-    double? Volume = null);
+    double? Volume = null,
+    IReadOnlyList<Guid>? QueueSongIds = null);
 
 public sealed record TransferOutputCommand(string TargetDeviceId, long? PositionMs = null);
 

@@ -18,6 +18,7 @@ public static class StreamEndpoints
         group.MapGet("/{mediaSourceId:guid}/video/master.m3u8", StartVideoHlsAsync).WithName("StartVideoHls");
         group.MapGet("/{mediaSourceId:guid}/hls/{sessionId:guid}/{assetName}", GetHlsAssetAsync).WithName("GetHlsAsset");
         group.MapDelete("/{mediaSourceId:guid}/hls/{sessionId:guid}", StopHlsSessionAsync).WithName("StopHlsSession");
+        group.MapDelete("/{mediaSourceId:guid}/hls/by-client/{clientSession}", StopClientHlsSessionsAsync).WithName("StopClientHlsSessions");
         group.MapGet("/{targetId:guid}/audio", StreamAudioAsync).WithName("StreamAudio");
         group.MapGet("/{mediaSourceId:guid}/subtitles/{streamIndex:int}.vtt", GetSubtitlesVttAsync).WithName("GetSubtitlesVtt");
 
@@ -56,7 +57,8 @@ public static class StreamEndpoints
         ITranscodeSessionManager transcodeManager,
         CancellationToken cancellationToken,
         int audioStreamIndex = 1,
-        long startSeconds = 0)
+        long startSeconds = 0,
+        string? clientSession = null)
     {
         if (!TryAuthorizeTicket(ticketService, ticket, mediaSourceId, out var userId))
         {
@@ -94,7 +96,8 @@ public static class StreamEndpoints
             startSeconds,
             maxSlots,
             cancellationToken,
-            hardwareAcceleration);
+            hardwareAcceleration,
+            clientSession);
 
         if (lease is null)
         {
@@ -181,6 +184,23 @@ public static class StreamEndpoints
         }
 
         await transcodeManager.StopSessionAsync(sessionId, cancellationToken);
+        return Results.NoContent();
+    }
+
+    private static async Task<IResult> StopClientHlsSessionsAsync(
+        Guid mediaSourceId,
+        string clientSession,
+        string? ticket,
+        IStreamTicketService ticketService,
+        ITranscodeSessionManager transcodeManager,
+        CancellationToken cancellationToken)
+    {
+        if (!TryAuthorizeTicket(ticketService, ticket, mediaSourceId, out var userId))
+        {
+            return Results.StatusCode(StatusCodes.Status403Forbidden);
+        }
+
+        await transcodeManager.StopClientSessionsAsync(userId, clientSession, cancellationToken);
         return Results.NoContent();
     }
 

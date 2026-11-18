@@ -138,4 +138,82 @@ public class LibraryWatcherAndTranscodeUnitTests
             }
         }
     }
+
+    [Fact]
+    public async Task TryStartVideoHlsSessionAsync_ReusesIdenticalSession_AndEvictsPriorUserSessionOnQualityChange()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"hermes-hls-evict-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        var fakeVideo = Path.Combine(tempDir, "movie.mkv");
+        await File.WriteAllBytesAsync(fakeVideo, [0x1A, 0x45, 0xDF, 0xA3]);
+
+        try
+        {
+            await using var manager = new FfmpegTranscodeSessionManager(
+                tempDir,
+                (_, _, _, _, segmentDir, playlistPath, _) =>
+                {
+                    File.WriteAllText(
+                        Path.Combine(segmentDir, "seg_0000.ts"),
+                        "ts");
+                    File.WriteAllText(
+                        playlistPath,
+                        "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXTINF:2.0,\nseg_0000.ts\n");
+                    return null;
+                });
+            var userId = Guid.NewGuid();
+            var sourceId = Guid.NewGuid();
+
+            var first = await manager.TryStartVideoHlsSessionAsync(
+                userId,
+                sourceId,
+                fakeVideo,
+                VideoQualityPreset.P720,
+                audioStreamIndex: 1,
+                startSeconds: 0,
+                maxConcurrentSlots: 1,
+                CancellationToken.None,
+                clientSession: "player-tab-1");
+            first.Should().NotBeNull();
+
+            // Double probe with exact same parameters reuses existing lease cleanly without exhausting slots.
+            var reused = await manager.TryStartVideoHlsSessionAsync(
+                userId,
+                sourceId,
+                fakeVideo,
+                VideoQualityPreset.P720,
+                audioStreamIndex: 1,
+                startSeconds: 0,
+                maxConcurrentSlots: 1,
+                CancellationToken.None,
+                clientSession: "player-tab-1");
+            reused.Should().NotBeNull();
+            reused!.SessionId.Should().Be(first!.SessionId);
+
+            // Switching quality for same player clientSession evicts the previous slot even when maxConcurrentSlots is 1.
+            var switched = await manager.TryStartVideoHlsSessionAsync(
+                userId,
+                sourceId,
+                fakeVideo,
+                VideoQualityPreset.P480,
+                audioStreamIndex: 1,
+                startSeconds: 12,
+                maxConcurrentSlots: 1,
+                CancellationToken.None,
+                clientSession: "player-tab-1");
+            switched.Should().NotBeNull();
+            switched!.SessionId.Should().NotBe(first.SessionId);
+            manager.GetActiveSessions().Should().ContainSingle(s => s.SessionId == switched.SessionId);
+
+            await manager.StopClientSessionsAsync(userId, "player-tab-1", CancellationToken.None);
+            manager.GetActiveSessions().Should().BeEmpty();
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, recursive: true);
+            }
+        }
+    }
 }

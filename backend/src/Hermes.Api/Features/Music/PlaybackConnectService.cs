@@ -73,7 +73,9 @@ public sealed class PlaybackConnectService(
     public async Task<PlaybackSessionDto> ApplyTransportAsync(
         Guid userId,
         RemoteTransportCommand command,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? callerDeviceId = null,
+        string? callerDeviceName = null)
     {
         ArgumentNullException.ThrowIfNull(command);
 
@@ -89,7 +91,10 @@ public sealed class PlaybackConnectService(
                 timeProvider.GetUtcNow(),
                 command.RepeatMode,
                 command.Shuffle,
-                command.Volume);
+                command.Volume,
+                command.QueueSongIds,
+                callerDeviceId,
+                callerDeviceName);
 
             await db.SaveChangesAsync(cancellationToken);
             return MapSession(session);

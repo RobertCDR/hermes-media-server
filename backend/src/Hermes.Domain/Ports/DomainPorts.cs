@@ -118,9 +118,12 @@ public interface ITranscodeSessionManager
         long startSeconds,
         int maxConcurrentSlots,
         CancellationToken cancellationToken,
-        HardwareAccelerationMode hardwareAcceleration = HardwareAccelerationMode.None);
+        HardwareAccelerationMode hardwareAcceleration = HardwareAccelerationMode.None,
+        string? clientSession = null);
 
     Task StopSessionAsync(Guid sessionId, CancellationToken cancellationToken);
+    Task StopClientSessionsAsync(Guid userId, string clientSession, CancellationToken cancellationToken) =>
+        Task.CompletedTask;
     string? ResolveHlsAssetPath(Guid sessionId, string fileName);
     IReadOnlyList<ActiveTranscodeSessionInfo> GetActiveSessions() => [];
 }
