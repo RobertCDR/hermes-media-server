@@ -8,6 +8,10 @@ on:
   schedule:
     - cron: '0 6 * * 1'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   nuget-vulnerability-audit:
     runs-on: ubuntu-latest
@@ -16,6 +20,13 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('backend/Directory.Packages.props', 'backend/**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
       - name: Restore packages
         run: dotnet restore backend/Hermes.slnx
       - name: Check vulnerable NuGet packages
