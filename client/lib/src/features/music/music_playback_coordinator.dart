@@ -14,6 +14,7 @@ abstract interface class ConnectTransport {
     HermesRepeatMode? repeatMode,
     bool? shuffle,
     double? volume,
+    List<String>? queueSongIds,
   });
   Future<PlaybackSessionState> transferOutput(String targetDeviceId, {int? positionMs});
   Future<List<OnlineDeviceModel>> getOnlineDevices();
@@ -86,6 +87,7 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
 
   final Map<String, SongModel> _songsById = {};
   final List<String> _upNextSongIds = [];
+  List<String> _originalQueueSongIds = const [];
   NetworkTransportMode _networkMode = NetworkTransportMode.wifi;
   PlaybackSessionState? _session;
   String? _lastRecordedListenSongId;
@@ -93,6 +95,8 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
   String? _activeSourceLabel;
   MusicPageRoute? _activeSourceRoute;
   bool _nowPlayingOpen = false;
+  bool _wasRemoteRenderer = false;
+  bool _claimingDisconnect = false;
   double _lastNonZeroVolume = 0.85;
   final Random _random = Random();
 
@@ -351,6 +355,46 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
     }
   }
 
+  Future<void> _autoClaimAfterRemoteDisconnect(int positionMs) async {
+    if (_disposed || _claimingDisconnect || transport == null) {
+      return;
+    }
+    _claimingDisconnect = true;
+    try {
+      final updated = await transport!.transferOutput(
+        localDeviceId,
+        positionMs: positionMs,
+      );
+      await applyServerSession(updated);
+    } catch (_) {
+      // Best-effort takeover when active remote renderer drops.
+    } finally {
+      _claimingDisconnect = false;
+    }
+  }
+
+  List<String> _fisherYatesShuffleWithLeading(
+    List<String> sourceIds,
+    int chosenIndex,
+  ) {
+    if (sourceIds.length <= 1) {
+      return List<String>.from(sourceIds);
+    }
+    final safeChosen = chosenIndex.clamp(0, sourceIds.length - 1);
+    final chosenId = sourceIds[safeChosen];
+    final rest = <String>[
+      for (var i = 0; i < sourceIds.length; i++)
+        if (i != safeChosen) sourceIds[i],
+    ];
+    for (var i = rest.length - 1; i > 0; i--) {
+      final j = _random.nextInt(i + 1);
+      final tmp = rest[i];
+      rest[i] = rest[j];
+      rest[j] = tmp;
+    }
+    return [chosenId, ...rest];
+  }
+
   Future<void> applyServerSession(PlaybackSessionState incoming) async {
     // Strict monotonic Connect guard: discard stale/reordered packets.
     if (_disposed || incoming.version < _lastAppliedVersion) {
@@ -359,8 +403,17 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
 
     final previousTrackId = _session?.currentSongId;
     final previousVolume = _session?.volume;
+    final previousWasRemote = _wasRemoteRenderer;
     _lastAppliedVersion = incoming.version;
     _session = incoming;
+    _wasRemoteRenderer = incoming.activeRendererDeviceId != null &&
+        incoming.activeRendererDeviceId != localDeviceId;
+    if (!incoming.shuffle &&
+        incoming.queueSongIds.isNotEmpty &&
+        (_originalQueueSongIds.isEmpty ||
+            !_originalQueueSongIds.toSet().containsAll(incoming.queueSongIds))) {
+      _originalQueueSongIds = List<String>.from(incoming.queueSongIds);
+    }
     if (incoming.volume > 0) {
       _lastNonZeroVolume = incoming.volume;
     }
@@ -376,6 +429,13 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
       await audioEngine.stop();
       await mediaBridge.clearState();
       notifyListeners();
+      if (previousWasRemote &&
+          incoming.activeRendererDeviceId == null &&
+          incoming.currentSongId != null &&
+          transport != null &&
+          !_claimingDisconnect) {
+        unawaited(_autoClaimAfterRemoteDisconnect(incoming.positionMs));
+      }
       return;
     }
 
@@ -481,9 +541,16 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
     indexSongs(songs);
     _activeSourceLabel = sourceLabel ?? songs[safeIndex].albumTitle;
     _activeSourceRoute = sourceRoute;
-    final ids = songs.map((s) => s.id).toList();
+    _originalQueueSongIds = songs.map((s) => s.id).toList(growable: false);
+    final isShuffled =
+        (_session?.shuffle ?? false) && _originalQueueSongIds.length > 1;
+    final ids = isShuffled
+        ? _fisherYatesShuffleWithLeading(_originalQueueSongIds, safeIndex)
+        : _originalQueueSongIds;
+    final effectiveStart = isShuffled ? 0 : safeIndex;
+
     if (transport != null) {
-      final updated = await transport!.startPlayback(ids, safeIndex);
+      final updated = await transport!.startPlayback(ids, effectiveStart);
       await applyServerSession(updated);
       return;
     }
@@ -501,8 +568,8 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
         repeatMode: currentRepeat,
         shuffle: currentShuffle,
         volume: currentVol,
-        currentIndex: safeIndex,
-        currentSongId: ids[safeIndex],
+        currentIndex: effectiveStart,
+        currentSongId: ids[effectiveStart],
         positionMs: 0,
         queueSongIds: ids,
       ),
@@ -582,17 +649,37 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
     }
 
     final length = current.queueSongIds.length;
-    var nextIndex = (current.currentIndex + 1) % length;
     if (current.repeatMode == HermesRepeatMode.one) {
-      nextIndex = current.currentIndex;
-    } else if (current.shuffle && length > 1) {
-      var candidate = _random.nextInt(length);
-      if (candidate == current.currentIndex) {
-        candidate = (current.currentIndex + 1) % length;
-      }
-      nextIndex = candidate;
+      await _dispatchTransport(
+        PlaybackState.playing,
+        currentIndex: current.currentIndex,
+        positionMs: 0,
+      );
+      return;
     }
-    await _dispatchTransport(PlaybackState.playing, currentIndex: nextIndex, positionMs: 0);
+
+    final atEnd = current.currentIndex + 1 >= length;
+    if (atEnd && current.shuffle && length > 1) {
+      final pool = _originalQueueSongIds.length >= length
+          ? _originalQueueSongIds
+          : current.queueSongIds;
+      final firstNext = _random.nextInt(pool.length);
+      final reshuffled = _fisherYatesShuffleWithLeading(pool, firstNext);
+      await _dispatchTransport(
+        PlaybackState.playing,
+        currentIndex: 0,
+        positionMs: 0,
+        queueSongIds: reshuffled,
+      );
+      return;
+    }
+
+    final nextIndex = (current.currentIndex + 1) % length;
+    await _dispatchTransport(
+      PlaybackState.playing,
+      currentIndex: nextIndex,
+      positionMs: 0,
+    );
   }
 
   Future<void> skipPrevious() async {
@@ -630,7 +717,46 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
     if (current == null) {
       return;
     }
-    await _dispatchTransport(current.state, shuffle: !current.shuffle);
+    final nextShuffle = !current.shuffle;
+    if (current.queueSongIds.isEmpty) {
+      await _dispatchTransport(current.state, shuffle: nextShuffle);
+      return;
+    }
+
+    final activeSongId = current.currentSongId ?? current.queueSongIds.first;
+    if (nextShuffle) {
+      if (_originalQueueSongIds.isEmpty ||
+          _originalQueueSongIds.length != current.queueSongIds.length ||
+          !_originalQueueSongIds.toSet().containsAll(current.queueSongIds)) {
+        _originalQueueSongIds = List<String>.from(current.queueSongIds);
+      }
+      final origIdx = _originalQueueSongIds.indexOf(activeSongId);
+      final shuffled = _fisherYatesShuffleWithLeading(
+        _originalQueueSongIds,
+        origIdx >= 0 ? origIdx : 0,
+      );
+      await _dispatchTransport(
+        current.state,
+        currentIndex: 0,
+        positionMs: currentPositionMs,
+        shuffle: true,
+        queueSongIds: shuffled,
+      );
+      return;
+    }
+
+    final restored = (_originalQueueSongIds.isNotEmpty &&
+            _originalQueueSongIds.contains(activeSongId))
+        ? List<String>.from(_originalQueueSongIds)
+        : List<String>.from(current.queueSongIds);
+    final restoredIdx = restored.indexOf(activeSongId);
+    await _dispatchTransport(
+      current.state,
+      currentIndex: restoredIdx >= 0 ? restoredIdx : 0,
+      positionMs: currentPositionMs,
+      shuffle: false,
+      queueSongIds: restored,
+    );
   }
 
   Future<void> cycleRepeatMode() async {
@@ -684,6 +810,7 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
     HermesRepeatMode? repeatMode,
     bool? shuffle,
     double? volume,
+    List<String>? queueSongIds,
   }) async {
     if (transport != null) {
       final updated = await transport!.sendTransport(
@@ -693,6 +820,7 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
         repeatMode: repeatMode,
         shuffle: shuffle,
         volume: volume,
+        queueSongIds: queueSongIds,
       );
       await applyServerSession(updated);
       return;
@@ -702,17 +830,24 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
     if (current == null) {
       return;
     }
-    final nextIdx = currentIndex ?? current.currentIndex;
-    final nextSongId = current.queueSongIds.isEmpty
-        ? null
-        : current.queueSongIds[nextIdx.clamp(0, current.queueSongIds.length - 1)];
+    final nextQueue = queueSongIds ?? current.queueSongIds;
+    final nextIdx = nextQueue.isEmpty
+        ? 0
+        : (currentIndex ?? current.currentIndex).clamp(0, nextQueue.length - 1);
+    final nextSongId = nextQueue.isEmpty ? null : nextQueue[nextIdx];
+    final shouldClaim = current.activeRendererDeviceId == null &&
+        state == PlaybackState.playing;
+    final nextRendererId =
+        shouldClaim ? localDeviceId : current.activeRendererDeviceId;
+    final nextRendererName =
+        shouldClaim ? 'This Device' : current.activeRendererDeviceName;
 
     await applyServerSession(
       PlaybackSessionState(
         sessionId: current.sessionId,
         version: _lastAppliedVersion + 1,
-        activeRendererDeviceId: current.activeRendererDeviceId,
-        activeRendererDeviceName: current.activeRendererDeviceName,
+        activeRendererDeviceId: nextRendererId,
+        activeRendererDeviceName: nextRendererName,
         state: state,
         repeatMode: repeatMode ?? current.repeatMode,
         shuffle: shuffle ?? current.shuffle,
@@ -720,7 +855,7 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
         currentIndex: nextIdx,
         currentSongId: nextSongId,
         positionMs: positionMs ?? current.positionMs,
-        queueSongIds: current.queueSongIds,
+        queueSongIds: nextQueue,
       ),
     );
   }

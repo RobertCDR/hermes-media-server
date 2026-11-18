@@ -55,7 +55,8 @@ class _RecordingAudioEngine implements AudioEngineAdapter {
 }
 
 class _FakeConnectTransport implements ConnectTransport {
-  _FakeConnectTransport(this._songs);
+  _FakeConnectTransport(this._songs)
+      : _queueIds = _songs.map((s) => s.id).toList();
 
   final List<SongModel> _songs;
   int _version = 1;
@@ -64,6 +65,7 @@ class _FakeConnectTransport implements ConnectTransport {
   bool _shuffle = false;
   int _index = 0;
   int _positionMs = 0;
+  List<String> _queueIds;
 
   PlaybackSessionState _snapshot() => PlaybackSessionState(
         sessionId: 'sess-pr27',
@@ -75,9 +77,11 @@ class _FakeConnectTransport implements ConnectTransport {
         shuffle: _shuffle,
         volume: 1.0,
         currentIndex: _index,
-        currentSongId: _songs[_index % _songs.length].id,
+        currentSongId: _queueIds.isEmpty
+            ? _songs[_index % _songs.length].id
+            : _queueIds[_index.clamp(0, _queueIds.length - 1)],
         positionMs: _positionMs,
-        queueSongIds: _songs.map((s) => s.id).toList(),
+        queueSongIds: List<String>.from(_queueIds),
       );
 
   @override
@@ -89,6 +93,7 @@ class _FakeConnectTransport implements ConnectTransport {
     int startIndex,
   ) async {
     _version++;
+    _queueIds = List<String>.from(queueSongIds);
     _index = startIndex;
     _state = PlaybackState.playing;
     _positionMs = 0;
@@ -103,9 +108,11 @@ class _FakeConnectTransport implements ConnectTransport {
     HermesRepeatMode? repeatMode,
     bool? shuffle,
     double? volume,
+    List<String>? queueSongIds,
   }) async {
     _version++;
     _state = state;
+    if (queueSongIds != null) _queueIds = List<String>.from(queueSongIds);
     if (currentIndex != null) _index = currentIndex;
     if (positionMs != null) _positionMs = positionMs;
     if (repeatMode != null) _repeat = repeatMode;

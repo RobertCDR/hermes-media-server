@@ -708,6 +708,7 @@ class SignalRConnectTransport implements ConnectTransport {
     HermesRepeatMode? repeatMode,
     bool? shuffle,
     double? volume,
+    List<String>? queueSongIds,
   }) async {
     if (syncClient.isConnected) {
       try {
@@ -721,6 +722,7 @@ class SignalRConnectTransport implements ConnectTransport {
               if (repeatMode != null) 'repeatMode': repeatMode.index,
               'shuffle': ?shuffle,
               'volume': ?volume,
+              'queueSongIds': ?queueSongIds,
             },
           ],
         );
@@ -731,7 +733,7 @@ class SignalRConnectTransport implements ConnectTransport {
     }
 
     final prev = syncClient.currentSession;
-    final queue = prev?.queueSongIds ?? const <String>[];
+    final queue = queueSongIds ?? prev?.queueSongIds ?? const <String>[];
     final nextIndex = queue.isEmpty
         ? 0
         : (currentIndex ?? prev?.currentIndex ?? 0).clamp(0, queue.length - 1);
