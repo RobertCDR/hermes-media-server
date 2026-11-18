@@ -250,6 +250,7 @@ class _RecordingVideoPlaybackController
       openCalls = [];
   final List<Uri?> subtitleUriChanges = [];
   final List<int> audioStreamSelections = [];
+  final List<double> subtitleDelayChanges = [];
   final List<int> seekCalls = [];
   int playCalls = 0;
   int pauseCalls = 0;
@@ -312,6 +313,11 @@ class _RecordingVideoPlaybackController
     required List<MediaStreamModel> availableAudioStreams,
   }) async {
     audioStreamSelections.add(streamIndex);
+  }
+
+  @override
+  Future<void> setSubtitleDelaySeconds(double seconds) async {
+    subtitleDelayChanges.add(seconds);
   }
 
   @override

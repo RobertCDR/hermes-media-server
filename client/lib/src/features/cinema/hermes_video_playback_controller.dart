@@ -41,6 +41,8 @@ abstract interface class HermesVideoPlaybackController {
     required List<MediaStreamModel> availableAudioStreams,
   });
 
+  Future<void> setSubtitleDelaySeconds(double seconds);
+
   Future<void> play();
   Future<void> pause();
   Future<void> seek(int positionMs);
@@ -111,6 +113,7 @@ class MediaKitVideoPlaybackController implements HermesVideoPlaybackController {
   String? _desiredSubtitleTitle;
   String? _desiredSubtitleLanguage;
   Uri? _appliedSubtitleUri;
+  double _subtitleDelaySeconds = 0.0;
   bool _propertiesApplied = false;
   bool _mediaLoaded = false;
   bool _disposed = false;
@@ -200,6 +203,16 @@ class MediaKitVideoPlaybackController implements HermesVideoPlaybackController {
       for (final entry in config.mpvBackendProperties.entries) {
         try {
           await nativePlatform.setProperty(entry.key, entry.value);
+        } catch (_) {
+          // Ignore unsupported mpv properties across platform builds.
+        }
+      }
+      if (_subtitleDelaySeconds != 0.0) {
+        try {
+          await nativePlatform.setProperty(
+            'sub-delay',
+            _subtitleDelaySeconds.toStringAsFixed(2),
+          );
         } catch (_) {
           // Ignore unsupported mpv properties across platform builds.
         }
@@ -309,6 +322,22 @@ class MediaKitVideoPlaybackController implements HermesVideoPlaybackController {
     }
     chosen ??= realTracks.first;
     await _player.setAudioTrack(chosen);
+  }
+
+  @override
+  Future<void> setSubtitleDelaySeconds(double seconds) async {
+    _subtitleDelaySeconds = seconds.clamp(-10.0, 10.0);
+    if (_disposed) return;
+    if (_player.platform case final NativePlayer nativePlatform) {
+      try {
+        await nativePlatform.setProperty(
+          'sub-delay',
+          _subtitleDelaySeconds.toStringAsFixed(2),
+        );
+      } catch (_) {
+        // Ignore unsupported mpv properties across platform builds.
+      }
+    }
   }
 
   @override
@@ -434,6 +463,9 @@ class StubVideoPlaybackController implements HermesVideoPlaybackController {
     required int streamIndex,
     required List<MediaStreamModel> availableAudioStreams,
   }) async {}
+
+  @override
+  Future<void> setSubtitleDelaySeconds(double seconds) async {}
 
   @override
   Future<void> play() async {}

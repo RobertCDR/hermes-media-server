@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io' show Platform;
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform, kIsWeb;
@@ -184,6 +185,12 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
   bool _upNextDismissed = false;
   bool _completionHandled = false;
   bool _isFullscreen = false;
+  double _subtitleDelaySeconds = 0.0;
+  double _subtitleVerticalOffset = 0.0;
+  late SubtitleSizePreset _subtitleSize = widget.accountPreferences.subtitleSize;
+  late SubtitleBackgroundStyle _subtitleBackground =
+      widget.accountPreferences.subtitleBackground;
+  late Color _subtitleColor = widget.config.subtitleColor;
   final FocusNode _playerFocusNode = FocusNode();
   List<String> _liveSubtitleLines = const [];
   String? _playbackError;
@@ -608,6 +615,14 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
     return KeyEventResult.ignored;
   }
 
+  void _setSubtitleDelay(double nextSeconds) {
+    final stepped = (nextSeconds * 4).round() / 4.0;
+    final clamped = stepped.clamp(-5.0, 5.0);
+    setState(() => _subtitleDelaySeconds = clamped);
+    _wakeControls();
+    unawaited(_playback.setSubtitleDelaySeconds(clamped));
+  }
+
   String _formatClock(int ms) {
     final totalSec = (ms / 1000).floor().clamp(0, 86400);
     final h = totalSec ~/ 3600;
@@ -636,9 +651,13 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
         remainingSeconds <= 20 &&
         !_upNextDismissed;
 
-    final subBottomOffset = showUpNext
+    final viewportHeight = MediaQuery.sizeOf(context).height;
+    final baseSubBottomOffset = showUpNext
         ? 230.0
-        : (_controlsHidden ? 64.0 : 134.0);
+        : (_controlsHidden ? 56.0 : 128.0);
+    final subBottomOffset = (baseSubBottomOffset + _subtitleVerticalOffset)
+        .clamp(16.0, math.max<double>(96.0, viewportHeight * 0.48))
+        .toDouble();
 
     final liveSubText = _liveSubtitleLines
         .map((line) => line.trim())
@@ -820,10 +839,9 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
                   child: Center(
                     child: _PlayerSubtitleCaption(
                       text: subtitleDisplayText,
-                      color: widget.config.subtitleColor,
-                      sizePreset: widget.accountPreferences.subtitleSize,
-                      backgroundStyle:
-                          widget.accountPreferences.subtitleBackground,
+                      color: _subtitleColor,
+                      sizePreset: _subtitleSize,
+                      backgroundStyle: _subtitleBackground,
                     ),
                   ),
                 ),
@@ -861,8 +879,31 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
                 child: IgnorePointer(
                   ignoring: _controlsHidden,
                   child: SafeArea(
-                    child: Stack(
-                      children: [
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final availWidth = constraints.maxWidth;
+                        final availHeight = constraints.maxHeight;
+                        final isShortOrNarrow =
+                            availWidth < 760 || availHeight < 540;
+                        final isLandscapeDock =
+                            isShortOrNarrow && availWidth >= 560;
+                        final panelMaxWidth = isLandscapeDock
+                            ? math.min(380.0, availWidth * 0.56)
+                            : (isShortOrNarrow
+                                ? math.max(240.0, availWidth - 24)
+                                : math.min(640.0, math.max(320.0, availWidth - 48)));
+                        final panelMaxHeight = isLandscapeDock
+                            ? (availHeight - 86).clamp(160.0, 560.0)
+                            : (isShortOrNarrow
+                                ? math
+                                    .min(availHeight * 0.58, availHeight - 104)
+                                    .clamp(160.0, 440.0)
+                                : math
+                                    .min(400.0, availHeight - 116)
+                                    .clamp(200.0, 400.0));
+
+                        return Stack(
+                          children: [
                         // Top bar
                         Positioned(
                           left: 24,
@@ -1194,28 +1235,38 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
                             ],
                           ),
                         ),
-                        // 3-Column / Responsive Tracks & Quality Panel (.vp-panel)
+                        // Nuvio-style Viewport-Bounded Scrollable Tracks & Subtitle Style Panel
                         if (_panelOpen)
                           Positioned(
-                            left: MediaQuery.sizeOf(context).width < 640
-                                ? 12
-                                : null,
-                            right: MediaQuery.sizeOf(context).width < 640
-                                ? 12
-                                : 24,
-                            bottom: MediaQuery.sizeOf(context).width < 640
-                                ? 80
-                                : 92,
+                            top: isLandscapeDock ? 12 : null,
+                            left: isLandscapeDock
+                                ? null
+                                : (isShortOrNarrow ? 12 : null),
+                            right: isShortOrNarrow ? 12 : 24,
+                            bottom: isLandscapeDock
+                                ? 74
+                                : (isShortOrNarrow ? 80 : 92),
+                            width: isLandscapeDock ? panelMaxWidth : null,
                             child: Listener(
                               onPointerDown: (_) => _wakeControls(),
                               child: _TracksAndQualityPanel(
                                 tokens: tokens,
                                 source: widget.source,
+                                compact: isShortOrNarrow,
+                                maxWidth: panelMaxWidth,
+                                maxHeight: panelMaxHeight,
                                 selectedAudioIndex: _selectedAudioIndex,
                                 selectedSubtitleIndex: _selectedSubtitleIndex,
                                 selectedQuality: _quality,
                                 qualityOrder: _qualityOrder,
+                                subtitleDelaySeconds: _subtitleDelaySeconds,
+                                subtitleVerticalOffset: _subtitleVerticalOffset,
+                                subtitleSize: _subtitleSize,
+                                subtitleBackground: _subtitleBackground,
+                                subtitleColor: _subtitleColor,
                                 onInteraction: _wakeControls,
+                                onClose: () =>
+                                    setState(() => _panelOpen = false),
                                 onSelectAudio: (idx) {
                                   _wakeControls();
                                   unawaited(_applyAudioSelection(idx));
@@ -1234,10 +1285,31 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
                                     ),
                                   );
                                 },
+                                onSubtitleDelayChanged: _setSubtitleDelay,
+                                onSubtitleOffsetChanged: (offset) {
+                                  _wakeControls();
+                                  setState(
+                                    () => _subtitleVerticalOffset = offset,
+                                  );
+                                },
+                                onSubtitleSizeChanged: (size) {
+                                  _wakeControls();
+                                  setState(() => _subtitleSize = size);
+                                },
+                                onSubtitleBackgroundChanged: (bg) {
+                                  _wakeControls();
+                                  setState(() => _subtitleBackground = bg);
+                                },
+                                onSubtitleColorChanged: (color) {
+                                  _wakeControls();
+                                  setState(() => _subtitleColor = color);
+                                },
                               ),
                             ),
                           ),
                       ],
+                    );
+                      },
                     ),
                   ),
                 ),
@@ -1323,31 +1395,59 @@ class _PlayerSubtitleCaption extends StatelessWidget {
   }
 }
 
-enum _TrackPanelTab { subtitles, audio, quality }
+enum _TrackPanelTab { subtitles, style, audio, quality }
 
 class _TracksAndQualityPanel extends StatefulWidget {
   const _TracksAndQualityPanel({
     required this.tokens,
     required this.source,
+    required this.compact,
+    required this.maxWidth,
+    required this.maxHeight,
     required this.selectedAudioIndex,
     required this.selectedSubtitleIndex,
     required this.selectedQuality,
     required this.qualityOrder,
+    required this.subtitleDelaySeconds,
+    required this.subtitleVerticalOffset,
+    required this.subtitleSize,
+    required this.subtitleBackground,
+    required this.subtitleColor,
+    required this.onClose,
     required this.onSelectAudio,
     required this.onSelectSubtitle,
     required this.onSelectQuality,
+    required this.onSubtitleDelayChanged,
+    required this.onSubtitleOffsetChanged,
+    required this.onSubtitleSizeChanged,
+    required this.onSubtitleBackgroundChanged,
+    required this.onSubtitleColorChanged,
     this.onInteraction,
   });
 
   final HermesThemeTokens tokens;
   final MediaSourceModel source;
+  final bool compact;
+  final double maxWidth;
+  final double maxHeight;
   final int selectedAudioIndex;
   final int? selectedSubtitleIndex;
   final VideoQualityPreset selectedQuality;
   final List<VideoQualityPreset> qualityOrder;
+  final double subtitleDelaySeconds;
+  final double subtitleVerticalOffset;
+  final SubtitleSizePreset subtitleSize;
+  final SubtitleBackgroundStyle subtitleBackground;
+  final Color subtitleColor;
+  final VoidCallback onClose;
   final ValueChanged<int> onSelectAudio;
   final ValueChanged<int?> onSelectSubtitle;
   final ValueChanged<VideoQualityPreset> onSelectQuality;
+  final ValueChanged<double> onSubtitleDelayChanged;
+  final ValueChanged<double> onSubtitleOffsetChanged;
+  final ValueChanged<SubtitleSizePreset> onSubtitleSizeChanged;
+  final ValueChanged<SubtitleBackgroundStyle> onSubtitleBackgroundChanged;
+  final ValueChanged<Color> onSubtitleColorChanged;
   final VoidCallback? onInteraction;
 
   @override
@@ -1356,6 +1456,7 @@ class _TracksAndQualityPanel extends StatefulWidget {
 
 class _TracksAndQualityPanelState extends State<_TracksAndQualityPanel> {
   _TrackPanelTab _activeTab = _TrackPanelTab.subtitles;
+  bool _desktopShowStyle = false;
 
   List<_PanelOption> _audioItems() {
     if (widget.source.audioStreams.isEmpty) {
@@ -1411,40 +1512,86 @@ class _TracksAndQualityPanelState extends State<_TracksAndQualityPanel> {
         .toList(growable: false);
   }
 
+  Widget _buildStyleEditor() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.only(right: 4, bottom: 4),
+      child: _SubtitleStyleEditor(
+        tokens: widget.tokens,
+        delaySeconds: widget.subtitleDelaySeconds,
+        verticalOffset: widget.subtitleVerticalOffset,
+        sizePreset: widget.subtitleSize,
+        backgroundStyle: widget.subtitleBackground,
+        color: widget.subtitleColor,
+        onDelayChanged: widget.onSubtitleDelayChanged,
+        onOffsetChanged: widget.onSubtitleOffsetChanged,
+        onSizeChanged: widget.onSubtitleSizeChanged,
+        onBackgroundChanged: widget.onSubtitleBackgroundChanged,
+        onColorChanged: widget.onSubtitleColorChanged,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final compact = MediaQuery.sizeOf(context).width < 640;
     final tokens = widget.tokens;
     final decoration = BoxDecoration(
-      color: const Color(0xF0101010),
-      borderRadius: BorderRadius.circular(10),
+      color: const Color(0xF2121215),
+      borderRadius: BorderRadius.circular(12),
       border: Border.all(color: tokens.line),
       boxShadow: const [
         BoxShadow(
-          color: Color(0x80000000),
+          color: Color(0x88000000),
           blurRadius: 36,
           offset: Offset(0, 16),
         ),
       ],
     );
 
-    if (compact) {
-      final items = switch (_activeTab) {
-        _TrackPanelTab.subtitles => _subtitleItems(),
-        _TrackPanelTab.audio => _audioItems(),
-        _TrackPanelTab.quality => _qualityItems(),
-      };
+    if (widget.compact) {
       return Material(
         color: Colors.transparent,
         child: Container(
           key: const Key('vp-panel'),
-          constraints: const BoxConstraints(maxHeight: 240),
+          constraints: BoxConstraints(
+            maxWidth: widget.maxWidth,
+            maxHeight: widget.maxHeight,
+          ),
           padding: const EdgeInsets.all(12),
           decoration: decoration,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Player settings',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontFamily: 'Figtree',
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white.withValues(alpha: 0.9),
+                      ),
+                    ),
+                  ),
+                  InkWell(
+                    onTap: widget.onClose,
+                    borderRadius: BorderRadius.circular(14),
+                    child: Padding(
+                      padding: const EdgeInsets.all(2),
+                      child: Icon(
+                        Icons.close_rounded,
+                        size: 18,
+                        color: Colors.white.withValues(alpha: 0.72),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
               Row(
                 children: [
                   _CompactTabChip(
@@ -1454,6 +1601,16 @@ class _TracksAndQualityPanelState extends State<_TracksAndQualityPanel> {
                     onTap: () {
                       widget.onInteraction?.call();
                       setState(() => _activeTab = _TrackPanelTab.subtitles);
+                    },
+                  ),
+                  const SizedBox(width: 6),
+                  _CompactTabChip(
+                    label: 'Style',
+                    selected: _activeTab == _TrackPanelTab.style,
+                    tokens: tokens,
+                    onTap: () {
+                      widget.onInteraction?.call();
+                      setState(() => _activeTab = _TrackPanelTab.style);
                     },
                   ),
                   const SizedBox(width: 6),
@@ -1480,16 +1637,24 @@ class _TracksAndQualityPanelState extends State<_TracksAndQualityPanel> {
               ),
               const SizedBox(height: 8),
               Flexible(
-                child: _PanelColumn(
-                  title: switch (_activeTab) {
-                    _TrackPanelTab.subtitles => 'Subtitles',
-                    _TrackPanelTab.audio => 'Audio',
-                    _TrackPanelTab.quality => 'Quality',
-                  },
-                  tokens: tokens,
-                  items: items,
-                  fillWidth: true,
-                ),
+                child: _activeTab == _TrackPanelTab.style
+                    ? _buildStyleEditor()
+                    : _PanelColumn(
+                        title: switch (_activeTab) {
+                          _TrackPanelTab.subtitles => 'Subtitles',
+                          _TrackPanelTab.style => 'Style',
+                          _TrackPanelTab.audio => 'Audio',
+                          _TrackPanelTab.quality => 'Quality',
+                        },
+                        tokens: tokens,
+                        items: switch (_activeTab) {
+                          _TrackPanelTab.subtitles => _subtitleItems(),
+                          _TrackPanelTab.style => const [],
+                          _TrackPanelTab.audio => _audioItems(),
+                          _TrackPanelTab.quality => _qualityItems(),
+                        },
+                        fillWidth: true,
+                      ),
               ),
             ],
           ),
@@ -1501,33 +1666,404 @@ class _TracksAndQualityPanelState extends State<_TracksAndQualityPanel> {
       color: Colors.transparent,
       child: Container(
         key: const Key('vp-panel'),
-        constraints: const BoxConstraints(maxWidth: 560, maxHeight: 320),
-        padding: const EdgeInsets.all(16),
+        constraints: BoxConstraints(
+          maxWidth: widget.maxWidth,
+          maxHeight: widget.maxHeight,
+        ),
+        padding: const EdgeInsets.all(14),
         decoration: decoration,
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _PanelColumn(
-                title: 'Audio',
-                tokens: tokens,
-                items: _audioItems(),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Text(
+                  'Tracks & subtitles',
+                  style: TextStyle(
+                    fontFamily: 'Figtree',
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white.withValues(alpha: 0.9),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                _HeaderPillChip(
+                  label: 'Tracks',
+                  selected: !_desktopShowStyle,
+                  tokens: tokens,
+                  onTap: () {
+                    widget.onInteraction?.call();
+                    setState(() => _desktopShowStyle = false);
+                  },
+                ),
+                const SizedBox(width: 6),
+                _HeaderPillChip(
+                  label: 'Subtitle Style',
+                  selected: _desktopShowStyle,
+                  tokens: tokens,
+                  onTap: () {
+                    widget.onInteraction?.call();
+                    setState(() => _desktopShowStyle = true);
+                  },
+                ),
+                const Spacer(),
+                IconButton(
+                  tooltip: 'Close panel',
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                  onPressed: widget.onClose,
+                  icon: Icon(
+                    Icons.close_rounded,
+                    size: 18,
+                    color: Colors.white.withValues(alpha: 0.72),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Flexible(
+              child: _desktopShowStyle
+                  ? _buildStyleEditor()
+                  : SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _PanelColumn(
+                            title: 'Audio',
+                            tokens: tokens,
+                            items: _audioItems(),
+                          ),
+                          const SizedBox(width: 12),
+                          _PanelColumn(
+                            title: 'Subtitles',
+                            tokens: tokens,
+                            items: _subtitleItems(),
+                          ),
+                          const SizedBox(width: 12),
+                          _PanelColumn(
+                            title: 'Quality',
+                            tokens: tokens,
+                            items: _qualityItems(),
+                          ),
+                        ],
+                      ),
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _HeaderPillChip extends StatelessWidget {
+  const _HeaderPillChip({
+    required this.label,
+    required this.selected,
+    required this.tokens,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final HermesThemeTokens tokens;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: selected
+              ? tokens.accent.withValues(alpha: 0.24)
+              : Colors.white.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: selected ? tokens.accent : tokens.line),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontFamily: 'Figtree',
+            fontSize: 12,
+            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+            color: selected ? Colors.white : Colors.white.withValues(alpha: 0.78),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SubtitleStyleEditor extends StatelessWidget {
+  const _SubtitleStyleEditor({
+    required this.tokens,
+    required this.delaySeconds,
+    required this.verticalOffset,
+    required this.sizePreset,
+    required this.backgroundStyle,
+    required this.color,
+    required this.onDelayChanged,
+    required this.onOffsetChanged,
+    required this.onSizeChanged,
+    required this.onBackgroundChanged,
+    required this.onColorChanged,
+  });
+
+  final HermesThemeTokens tokens;
+  final double delaySeconds;
+  final double verticalOffset;
+  final SubtitleSizePreset sizePreset;
+  final SubtitleBackgroundStyle backgroundStyle;
+  final Color color;
+  final ValueChanged<double> onDelayChanged;
+  final ValueChanged<double> onOffsetChanged;
+  final ValueChanged<SubtitleSizePreset> onSizeChanged;
+  final ValueChanged<SubtitleBackgroundStyle> onBackgroundChanged;
+  final ValueChanged<Color> onColorChanged;
+
+  static const List<({String label, Color color})> _colorPresets = [
+    (label: 'HDR', color: Color(0xFFD8D8D8)),
+    (label: 'White', color: Color(0xFFFFFFFF)),
+    (label: 'Yellow', color: Color(0xFFF5D76E)),
+    (label: 'Cyan', color: Color(0xFF8CE8FF)),
+  ];
+
+  String _formatDelay(double s) {
+    if (s.abs() < 0.01) return '0.00s';
+    final prefix = s > 0 ? '+' : '';
+    return '$prefix${s.toStringAsFixed(2)}s';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _sectionTitle('Timing delay'),
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            _stepButton(
+              key: const Key('vp-sub-delay-minus'),
+              label: '-0.25s',
+              onTap: () => onDelayChanged(delaySeconds - 0.25),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.06),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  _formatDelay(delaySeconds),
+                  key: const Key('vp-sub-delay-value'),
+                  style: const TextStyle(
+                    fontFamily: 'Figtree',
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    fontFeatures: [FontFeature.tabularFigures()],
+                    color: Colors.white,
+                  ),
+                ),
               ),
-              const SizedBox(width: 12),
-              _PanelColumn(
-                title: 'Subtitles',
-                tokens: tokens,
-                items: _subtitleItems(),
-              ),
-              const SizedBox(width: 12),
-              _PanelColumn(
-                title: 'Quality',
-                tokens: tokens,
-                items: _qualityItems(),
+            ),
+            const SizedBox(width: 8),
+            _stepButton(
+              key: const Key('vp-sub-delay-plus'),
+              label: '+0.25s',
+              onTap: () => onDelayChanged(delaySeconds + 0.25),
+            ),
+            if (delaySeconds.abs() >= 0.01) ...[
+              const SizedBox(width: 6),
+              TextButton(
+                key: const Key('vp-sub-delay-reset'),
+                onPressed: () => onDelayChanged(0.0),
+                style: TextButton.styleFrom(
+                  foregroundColor: tokens.accent,
+                  minimumSize: const Size(0, 30),
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                ),
+                child: const Text('Reset', style: TextStyle(fontSize: 12)),
               ),
             ],
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(child: _sectionTitle('Vertical position')),
+            Text(
+              '${verticalOffset >= 0 ? '+' : ''}${verticalOffset.round()} px',
+              style: TextStyle(
+                fontFamily: 'Figtree',
+                fontSize: 12,
+                color: Colors.white.withValues(alpha: 0.72),
+              ),
+            ),
+          ],
+        ),
+        SliderTheme(
+          data: SliderTheme.of(context).copyWith(
+            trackHeight: 3,
+            activeTrackColor: tokens.accent,
+            inactiveTrackColor: Colors.white.withValues(alpha: 0.2),
+            thumbColor: tokens.accent,
+            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
           ),
+          child: Slider(
+            key: const Key('vp-sub-offset-slider'),
+            value: verticalOffset.clamp(-24.0, 120.0),
+            min: -24.0,
+            max: 120.0,
+            divisions: 24,
+            onChanged: onOffsetChanged,
+          ),
+        ),
+        const SizedBox(height: 4),
+        _sectionTitle('Text size'),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: [
+            for (final preset in SubtitleSizePreset.values)
+              _styleChoiceChip(
+                label: preset.label,
+                selected: sizePreset == preset,
+                onTap: () => onSizeChanged(preset),
+              ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        _sectionTitle('Background'),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: [
+            for (final bg in SubtitleBackgroundStyle.values)
+              _styleChoiceChip(
+                label: bg.label,
+                selected: backgroundStyle == bg,
+                onTap: () => onBackgroundChanged(bg),
+              ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        _sectionTitle('Color'),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: [
+            for (final preset in _colorPresets)
+              _styleChoiceChip(
+                label: preset.label,
+                swatchColor: preset.color,
+                selected: color.toARGB32() == preset.color.toARGB32(),
+                onTap: () => onColorChanged(preset.color),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _sectionTitle(String text) {
+    return Text(
+      text,
+      style: TextStyle(
+        fontFamily: 'Figtree',
+        fontSize: 12,
+        fontWeight: FontWeight.w700,
+        color: Colors.white.withValues(alpha: 0.65),
+      ),
+    );
+  }
+
+  Widget _stepButton({
+    required Key key,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      key: key,
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: tokens.line),
+        ),
+        child: Text(
+          label,
+          style: const TextStyle(
+            fontFamily: 'Figtree',
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: Colors.white,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _styleChoiceChip({
+    required String label,
+    required bool selected,
+    required VoidCallback onTap,
+    Color? swatchColor,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: selected
+              ? tokens.accent.withValues(alpha: 0.24)
+              : Colors.white.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: selected ? tokens.accent : tokens.line),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (swatchColor != null) ...[
+              Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  color: swatchColor,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.black54, width: 0.8),
+                ),
+              ),
+              const SizedBox(width: 6),
+            ],
+            Text(
+              label,
+              style: TextStyle(
+                fontFamily: 'Figtree',
+                fontSize: 12,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                color: selected
+                    ? Colors.white
+                    : Colors.white.withValues(alpha: 0.82),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -1571,7 +2107,7 @@ class _CompactTabChip extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
               fontFamily: 'Figtree',
-              fontSize: 12,
+              fontSize: 11.5,
               fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
               color: selected ? Colors.white : Colors.white.withValues(alpha: 0.78),
             ),
