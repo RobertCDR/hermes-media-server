@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, debugDefaultTargetPlatformOverride;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_client/src/core/settings/hermes_preferences.dart';
 import 'package:hermes_client/src/core/theme/hermes_theme_tokens.dart';
@@ -189,78 +191,83 @@ void main() {
 
   group('PlayerAndThemeSettingsScreen & AdminDashboardScreen', () {
     testWidgets('settings screen updates v4 theme cards, OLED pure black, renderer, and synced account preferences', (tester) async {
-      tester.view.physicalSize = const Size(1024, 900);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.resetPhysicalSize);
+      debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+      try {
+        tester.view.physicalSize = const Size(1024, 900);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
 
-      HermesThemeTokens updatedTokens = HermesThemeTokens.resolve();
-      VideoRendererBackend renderer = VideoRendererBackend.openGl;
-      VideoQualityPreset defaultQuality = VideoQualityPreset.directPlay;
-      HermesAccountPreferences accountPrefs = const HermesAccountPreferences();
+        HermesThemeTokens updatedTokens = HermesThemeTokens.resolve();
+        VideoRendererBackend renderer = VideoRendererBackend.openGl;
+        VideoQualityPreset defaultQuality = VideoQualityPreset.directPlay;
+        HermesAccountPreferences accountPrefs = const HermesAccountPreferences();
 
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: updatedTokens.toThemeData(),
-          home: PlayerAndThemeSettingsScreen(
-            tokens: updatedTokens,
-            rendererBackend: renderer,
-            defaultVideoQuality: defaultQuality,
-            accountPreferences: accountPrefs,
-            username: 'robert',
-            deviceName: 'Win11',
-            onThemeChanged: (next) => updatedTokens = next,
-            onRendererChanged: (next) => renderer = next,
-            onDefaultVideoQualityChanged: (next) => defaultQuality = next,
-            onAccountPreferencesChanged: (next) => accountPrefs = next,
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: updatedTokens.toThemeData(),
+            home: PlayerAndThemeSettingsScreen(
+              tokens: updatedTokens,
+              rendererBackend: renderer,
+              defaultVideoQuality: defaultQuality,
+              accountPreferences: accountPrefs,
+              username: 'robert',
+              deviceName: 'Win11',
+              onThemeChanged: (next) => updatedTokens = next,
+              onRendererChanged: (next) => renderer = next,
+              onDefaultVideoQualityChanged: (next) => defaultQuality = next,
+              onAccountPreferencesChanged: (next) => accountPrefs = next,
+            ),
           ),
-        ),
-      );
+        );
 
-      expect(find.text('Saved on Win11 only'), findsOneWidget);
+        expect(find.text('Saved on Win11 only'), findsOneWidget);
 
-      await tester.tap(find.byKey(const Key('theme-card-forest')));
-      await tester.pumpAndSettle();
-      expect(updatedTokens.themeId, HermesThemeId.forest);
-      expect(updatedTokens.accent, const Color(0xFF3DD68C));
+        await tester.tap(find.byKey(const Key('theme-card-forest')));
+        await tester.pumpAndSettle();
+        expect(updatedTokens.themeId, HermesThemeId.forest);
+        expect(updatedTokens.accent, const Color(0xFF3DD68C));
 
-      await tester.ensureVisible(find.byKey(const Key('setting-pure-black-switch')));
-      await tester.tap(find.byKey(const Key('setting-pure-black-switch')));
-      await tester.pumpAndSettle();
-      expect(updatedTokens.pureBlack, isTrue);
-      expect(updatedTokens.bg, const Color(0xFF000000));
+        await tester.ensureVisible(find.byKey(const Key('setting-pure-black-switch')));
+        await tester.tap(find.byKey(const Key('setting-pure-black-switch')));
+        await tester.pumpAndSettle();
+        expect(updatedTokens.pureBlack, isTrue);
+        expect(updatedTokens.bg, const Color(0xFF000000));
 
-      await tester.ensureVisible(find.text('Original (Direct Play)'));
-      await tester.tap(find.text('Original (Direct Play)'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('1080p').last);
-      await tester.pumpAndSettle();
-      expect(defaultQuality, VideoQualityPreset.p1080);
+        await tester.ensureVisible(find.text('Original (Direct Play)'));
+        await tester.tap(find.text('Original (Direct Play)'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('1080p').last);
+        await tester.pumpAndSettle();
+        expect(defaultQuality, VideoQualityPreset.p1080);
 
-      await tester.ensureVisible(find.text('Automatic'));
-      await tester.tap(find.text('Automatic'));
-      await tester.pumpAndSettle();
-      expect(renderer, VideoRendererBackend.auto);
+        await tester.ensureVisible(find.text('Automatic'));
+        await tester.tap(find.text('Automatic'));
+        await tester.pumpAndSettle();
+        expect(renderer, VideoRendererBackend.auto);
 
-      // Switch to Your account tab and test subtitle preview + sync callbacks
-      await tester.ensureVisible(find.text('Your account'));
-      await tester.tap(find.text('Your account'));
-      await tester.pumpAndSettle();
+        // Switch to Your account tab and test subtitle preview + sync callbacks
+        await tester.ensureVisible(find.text('Your account'));
+        await tester.tap(find.text('Your account'));
+        await tester.pumpAndSettle();
 
-      expect(find.text('Synced to robert on every device'), findsOneWidget);
-      expect(find.byKey(const Key('subtitle-preview-box')), findsOneWidget);
+        expect(find.text('Synced to robert on every device'), findsOneWidget);
+        expect(find.byKey(const Key('subtitle-preview-box')), findsOneWidget);
 
-      await tester.tap(find.text('Extra large'));
-      await tester.pumpAndSettle();
-      expect(accountPrefs.subtitleSize, SubtitleSizePreset.xl);
+        await tester.tap(find.text('Extra large'));
+        await tester.pumpAndSettle();
+        expect(accountPrefs.subtitleSize, SubtitleSizePreset.xl);
 
-      await tester.tap(find.text('Box'));
-      await tester.pumpAndSettle();
-      expect(accountPrefs.subtitleBackground, SubtitleBackgroundStyle.box);
+        await tester.tap(find.text('Box'));
+        await tester.pumpAndSettle();
+        expect(accountPrefs.subtitleBackground, SubtitleBackgroundStyle.box);
 
-      // Mobile viewport check for zero overflow
-      tester.view.physicalSize = const Size(400, 800);
-      await tester.pumpAndSettle();
-      expect(tester.takeException(), isNull);
+        // Mobile viewport check for zero overflow
+        tester.view.physicalSize = const Size(400, 800);
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
     });
 
     testWidgets('admin dashboard displays library roots, invites, users and triggers scan', (tester) async {
