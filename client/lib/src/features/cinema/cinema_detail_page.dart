@@ -33,6 +33,7 @@ class CinemaDetailPage extends StatefulWidget {
     required this.onPlay,
     required this.onToggleWatchlist,
     required this.onToggleWatched,
+    this.onAddToList,
     this.onOpenRelatedMovie,
     this.onOpenRelatedSeries,
   }) : assert(
@@ -52,6 +53,7 @@ class CinemaDetailPage extends StatefulWidget {
   final CinemaPlayEpisodeCallback onPlay;
   final VoidCallback onToggleWatchlist;
   final VoidCallback onToggleWatched;
+  final VoidCallback? onAddToList;
   final ValueChanged<MovieSummary>? onOpenRelatedMovie;
   final ValueChanged<TvSeriesSummary>? onOpenRelatedSeries;
 
@@ -462,6 +464,17 @@ class _CinemaDetailPageState extends State<CinemaDetailPage> {
                                                 : Colors.white,
                                           ),
                                         ),
+                                        if (widget.onAddToList != null)
+                                          CinemaGlassIconButton(
+                                            key: const Key('detail-add-list-btn'),
+                                            tooltip: 'Add to custom list',
+                                            onPressed: widget.onAddToList,
+                                            icon: const Icon(
+                                              Icons.playlist_add_rounded,
+                                              size: 20,
+                                              color: Colors.white,
+                                            ),
+                                          ),
                                       ],
                                     ),
                                     // Source / Version dropdown when multiple sources exist

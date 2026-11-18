@@ -48,6 +48,7 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
   List<AlbumSummaryModel> _albums = [];
   List<ArtistSummaryModel> _artists = [];
   List<PlaylistSummaryModel> _playlists = [];
+  List<ListeningHistoryItemModel> _historyEntries = [];
   final Map<String, PlaylistDetailModel> _playlistDetails = {};
 
   final List<MusicPageRoute> _history = [const MusicPageRoute.home()];
@@ -124,6 +125,14 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
     }
   }
 
+  Future<List<T>> _safeOptionalList<T>(Future<List<T>> Function() loader) async {
+    try {
+      return await loader();
+    } catch (_) {
+      return <T>[];
+    }
+  }
+
   Future<void> _load() async {
     setState(() {
       _loading = true;
@@ -135,6 +144,7 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
         widget.musicService.listAlbums(),
         widget.musicService.listArtists(),
         widget.musicService.listPlaylists(),
+        _safeOptionalList(widget.musicService.listHistory),
       ]);
       if (!mounted) return;
 
@@ -142,6 +152,7 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
       final albums = results[1] as List<AlbumSummaryModel>;
       final artists = results[2] as List<ArtistSummaryModel>;
       final playlists = results[3] as List<PlaylistSummaryModel>;
+      final historyEntries = results[4] as List<ListeningHistoryItemModel>;
 
       widget.coordinator.indexSongs(songs);
       setState(() {
@@ -149,6 +160,7 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
         _albums = albums;
         _artists = artists;
         _playlists = playlists;
+        _historyEntries = historyEntries;
         _loading = false;
       });
     } catch (e) {
@@ -158,6 +170,12 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
         _loading = false;
       });
     }
+  }
+
+  Future<void> _refreshHistory() async {
+    final historyEntries = await _safeOptionalList(widget.musicService.listHistory);
+    if (!mounted) return;
+    setState(() => _historyEntries = historyEntries);
   }
 
   void _navigate(MusicPageRoute route) {
@@ -178,6 +196,8 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
     }
     if (route.kind == MusicPageKind.playlist && route.targetId != null) {
       unawaited(_ensurePlaylistLoaded(route.targetId!));
+    } else if (route.kind == MusicPageKind.history) {
+      unawaited(_refreshHistory());
     }
   }
 
@@ -216,7 +236,13 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
   }
 
   List<SongModel> _artistSongs(String artistId) {
-    final tracks = _songs.where((s) => s.artistId == artistId).toList()
+    final tracks = _songs
+        .where(
+          (s) =>
+              s.artistId == artistId ||
+              s.artistCredits.any((c) => c.artistId == artistId),
+        )
+        .toList()
       ..sort((a, b) {
         final likedCmp = (b.isLiked ? 1 : 0).compareTo(a.isLiked ? 1 : 0);
         return likedCmp != 0 ? likedCmp : a.title.compareTo(b.title);
@@ -841,6 +867,24 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
           onAddToPlaylist: _addToPlaylist,
           onNavigate: _navigate,
         );
+      case MusicPageKind.history:
+        final historySongs = _historyEntries.map((h) => h.song).toList();
+        return MusicCollectionPage(
+          kindLabel: 'Listening history',
+          title: 'Recently played',
+          description: historySongs.isEmpty
+              ? 'Tracks you listen to will appear here'
+              : 'Your latest played tracks across Hermes devices',
+          songs: historySongs,
+          route: const MusicPageRoute.history(),
+          musicService: widget.musicService,
+          coordinator: widget.coordinator,
+          playlists: _playlists,
+          onPlayCollection: _playCollection,
+          onToggleLike: _toggleLike,
+          onAddToPlaylist: _addToPlaylist,
+          onNavigate: _navigate,
+        );
       case MusicPageKind.smart:
         final kind = SmartPlaylistKind.values.firstWhere(
           (k) => k.id == route.targetId,
@@ -893,8 +937,11 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
         if (artist == null) {
           return _buildHome(context, tokens);
         }
-        final albums = _albums.where((a) => a.artistId == artist.id).toList();
         final songs = _artistSongs(artist.id);
+        final featuredAlbumIds = songs.map((s) => s.albumId).toSet();
+        final albums = _albums
+            .where((a) => a.artistId == artist.id || featuredAlbumIds.contains(a.id))
+            .toList();
         return MusicArtistPage(
           artist: artist,
           albums: albums,
@@ -1026,6 +1073,38 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
                 ),
               );
             },
+          ),
+          const SizedBox(height: 28),
+        ],
+        if (_historyEntries.isNotEmpty) ...[
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              _ShelfTitle('Recently played', tokens),
+              TextButton(
+                onPressed: () => _navigate(const MusicPageRoute.history()),
+                child: Text(
+                  'See all',
+                  style: TextStyle(fontSize: 13, color: tokens.text2),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          MusicTrackTable(
+            songs: _historyEntries.take(8).map((e) => e.song).toList(),
+            musicService: widget.musicService,
+            coordinator: widget.coordinator,
+            playlists: _playlists,
+            onPlayTrackAt: (idx) => _playCollection(
+              _historyEntries.map((e) => e.song).toList(),
+              startIndex: idx,
+              sourceLabel: 'Recently played',
+              sourceRoute: const MusicPageRoute.history(),
+            ),
+            onToggleLike: _toggleLike,
+            onAddToPlaylist: _addToPlaylist,
+            onNavigate: _navigate,
           ),
           const SizedBox(height: 28),
         ],
@@ -1444,6 +1523,13 @@ class _MusicSidebar extends StatelessWidget {
                 selectedIcon: Icons.music_note_rounded,
                 selected: currentRoute.kind == MusicPageKind.songs,
                 onTap: () => onNavigate(const MusicPageRoute.songs()),
+              ),
+              _SidebarNavButton(
+                label: 'History',
+                icon: Icons.history_rounded,
+                selectedIcon: Icons.history_rounded,
+                selected: currentRoute.kind == MusicPageKind.history,
+                onTap: () => onNavigate(const MusicPageRoute.history()),
               ),
             ],
           ),

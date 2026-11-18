@@ -18,7 +18,8 @@ enum _CinemaFilter {
   all('Home'),
   movies('Movies'),
   series('TV Shows'),
-  watchlist('Watchlist');
+  watchlist('Watchlist'),
+  lists('Lists');
 
   const _CinemaFilter(this.label);
   final String label;
@@ -98,6 +99,7 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
   Object? _loadError;
   List<MovieSummary> _movies = const [];
   List<TvSeriesSummary> _series = const [];
+  List<CustomListModel> _customLists = const [];
 
   _CinemaFilter _filter = _CinemaFilter.all;
   String _searchQuery = '';
@@ -190,6 +192,14 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
     }
   }
 
+  Future<T> _safeOptional<T>(Future<T> Function() loader, T fallback) async {
+    try {
+      return await loader();
+    } catch (_) {
+      return fallback;
+    }
+  }
+
   Future<void> _loadCatalog() async {
     setState(() {
       _loading = true;
@@ -200,11 +210,16 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
       final results = await Future.wait([
         widget.cinemaService.listMovies(),
         widget.cinemaService.listSeries(),
+        _safeOptional(
+          widget.cinemaService.listCustomLists,
+          const <CustomListModel>[],
+        ),
       ]);
       if (!mounted) return;
       setState(() {
         _movies = results[0] as List<MovieSummary>;
         _series = results[1] as List<TvSeriesSummary>;
+        _customLists = results[2] as List<CustomListModel>;
         _loading = false;
       });
     } catch (error) {
@@ -214,6 +229,155 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
         _loading = false;
       });
     }
+  }
+
+  Future<void> _openCreateOrRenameListDialog([CustomListModel? existing]) async {
+    final result = await showDialog<({String name, String description})>(
+      context: context,
+      builder: (_) => _CustomListEditorDialog(existing: existing),
+    );
+    if (result == null || !mounted) return;
+    final name = result.name;
+    final desc = result.description;
+
+    try {
+      final saved = existing == null
+          ? await widget.cinemaService.createCustomList(
+              name: name,
+              description: desc.isEmpty ? null : desc,
+            )
+          : await widget.cinemaService.updateCustomList(
+              listId: existing.id,
+              name: name,
+              description: desc.isEmpty ? null : desc,
+            );
+      if (!mounted) return;
+      setState(() {
+        if (existing == null) {
+          _customLists = [saved, ..._customLists];
+        } else {
+          _customLists = _customLists
+              .map((l) => l.id == saved.id ? saved : l)
+              .toList(growable: false);
+        }
+      });
+      _showToast(existing == null ? 'Created "${saved.name}".' : 'Updated "${saved.name}".');
+    } catch (e) {
+      _showToast('Could not save list: $e');
+    }
+  }
+
+  Future<void> _deleteCustomList(CustomListModel list) async {
+    try {
+      await widget.cinemaService.deleteCustomList(list.id);
+      if (!mounted) return;
+      setState(() {
+        _customLists = _customLists.where((l) => l.id != list.id).toList(growable: false);
+      });
+      _showToast('Deleted "${list.name}".');
+    } catch (e) {
+      _showToast('Could not delete list: $e');
+    }
+  }
+
+  Future<void> _openAddToListDialog({MovieSummary? movie, TvSeriesSummary? series}) async {
+    final targetTitle = movie?.title ?? series?.title ?? 'Title';
+    await showDialog<void>(
+      context: context,
+      builder: (dialogCtx) {
+        final tokens = HermesThemeTokens.of(dialogCtx);
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: tokens.surface2,
+              surfaceTintColor: Colors.transparent,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              title: Text(
+                'Add "$targetTitle" to list',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: tokens.text),
+              ),
+              content: SizedBox(
+                width: 360,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (_customLists.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        child: Text(
+                          'No custom lists yet. Create one first.',
+                          style: TextStyle(fontSize: 13, color: tokens.text2),
+                        ),
+                      )
+                    else
+                      for (final list in _customLists)
+                        Builder(
+                          builder: (_) {
+                            final present = list.items.any(
+                              (i) =>
+                                  (movie != null && i.movieId == movie.id) ||
+                                  (series != null && i.tvSeriesId == series.id),
+                            );
+                            return ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              title: Text(list.name, style: TextStyle(color: tokens.text, fontWeight: FontWeight.w600)),
+                              subtitle: Text(
+                                '${list.items.length} ${list.items.length == 1 ? 'item' : 'items'}',
+                                style: TextStyle(fontSize: 12, color: tokens.text2),
+                              ),
+                              trailing: Icon(
+                                present ? Icons.check_circle_rounded : Icons.add_circle_outline_rounded,
+                                color: present ? tokens.accent : tokens.text2,
+                              ),
+                              onTap: () async {
+                                try {
+                                  final updated = present
+                                      ? await widget.cinemaService.removeItemFromCustomList(
+                                          listId: list.id,
+                                          movieId: movie?.id,
+                                          tvSeriesId: series?.id,
+                                        )
+                                      : await widget.cinemaService.addItemToCustomList(
+                                          listId: list.id,
+                                          movieId: movie?.id,
+                                          tvSeriesId: series?.id,
+                                        );
+                                  if (!mounted) return;
+                                  setState(() {
+                                    _customLists = _customLists
+                                        .map((l) => l.id == updated.id ? updated : l)
+                                        .toList(growable: false);
+                                  });
+                                  setDialogState(() {});
+                                } catch (e) {
+                                  _showToast('List update failed: $e');
+                                }
+                              },
+                            );
+                          },
+                        ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () async {
+                    Navigator.of(dialogCtx).pop();
+                    await _openCreateOrRenameListDialog();
+                  },
+                  child: const Text('New list'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(dialogCtx).pop(),
+                  child: const Text('Done'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   Future<void> _toggleMovieWatchlist(MovieSummary movie) async {
@@ -550,6 +714,7 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
           onPlay: _launchPlayback,
           onToggleWatchlist: () => _toggleMovieWatchlist(movie),
           onToggleWatched: () => _toggleMovieWatched(movie),
+          onAddToList: () => unawaited(_openAddToListDialog(movie: movie)),
           onOpenRelatedMovie: (rel) => setState(() {
             _selectedMovieId = rel.id;
             _selectedSeriesId = null;
@@ -578,6 +743,7 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
           onPlay: _launchPlayback,
           onToggleWatchlist: () => _toggleSeriesWatchlist(show),
           onToggleWatched: () => _toggleSeriesWatched(show),
+          onAddToList: () => unawaited(_openAddToListDialog(series: show)),
           onOpenRelatedMovie: (rel) => setState(() {
             _selectedMovieId = rel.id;
             _selectedSeriesId = null;
@@ -645,7 +811,8 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
 
     final query = _searchQuery.trim().toLowerCase();
     final isWatchlistTab = _filter == _CinemaFilter.watchlist;
-    final showHero = query.isEmpty && !isWatchlistTab;
+    final isListsTab = _filter == _CinemaFilter.lists;
+    final showHero = query.isEmpty && !isWatchlistTab && !isListsTab;
 
     final poolMovies = _filter == _CinemaFilter.series
         ? const <MovieSummary>[]
@@ -686,6 +853,13 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
                 ),
                 if (isWatchlistTab)
                   _buildWatchlistView(
+                    context,
+                    heroTokens,
+                    query,
+                    horizontalPad,
+                  )
+                else if (isListsTab)
+                  _buildCustomListsView(
                     context,
                     heroTokens,
                     query,
@@ -1259,12 +1433,16 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
                   ),
                 ],
               ),
-              Text(
-                'Custom lists planned',
-                style: TextStyle(
-                  fontFamily: 'Figtree',
-                  fontSize: 13,
-                  color: tokens.text3,
+              TextButton(
+                onPressed: () => setState(() => _filter = _CinemaFilter.lists),
+                child: Text(
+                  'Custom lists (${_customLists.length})',
+                  style: TextStyle(
+                    fontFamily: 'Figtree',
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: tokens.accent,
+                  ),
                 ),
               ),
             ],
@@ -1332,6 +1510,165 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
                 ...filteredSeries.map(_buildSeriesPoster),
               ],
             ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCustomListsView(
+    BuildContext context,
+    HermesThemeTokens tokens,
+    String query,
+    double horizontalPad,
+  ) {
+    final visibleLists = query.isEmpty
+        ? _customLists
+        : _customLists
+            .where((l) =>
+                l.name.toLowerCase().contains(query) ||
+                l.items.any((i) => i.title.toLowerCase().contains(query)))
+            .toList(growable: false);
+
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: horizontalPad),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 16,
+            runSpacing: 10,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Custom lists',
+                    style: TextStyle(
+                      fontFamily: 'Figtree',
+                      fontSize: 32,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -0.64,
+                      color: tokens.text,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Curate collections of movies and TV shows',
+                    style: TextStyle(fontFamily: 'Figtree', fontSize: 13, color: tokens.text2),
+                  ),
+                ],
+              ),
+              FilledButton.icon(
+                onPressed: () => unawaited(_openCreateOrRenameListDialog()),
+                icon: const Icon(Icons.add_rounded, size: 18),
+                label: const Text('New list'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+          if (visibleLists.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 40),
+              child: Text(
+                query.isEmpty
+                    ? 'No custom lists yet. Click "New list" to start organizing titles.'
+                    : 'No custom lists match "$query".',
+                style: TextStyle(fontSize: 14, color: tokens.text2),
+              ),
+            )
+          else
+            for (final list in visibleLists) ...[
+              Container(
+                padding: const EdgeInsets.only(bottom: 10),
+                decoration: BoxDecoration(
+                  border: Border(bottom: BorderSide(color: tokens.lineSoft)),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${list.name} (${list.items.length})',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w800,
+                              color: tokens.text,
+                            ),
+                          ),
+                          if (list.description != null && list.description!.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 2),
+                              child: Text(
+                                list.description!,
+                                style: TextStyle(fontSize: 13, color: tokens.text2),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () => unawaited(_openCreateOrRenameListDialog(list)),
+                      child: const Text('Rename'),
+                    ),
+                    TextButton(
+                      onPressed: () => unawaited(_deleteCustomList(list)),
+                      child: const Text('Delete'),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
+              if (list.items.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 24),
+                  child: Text(
+                    'No titles in this list yet. Open any movie or show and click "Add to custom list".',
+                    style: TextStyle(fontSize: 13, color: tokens.text3),
+                  ),
+                )
+              else
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 28),
+                  child: _ResponsivePosterGrid(
+                    children: list.items.map((item) {
+                      final matchedMovie = item.movieId == null
+                          ? null
+                          : _movies.where((m) => m.id == item.movieId).firstOrNull;
+                      if (matchedMovie != null) {
+                        return _buildMoviePoster(matchedMovie);
+                      }
+                      final matchedSeries = item.tvSeriesId == null
+                          ? null
+                          : _series.where((s) => s.id == item.tvSeriesId).firstOrNull;
+                      if (matchedSeries != null) {
+                        return _buildSeriesPoster(matchedSeries);
+                      }
+                      return CinemaPosterCard(
+                        itemKey: item.id,
+                        title: item.title,
+                        subtitle: item.year?.toString() ?? (item.isMovie ? 'Movie' : 'Series'),
+                        artworkUri: widget.cinemaService.buildArtworkUri(item.artworkHash, variant: 'poster_800'),
+                        fallbackIcon: item.isMovie ? Icons.movie_outlined : Icons.tv_rounded,
+                        inWatchlist: false,
+                        isWatched: false,
+                        isNew: false,
+                        reduceMotion: widget.reduceMotion,
+                        onTap: () {
+                          if (item.movieId != null) {
+                            setState(() => _selectedMovieId = item.movieId);
+                          } else if (item.tvSeriesId != null) {
+                            setState(() => _selectedSeriesId = item.tvSeriesId);
+                          }
+                        },
+                      );
+                    }).toList(growable: false),
+                  ),
+                ),
+            ],
         ],
       ),
     );
@@ -1606,6 +1943,103 @@ class _ResponsivePosterGrid extends StatelessWidget {
       spacing: 14,
       runSpacing: 28,
       children: children,
+    );
+  }
+}
+
+class _CustomListEditorDialog extends StatefulWidget {
+  const _CustomListEditorDialog({this.existing});
+
+  final CustomListModel? existing;
+
+  @override
+  State<_CustomListEditorDialog> createState() =>
+      _CustomListEditorDialogState();
+}
+
+class _CustomListEditorDialogState extends State<_CustomListEditorDialog> {
+  late final TextEditingController _nameController;
+  late final TextEditingController _descController;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameController = TextEditingController(text: widget.existing?.name ?? '');
+    _descController =
+        TextEditingController(text: widget.existing?.description ?? '');
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _descController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = HermesThemeTokens.of(context);
+    final isEdit = widget.existing != null;
+    return AlertDialog(
+      backgroundColor: tokens.surface2,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      title: Text(
+        isEdit ? 'Rename list' : 'Create list',
+        style: TextStyle(fontWeight: FontWeight.w800, color: tokens.text),
+      ),
+      content: SizedBox(
+        width: 380,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _nameController,
+              autofocus: true,
+              decoration: InputDecoration(
+                labelText: 'List name',
+                hintText: 'Weekend Sci-Fi',
+                filled: true,
+                fillColor: tokens.surface3,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _descController,
+              decoration: InputDecoration(
+                labelText: 'Description (optional)',
+                filled: true,
+                fillColor: tokens.surface3,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text('Cancel', style: TextStyle(color: tokens.text2)),
+        ),
+        FilledButton(
+          onPressed: () {
+            final name = _nameController.text.trim();
+            if (name.isEmpty) return;
+            Navigator.of(context).pop((
+              name: name,
+              description: _descController.text.trim(),
+            ));
+          },
+          child: Text(isEdit ? 'Save' : 'Create list'),
+        ),
+      ],
     );
   }
 }

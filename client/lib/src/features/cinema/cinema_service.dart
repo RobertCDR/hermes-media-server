@@ -182,4 +182,108 @@ class CinemaService {
       );
     }
   }
+
+  Future<List<CustomListModel>> listCustomLists() async {
+    final response = await httpClient.get(
+      baseUri.resolve('/api/v1/cinema/lists'),
+      headers: _authHeaders,
+    );
+    if (response.statusCode != 200) {
+      throw CinemaApiException('Failed to load custom lists', statusCode: response.statusCode);
+    }
+    final decoded = jsonDecode(response.body) as List<dynamic>;
+    return decoded
+        .map((e) => CustomListModel.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<CustomListModel> createCustomList({
+    required String name,
+    String? description,
+  }) async {
+    final response = await httpClient.post(
+      baseUri.resolve('/api/v1/cinema/lists'),
+      headers: _authHeaders,
+      body: jsonEncode({
+        'name': name,
+        'description': ?description,
+      }),
+    );
+    if (response.statusCode != 201 && response.statusCode != 200) {
+      throw CinemaApiException('Failed to create custom list', statusCode: response.statusCode);
+    }
+    return CustomListModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<CustomListModel> updateCustomList({
+    required String listId,
+    required String name,
+    String? description,
+  }) async {
+    final response = await httpClient.put(
+      baseUri.resolve('/api/v1/cinema/lists/$listId'),
+      headers: _authHeaders,
+      body: jsonEncode({
+        'name': name,
+        'description': ?description,
+      }),
+    );
+    if (response.statusCode != 200) {
+      throw CinemaApiException('Failed to update custom list', statusCode: response.statusCode);
+    }
+    return CustomListModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<void> deleteCustomList(String listId) async {
+    final response = await httpClient.delete(
+      baseUri.resolve('/api/v1/cinema/lists/$listId'),
+      headers: _authHeaders,
+    );
+    if (response.statusCode != 204 && response.statusCode != 200) {
+      throw CinemaApiException('Failed to delete custom list', statusCode: response.statusCode);
+    }
+  }
+
+  Future<CustomListModel> addItemToCustomList({
+    required String listId,
+    String? movieId,
+    String? tvSeriesId,
+  }) async {
+    final response = await httpClient.post(
+      baseUri.resolve('/api/v1/cinema/lists/$listId/items'),
+      headers: _authHeaders,
+      body: jsonEncode({
+        'movieId': movieId,
+        'tvSeriesId': tvSeriesId,
+      }),
+    );
+    if (response.statusCode != 200) {
+      throw CinemaApiException('Failed to add item to list', statusCode: response.statusCode);
+    }
+    return CustomListModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<CustomListModel> removeItemFromCustomList({
+    required String listId,
+    String? itemId,
+    String? movieId,
+    String? tvSeriesId,
+  }) async {
+    final Uri uri;
+    if (itemId != null) {
+      uri = baseUri.resolve('/api/v1/cinema/lists/$listId/items/$itemId');
+    } else {
+      uri = baseUri.resolve('/api/v1/cinema/lists/$listId/items').replace(
+        queryParameters: {
+          'movieId': ?movieId,
+          'seriesId': ?tvSeriesId,
+        },
+      );
+    }
+    final response = await httpClient.delete(uri, headers: _authHeaders);
+    if (response.statusCode != 200) {
+      throw CinemaApiException('Failed to remove item from list', statusCode: response.statusCode);
+    }
+    return CustomListModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
 }
