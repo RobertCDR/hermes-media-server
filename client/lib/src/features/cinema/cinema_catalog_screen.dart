@@ -4,6 +4,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../../core/network/hermes_sync_client.dart';
 import '../../core/settings/hermes_preferences.dart';
+import '../../core/storage/search_history_store.dart';
 import '../../core/theme/hermes_theme_tokens.dart';
 import '../../core/widgets/hermes_artwork_image.dart';
 import '../../core/widgets/hermes_icons.dart';
@@ -91,6 +92,7 @@ class CinemaCatalogScreen extends StatefulWidget {
     this.reduceMotion = false,
     this.watchProgressUpdates,
     this.navigationController,
+    this.searchHistoryStore,
     this.externalMobileNav = false,
   });
 
@@ -101,6 +103,7 @@ class CinemaCatalogScreen extends StatefulWidget {
   final bool reduceMotion;
   final Stream<WatchProgressUpdatedEvent>? watchProgressUpdates;
   final CinemaNavigationController? navigationController;
+  final SearchHistoryStore? searchHistoryStore;
   final bool externalMobileNav;
 
   @override
@@ -110,24 +113,35 @@ class CinemaCatalogScreen extends StatefulWidget {
 class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
+  final OverlayPortalController _desktopSearchOverlayController =
+      OverlayPortalController();
+  final LayerLink _desktopSearchLayerLink = LayerLink();
 
   bool _loading = true;
   Object? _loadError;
   List<MovieSummary> _movies = const [];
   List<TvSeriesSummary> _series = const [];
   List<CustomListModel> _customLists = const [];
+  List<String> _cinemaSearchHistory = const [];
 
   _CinemaFilter _filter = _CinemaFilter.all;
   CinemaMobileTab _mobileTab = CinemaMobileTab.home;
   _CinemaLibrarySection _librarySection = _CinemaLibrarySection.watchlist;
   String _searchQuery = '';
+  bool _searchFocused = false;
+  bool _desktopPortalActive = false;
   String? _selectedMovieId;
   String? _selectedSeriesId;
   StreamSubscription<WatchProgressUpdatedEvent>? _watchProgressSub;
 
+  SearchHistoryStore get _searchHistoryStore =>
+      widget.searchHistoryStore ?? SharedPrefsSearchHistoryStore();
+
   @override
   void initState() {
     super.initState();
+    _searchFocusNode.addListener(_onSearchFocusChanged);
+    unawaited(_loadCinemaSearchHistory());
     _mobileTab =
         widget.navigationController?.mobileTabNotifier.value ??
         CinemaMobileTab.home;
@@ -160,11 +174,73 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
 
   @override
   void dispose() {
+    _searchFocusNode.removeListener(_onSearchFocusChanged);
     _detachNavigationController(widget.navigationController);
     unawaited(_watchProgressSub?.cancel());
     _searchFocusNode.dispose();
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _onSearchFocusChanged() {
+    if (!mounted) return;
+    final next = _searchFocusNode.hasFocus;
+    if (next != _searchFocused) {
+      setState(() => _searchFocused = next);
+    }
+    _syncDesktopSearchOverlay();
+  }
+
+  void _syncDesktopSearchOverlay() {
+    if (!mounted || !_desktopPortalActive) return;
+    final shouldShow = _searchFocused &&
+        _searchQuery.trim().isEmpty &&
+        _cinemaSearchHistory.isNotEmpty;
+    if (shouldShow && !_desktopSearchOverlayController.isShowing) {
+      _desktopSearchOverlayController.show();
+    } else if (!shouldShow && _desktopSearchOverlayController.isShowing) {
+      _desktopSearchOverlayController.hide();
+    }
+  }
+
+  Future<void> _loadCinemaSearchHistory() async {
+    final loaded = await _searchHistoryStore.loadCinemaHistory();
+    if (!mounted) return;
+    setState(() => _cinemaSearchHistory = loaded);
+    _syncDesktopSearchOverlay();
+  }
+
+  Future<void> _recordCinemaSearchQuery(String query) async {
+    final clean = query.trim();
+    if (clean.isEmpty) return;
+    final updated = await _searchHistoryStore.addCinemaQuery(clean);
+    if (!mounted) return;
+    setState(() => _cinemaSearchHistory = updated);
+    _syncDesktopSearchOverlay();
+  }
+
+  Future<void> _removeCinemaSearchQuery(String query) async {
+    final updated = await _searchHistoryStore.removeCinemaQuery(query);
+    if (!mounted) return;
+    setState(() => _cinemaSearchHistory = updated);
+    _syncDesktopSearchOverlay();
+  }
+
+  Future<void> _clearCinemaSearchHistory() async {
+    await _searchHistoryStore.clearCinemaHistory();
+    if (!mounted) return;
+    setState(() => _cinemaSearchHistory = const []);
+    _syncDesktopSearchOverlay();
+  }
+
+  void _applyHistoryCinemaQuery(String query) {
+    _searchController.value = TextEditingValue(
+      text: query,
+      selection: TextSelection.collapsed(offset: query.length),
+    );
+    setState(() => _searchQuery = query);
+    unawaited(_recordCinemaSearchQuery(query));
+    _syncDesktopSearchOverlay();
   }
 
   void _attachNavigationController(CinemaNavigationController? controller) {
@@ -934,6 +1010,17 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
             final isDesktop = constraints.maxWidth >= 760;
             final horizontalPad = isDesktop ? 48.0 : 20.0;
             final useExternalMobile = !isDesktop && widget.externalMobileNav;
+            _desktopPortalActive = !useExternalMobile && isDesktop;
+            if (!_desktopPortalActive &&
+                _desktopSearchOverlayController.isShowing) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted &&
+                    !_desktopPortalActive &&
+                    _desktopSearchOverlayController.isShowing) {
+                  _desktopSearchOverlayController.hide();
+                }
+              });
+            }
 
             if (useExternalMobile) {
               if (_mobileTab == CinemaMobileTab.search) {
@@ -1037,29 +1124,183 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
     );
   }
 
+  Widget _buildDesktopCinemaSearchHistoryOverlay(
+    BuildContext context,
+  ) {
+    final tokens = HermesThemeTokens.of(context);
+    return Positioned(
+      left: 0,
+      top: 0,
+      child: CompositedTransformFollower(
+        link: _desktopSearchLayerLink,
+        showWhenUnlinked: false,
+        targetAnchor: Alignment.bottomLeft,
+        followerAnchor: Alignment.topLeft,
+        offset: const Offset(0, 6),
+        child: TextFieldTapRegion(
+          child: Material(
+            color: Colors.transparent,
+            child: Container(
+              key: const Key('cinema-recent-searches'),
+              width: 320,
+              constraints: const BoxConstraints(maxHeight: 300),
+              padding: const EdgeInsets.only(bottom: 8),
+              decoration: BoxDecoration(
+                color: tokens.surface2,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: tokens.line),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x88000000),
+                    blurRadius: 24,
+                    offset: Offset(0, 10),
+                  ),
+                ],
+              ),
+              child: SingleChildScrollView(
+                child: _buildCinemaHistoryRows(tokens, isDropdown: true),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCinemaHistoryRows(
+    HermesThemeTokens tokens, {
+    required bool isDropdown,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: EdgeInsets.fromLTRB(
+            isDropdown ? 14 : 0,
+            isDropdown ? 10 : 0,
+            isDropdown ? 8 : 0,
+            4,
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Recent searches',
+                  style: TextStyle(
+                    fontFamily: 'Figtree',
+                    fontSize: isDropdown ? 13 : 15,
+                    fontWeight: FontWeight.w700,
+                    color: tokens.text,
+                  ),
+                ),
+              ),
+              TextButton(
+                key: const Key('cinema-clear-search-history'),
+                onPressed: () => unawaited(_clearCinemaSearchHistory()),
+                child: Text(
+                  'Clear',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: tokens.text2,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        for (final q in _cinemaSearchHistory)
+          InkWell(
+            onTap: () => _applyHistoryCinemaQuery(q),
+            borderRadius: BorderRadius.circular(8),
+            child: Padding(
+              padding: EdgeInsets.symmetric(
+                horizontal: isDropdown ? 14 : 4,
+                vertical: 8,
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.history_rounded, size: 17, color: tokens.text3),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      q,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontFamily: 'Figtree',
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: tokens.text,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Remove search',
+                    padding: EdgeInsets.zero,
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () => unawaited(_removeCinemaSearchQuery(q)),
+                    icon: Icon(
+                      Icons.close_rounded,
+                      size: 16,
+                      color: tokens.text3,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
   Widget _buildSearchInputBox({
     required bool isDesktop,
     required bool darkGlass,
   }) {
+    final pill = HermesSearchPill(
+      inputKey: const Key('cinema-search-input'),
+      clearKey: const Key('cinema-search-clear'),
+      controller: _searchController,
+      focusNode: _searchFocusNode,
+      hintText: 'Search titles, genres, cast...',
+      darkGlass: darkGlass,
+      height: 40,
+      iconSize: 16,
+      hasQuery: _searchQuery.isNotEmpty,
+      onChanged: (value) {
+        setState(() => _searchQuery = value);
+        _syncDesktopSearchOverlay();
+      },
+      onSubmitted: (value) {
+        unawaited(_recordCinemaSearchQuery(value));
+      },
+      onClear: () {
+        _searchController.clear();
+        setState(() => _searchQuery = '');
+        _syncDesktopSearchOverlay();
+      },
+    );
+
+    if (!isDesktop) {
+      return ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: double.infinity),
+        child: pill,
+      );
+    }
+
     return ConstrainedBox(
-      constraints: BoxConstraints(
-        maxWidth: isDesktop ? 320 : double.infinity,
-      ),
-      child: HermesSearchPill(
-        inputKey: const Key('cinema-search-input'),
-        clearKey: const Key('cinema-search-clear'),
-        controller: _searchController,
-        focusNode: _searchFocusNode,
-        hintText: 'Search titles, genres, cast...',
-        darkGlass: darkGlass,
-        height: 40,
-        iconSize: 16,
-        hasQuery: _searchQuery.isNotEmpty,
-        onChanged: (value) => setState(() => _searchQuery = value),
-        onClear: () {
-          _searchController.clear();
-          setState(() => _searchQuery = '');
-        },
+      constraints: const BoxConstraints(maxWidth: 320),
+      child: TextFieldTapRegion(
+        child: CompositedTransformTarget(
+          link: _desktopSearchLayerLink,
+          child: OverlayPortal(
+            controller: _desktopSearchOverlayController,
+            overlayChildBuilder: _buildDesktopCinemaSearchHistoryOverlay,
+            child: pill,
+          ),
+        ),
       ),
     );
   }
@@ -2014,10 +2255,15 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
       progress: movie.resumePoint.progress,
       reduceMotion: widget.reduceMotion,
       onToggleWatchlist: () => unawaited(_toggleMovieWatchlist(movie)),
-      onTap: () => setState(() {
-        _selectedMovieId = movie.id;
-        _selectedSeriesId = null;
-      }),
+      onTap: () {
+        if (_searchQuery.trim().isNotEmpty) {
+          unawaited(_recordCinemaSearchQuery(_searchQuery));
+        }
+        setState(() {
+          _selectedMovieId = movie.id;
+          _selectedSeriesId = null;
+        });
+      },
     );
   }
 
@@ -2040,10 +2286,15 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
       isPartial: show.isPartial,
       reduceMotion: widget.reduceMotion,
       onToggleWatchlist: () => unawaited(_toggleSeriesWatchlist(show)),
-      onTap: () => setState(() {
-        _selectedSeriesId = show.id;
-        _selectedMovieId = null;
-      }),
+      onTap: () {
+        if (_searchQuery.trim().isNotEmpty) {
+          unawaited(_recordCinemaSearchQuery(_searchQuery));
+        }
+        setState(() {
+          _selectedSeriesId = show.id;
+          _selectedMovieId = null;
+        });
+      },
     );
   }
 
@@ -2090,6 +2341,14 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
             horizontalPad,
           )
         else ...[
+          if (_cinemaSearchHistory.isNotEmpty) ...[
+            Padding(
+              key: const Key('cinema-recent-searches'),
+              padding: EdgeInsets.symmetric(horizontal: horizontalPad),
+              child: _buildCinemaHistoryRows(tokens, isDropdown: false),
+            ),
+            const SizedBox(height: 18),
+          ],
           Padding(
             padding: EdgeInsets.symmetric(horizontal: horizontalPad),
             child: Text(

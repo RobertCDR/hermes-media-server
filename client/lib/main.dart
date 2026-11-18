@@ -13,6 +13,7 @@ import 'src/core/network/endpoint_resolver.dart';
 import 'src/core/network/hermes_sync_client.dart';
 import 'src/core/settings/hermes_preferences.dart';
 import 'src/core/storage/hermes_cache_manager.dart';
+import 'src/core/storage/search_history_store.dart';
 import 'src/core/theme/hermes_theme_tokens.dart';
 import 'src/core/widgets/hermes_artwork_image.dart';
 import 'src/core/widgets/hermes_icons.dart';
@@ -596,10 +597,13 @@ class _HermesAppState extends State<HermesApp> {
       builder: (_) => _LibrarySearchDialog(
         musicService: musicService,
         musicCoordinator: musicCoordinator,
+        searchHistoryStore: _searchHistoryStore,
         onOpenMusicRoute: _openMusicRoute,
       ),
     );
   }
+
+  final SearchHistoryStore _searchHistoryStore = SharedPrefsSearchHistoryStore();
 
   @override
   Widget build(BuildContext context) {
@@ -804,12 +808,14 @@ class _HermesAppState extends State<HermesApp> {
                     reduceMotion: _devicePrefs.reduceMotion,
                     watchProgressUpdates: _watchProgressController.stream,
                     navigationController: _cinemaNav,
+                    searchHistoryStore: _searchHistoryStore,
                     externalMobileNav: true,
                   ),
                   musicBuilder: (_) => MusicWorldScreen(
                     musicService: musicService,
                     coordinator: musicCoordinator,
                     navigationController: _musicNav,
+                    searchHistoryStore: _searchHistoryStore,
                     reduceMotion: _devicePrefs.reduceMotion,
                     externalMobileNav: true,
                   ),
@@ -950,11 +956,13 @@ class _LibrarySearchDialog extends StatefulWidget {
   const _LibrarySearchDialog({
     required this.musicService,
     required this.musicCoordinator,
+    required this.searchHistoryStore,
     required this.onOpenMusicRoute,
   });
 
   final MusicService musicService;
   final MusicPlaybackCoordinator musicCoordinator;
+  final SearchHistoryStore searchHistoryStore;
   final ValueChanged<MusicPageRoute> onOpenMusicRoute;
 
   @override
@@ -964,8 +972,39 @@ class _LibrarySearchDialog extends StatefulWidget {
 class _LibrarySearchDialogState extends State<_LibrarySearchDialog> {
   final TextEditingController _queryController = TextEditingController();
   UnifiedSearchResult? _result;
+  List<MusicSearchHistoryItem> _recent = const [];
   bool _searching = false;
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadRecent());
+  }
+
+  Future<void> _loadRecent() async {
+    final loaded = await widget.searchHistoryStore.loadMusicHistory();
+    if (!mounted) return;
+    setState(() => _recent = loaded);
+  }
+
+  Future<void> _record(MusicSearchHistoryItem item) async {
+    final updated = await widget.searchHistoryStore.addMusicItem(item);
+    if (!mounted) return;
+    setState(() => _recent = updated);
+  }
+
+  Future<void> _removeRecent(String id) async {
+    final updated = await widget.searchHistoryStore.removeMusicItem(id);
+    if (!mounted) return;
+    setState(() => _recent = updated);
+  }
+
+  Future<void> _clearRecent() async {
+    await widget.searchHistoryStore.clearMusicHistory();
+    if (!mounted) return;
+    setState(() => _recent = const []);
+  }
 
   @override
   void dispose() {
@@ -988,6 +1027,17 @@ class _LibrarySearchDialogState extends State<_LibrarySearchDialog> {
     });
     try {
       final next = await widget.musicService.searchLibrary(q);
+      unawaited(
+        _record(
+          MusicSearchHistoryItem(
+            id: 'query:${q.toLowerCase()}',
+            kind: MusicSearchHistoryKind.query,
+            title: q,
+            subtitle: 'Search',
+            timestampMs: DateTime.now().millisecondsSinceEpoch,
+          ),
+        ),
+      );
       if (!mounted) return;
       setState(() {
         _result = next;
@@ -1046,11 +1096,114 @@ class _LibrarySearchDialogState extends State<_LibrarySearchDialog> {
                   : _error != null
                       ? Text('Search failed: $_error')
                       : _result == null
-                          ? const Center(
-                              child: Text(
-                                'Enter a title, artist, album, or song to search.',
-                              ),
-                            )
+                          ? (_recent.isEmpty
+                              ? const Center(
+                                  child: Text(
+                                    'Enter a title, artist, album, or song to search.',
+                                  ),
+                                )
+                              : Column(
+                                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        const Expanded(
+                                          child: Text(
+                                            'Recent searches',
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.w700,
+                                              fontSize: 14,
+                                            ),
+                                          ),
+                                        ),
+                                        TextButton(
+                                          onPressed: () =>
+                                              unawaited(_clearRecent()),
+                                          child: const Text('Clear'),
+                                        ),
+                                      ],
+                                    ),
+                                    Expanded(
+                                      child: ListView(
+                                        children: [
+                                          for (final item in _recent)
+                                            ListTile(
+                                              leading: item.kind ==
+                                                      MusicSearchHistoryKind.query
+                                                  ? const CircleAvatar(
+                                                      radius: 20,
+                                                      child: Icon(
+                                                        Icons.history_rounded,
+                                                        size: 18,
+                                                      ),
+                                                    )
+                                                  : HermesArtworkImage(
+                                                      uri: widget.musicService
+                                                          .buildArtworkUri(
+                                                        item.artworkHash,
+                                                      ),
+                                                      fallbackTitle: item.title,
+                                                      fallbackIcon: Icons
+                                                          .music_note_outlined,
+                                                      width: 40,
+                                                      height: 40,
+                                                      showFallbackLabel: false,
+                                                    ),
+                                              title: Text(item.title),
+                                              subtitle: Text(item.subtitle),
+                                              trailing: IconButton(
+                                                tooltip: 'Remove',
+                                                icon: const Icon(
+                                                  Icons.close_rounded,
+                                                  size: 18,
+                                                ),
+                                                onPressed: () => unawaited(
+                                                  _removeRecent(item.id),
+                                                ),
+                                              ),
+                                              onTap: () {
+                                                _queryController.text =
+                                                    item.title;
+                                                if (item.kind ==
+                                                        MusicSearchHistoryKind
+                                                            .album &&
+                                                    item.targetId != null) {
+                                                  Navigator.of(context).pop();
+                                                  widget.onOpenMusicRoute(
+                                                    MusicPageRoute.album(
+                                                      item.targetId!,
+                                                    ),
+                                                  );
+                                                } else if (item.kind ==
+                                                        MusicSearchHistoryKind
+                                                            .artist &&
+                                                    item.targetId != null) {
+                                                  Navigator.of(context).pop();
+                                                  widget.onOpenMusicRoute(
+                                                    MusicPageRoute.artist(
+                                                      item.targetId!,
+                                                    ),
+                                                  );
+                                                } else if (item.kind ==
+                                                        MusicSearchHistoryKind
+                                                            .playlist &&
+                                                    item.targetId != null) {
+                                                  Navigator.of(context).pop();
+                                                  widget.onOpenMusicRoute(
+                                                    MusicPageRoute.playlist(
+                                                      item.targetId!,
+                                                    ),
+                                                  );
+                                                } else {
+                                                  unawaited(_runSearch());
+                                                }
+                                              },
+                                            ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ))
                           : _result!.isEmpty
                               ? const Center(child: Text('No matches found.'))
                               : ListView(
@@ -1114,6 +1267,22 @@ class _LibrarySearchDialogState extends State<_LibrarySearchDialog> {
                                         subtitle:
                                             Text('Album • ${album.artistName}'),
                                         onTap: () {
+                                          unawaited(
+                                            _record(
+                                              MusicSearchHistoryItem(
+                                                id: 'album:${album.id}',
+                                                kind: MusicSearchHistoryKind
+                                                    .album,
+                                                title: album.title,
+                                                subtitle:
+                                                    'Album • ${album.artistName}',
+                                                artworkHash: album.artworkHash,
+                                                targetId: album.id,
+                                                timestampMs: DateTime.now()
+                                                    .millisecondsSinceEpoch,
+                                              ),
+                                            ),
+                                          );
                                           Navigator.of(context).pop();
                                           widget.onOpenMusicRoute(
                                             MusicPageRoute.album(album.id),
@@ -1138,6 +1307,22 @@ class _LibrarySearchDialogState extends State<_LibrarySearchDialog> {
                                         subtitle:
                                             Text('Song • ${song.artistName}'),
                                         onTap: () {
+                                          unawaited(
+                                            _record(
+                                              MusicSearchHistoryItem(
+                                                id: 'song:${song.id}',
+                                                kind: MusicSearchHistoryKind
+                                                    .song,
+                                                title: song.title,
+                                                subtitle:
+                                                    'Song • ${song.artistName}',
+                                                artworkHash: song.artworkHash,
+                                                targetId: song.id,
+                                                timestampMs: DateTime.now()
+                                                    .millisecondsSinceEpoch,
+                                              ),
+                                            ),
+                                          );
                                           Navigator.of(context).pop();
                                           unawaited(
                                             widget.musicCoordinator
