@@ -997,26 +997,21 @@ class _MobileNowPlayingPageState extends State<MobileNowPlayingPage> {
                         ],
                       ),
                     ),
-                    IconButton(
-                      key: const Key('mobile-player-queue-toggle'),
-                      tooltip: _view == _MobilePlayerView.queue
-                          ? 'Back to player'
-                          : 'View queue',
-                      onPressed: () {
-                        setState(() {
-                          _view = _view == _MobilePlayerView.queue
-                              ? _MobilePlayerView.player
-                              : _MobilePlayerView.queue;
-                        });
-                      },
-                      icon: Icon(
-                        Icons.queue_music_rounded,
-                        size: 22,
-                        color: _view == _MobilePlayerView.queue
-                            ? tokens.accent
-                            : tokens.text,
-                      ),
-                    ),
+                    if (song != null)
+                      IconButton(
+                        key: const Key('mobile-player-more-menu'),
+                        tooltip: 'Track options',
+                        onPressed: () => unawaited(
+                          _openTrackOptionsSheet(context, tokens, song),
+                        ),
+                        icon: Icon(
+                          Icons.more_vert_rounded,
+                          size: 22,
+                          color: tokens.text,
+                        ),
+                      )
+                    else
+                      const SizedBox(width: 48),
                   ],
                 ),
               ),
@@ -1049,9 +1044,351 @@ class _MobileNowPlayingPageState extends State<MobileNowPlayingPage> {
                           ),
                       },
               ),
+              if (song != null) _buildMobileUtilityBar(context, tokens, session),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Future<void> _openTrackOptionsSheet(
+    BuildContext context,
+    HermesThemeTokens tokens,
+    SongModel song,
+  ) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: tokens.surface2,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (sheetCtx) => SafeArea(
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 8),
+              Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              ListTile(
+                contentPadding: const EdgeInsets.fromLTRB(18, 8, 18, 6),
+                leading: MusicArtworkTile(
+                  size: 46,
+                  title: song.albumTitle,
+                  uri: widget.musicService.buildArtworkUri(song.artworkHash),
+                ),
+                title: Text(
+                  song.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: tokens.text,
+                  ),
+                ),
+                subtitle: Text(
+                  song.artistName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 13, color: tokens.text2),
+                ),
+              ),
+              Divider(height: 1, color: tokens.lineSoft),
+              ListTile(
+                leading: Icon(
+                  song.isLiked
+                      ? Icons.favorite_rounded
+                      : Icons.favorite_border_rounded,
+                  color: song.isLiked ? tokens.accent : tokens.text,
+                ),
+                title: Text(
+                  song.isLiked
+                      ? 'Remove from Liked Songs'
+                      : 'Save to Liked Songs',
+                  style: TextStyle(color: tokens.text),
+                ),
+                onTap: () {
+                  Navigator.of(sheetCtx).pop();
+                  unawaited(widget.coordinator.toggleLikeSong(song.id));
+                },
+              ),
+              ListTile(
+                leading: Icon(Icons.playlist_add_rounded, color: tokens.text),
+                title: Text(
+                  'Add to playlist',
+                  style: TextStyle(color: tokens.text),
+                ),
+                onTap: () {
+                  Navigator.of(sheetCtx).pop();
+                  unawaited(_openAddToPlaylistPicker(tokens, song));
+                },
+              ),
+              ListTile(
+                leading: Icon(Icons.queue_music_rounded, color: tokens.text),
+                title: Text(
+                  'Add to queue',
+                  style: TextStyle(color: tokens.text),
+                ),
+                onTap: () {
+                  Navigator.of(sheetCtx).pop();
+                  widget.coordinator.addToQueue(song);
+                  showMusicToast(this.context, 'Added "${song.title}" to queue');
+                },
+              ),
+              ListTile(
+                leading: Icon(Icons.playlist_play_rounded, color: tokens.text),
+                title: Text(
+                  'Play next',
+                  style: TextStyle(color: tokens.text),
+                ),
+                onTap: () {
+                  Navigator.of(sheetCtx).pop();
+                  widget.coordinator.playNext(song);
+                  showMusicToast(this.context, 'Playing "${song.title}" next');
+                },
+              ),
+              if (song.albumId.isNotEmpty)
+                ListTile(
+                  leading: Icon(Icons.album_rounded, color: tokens.text),
+                  title: Text(
+                    'Go to album',
+                    style: TextStyle(color: tokens.text),
+                  ),
+                  onTap: () {
+                    Navigator.of(sheetCtx).pop();
+                    widget.onNavigate(MusicPageRoute.album(song.albumId));
+                  },
+                ),
+              if (song.artistId.isNotEmpty)
+                ListTile(
+                  leading: Icon(Icons.person_rounded, color: tokens.text),
+                  title: Text(
+                    'Go to artist',
+                    style: TextStyle(color: tokens.text),
+                  ),
+                  onTap: () {
+                    Navigator.of(sheetCtx).pop();
+                    widget.onNavigate(MusicPageRoute.artist(song.artistId));
+                  },
+                ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openAddToPlaylistPicker(
+    HermesThemeTokens tokens,
+    SongModel song,
+  ) async {
+    var playlists = widget.musicService.cachedPlaylists ?? const [];
+    if (playlists.isEmpty) {
+      try {
+        playlists = await widget.musicService.listPlaylists();
+      } catch (_) {
+        playlists = const [];
+      }
+    }
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: tokens.surface2,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (pickerCtx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 16, 18, 8),
+              child: Text(
+                'Add to playlist',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: tokens.text,
+                ),
+              ),
+            ),
+            Divider(height: 1, color: tokens.lineSoft),
+            if (playlists.isEmpty)
+              Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  'No playlists created yet.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 13, color: tokens.text2),
+                ),
+              )
+            else
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 320),
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: playlists.length,
+                  itemBuilder: (ctx, idx) {
+                    final pl = playlists[idx];
+                    return ListTile(
+                      leading: MusicArtworkTile(
+                        size: 40,
+                        title: pl.name,
+                        isPlaylist: true,
+                      ),
+                      title: Text(pl.name, style: TextStyle(color: tokens.text)),
+                      subtitle: Text(
+                        '${pl.trackCount} songs',
+                        style: TextStyle(fontSize: 12, color: tokens.text2),
+                      ),
+                      onTap: () async {
+                        Navigator.of(pickerCtx).pop();
+                        try {
+                          await widget.musicService.addTrackToPlaylist(
+                            playlistId: pl.id,
+                            songId: song.id,
+                          );
+                          if (mounted) {
+                            showMusicToast(
+                              context,
+                              'Added "${song.title}" to ${pl.name}',
+                            );
+                          }
+                        } catch (e) {
+                          if (mounted) {
+                            showMusicToast(context, 'Failed to add: $e');
+                          }
+                        }
+                      },
+                    );
+                  },
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMobileUtilityBar(
+    BuildContext context,
+    HermesThemeTokens tokens,
+    PlaybackSessionState? session,
+  ) {
+    final coordinator = widget.coordinator;
+    final rendererLabel = coordinator.isLocalRenderer
+        ? 'This device'
+        : (session?.activeRendererDeviceName?.isNotEmpty == true
+            ? session!.activeRendererDeviceName!
+            : 'Remote device');
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 4, 16, 12),
+      child: Row(
+        children: [
+          Expanded(
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: InkWell(
+                key: const Key('mobile-player-devices'),
+                borderRadius: BorderRadius.circular(18),
+                onTap: widget.onOpenDevices,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(
+                      color: coordinator.isLocalRenderer
+                          ? Colors.white.withValues(alpha: 0.12)
+                          : tokens.accent.withValues(alpha: 0.6),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.speaker_group_rounded,
+                        size: 16,
+                        color: coordinator.isLocalRenderer
+                            ? tokens.text2
+                            : tokens.accent,
+                      ),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          rendererLabel,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: tokens.text,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          IconButton(
+            key: const Key('mobile-player-lyrics-toggle'),
+            tooltip: _view == _MobilePlayerView.lyrics
+                ? 'Back to player'
+                : 'Lyrics',
+            onPressed: () {
+              if (_view == _MobilePlayerView.lyrics) {
+                setState(() => _view = _MobilePlayerView.player);
+              } else {
+                _lyricsTracker.resumeNow();
+                setState(() => _view = _MobilePlayerView.lyrics);
+              }
+            },
+            icon: Icon(
+              Icons.lyrics_outlined,
+              size: 20,
+              color: _view == _MobilePlayerView.lyrics
+                  ? tokens.accent
+                  : tokens.text2,
+            ),
+          ),
+          const SizedBox(width: 4),
+          IconButton(
+            key: const Key('mobile-player-queue-toggle'),
+            tooltip: _view == _MobilePlayerView.queue
+                ? 'Back to player'
+                : 'View queue',
+            onPressed: () {
+              setState(() {
+                _view = _view == _MobilePlayerView.queue
+                    ? _MobilePlayerView.player
+                    : _MobilePlayerView.queue;
+              });
+            },
+            icon: Icon(
+              Icons.queue_music_rounded,
+              size: 22,
+              color: _view == _MobilePlayerView.queue
+                  ? tokens.accent
+                  : tokens.text2,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1071,11 +1408,6 @@ class _MobileNowPlayingPageState extends State<MobileNowPlayingPage> {
     );
     final shuffleOn = session?.shuffle ?? false;
     final repeatMode = session?.repeatMode ?? HermesRepeatMode.off;
-    final rendererLabel = coordinator.isLocalRenderer
-        ? 'This device'
-        : (session?.activeRendererDeviceName?.isNotEmpty == true
-            ? session!.activeRendererDeviceName!
-            : 'Remote device');
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -1301,95 +1633,6 @@ class _MobileNowPlayingPageState extends State<MobileNowPlayingPage> {
                             color: repeatMode == HermesRepeatMode.off
                                 ? tokens.text2
                                 : tokens.accent,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 14),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Align(
-                            alignment: Alignment.centerLeft,
-                            child: InkWell(
-                              key: const Key('mobile-player-devices'),
-                              borderRadius: BorderRadius.circular(18),
-                              onTap: widget.onOpenDevices,
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 8,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Colors.white.withValues(alpha: 0.08),
-                                  borderRadius: BorderRadius.circular(18),
-                                  border: Border.all(
-                                    color: coordinator.isLocalRenderer
-                                        ? Colors.white.withValues(alpha: 0.12)
-                                        : tokens.accent.withValues(alpha: 0.6),
-                                  ),
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(
-                                      Icons.speaker_group_rounded,
-                                      size: 16,
-                                      color: coordinator.isLocalRenderer
-                                          ? tokens.text2
-                                          : tokens.accent,
-                                    ),
-                                    const SizedBox(width: 6),
-                                    Flexible(
-                                      child: Text(
-                                        rendererLabel,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w600,
-                                          color: tokens.text,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                        IconButton(
-                          key: const Key('mobile-player-lyrics-toggle'),
-                          tooltip: 'Lyrics',
-                          onPressed: () {
-                            _lyricsTracker.resumeNow();
-                            setState(
-                              () => _view = _MobilePlayerView.lyrics,
-                            );
-                          },
-                          icon: Icon(
-                            Icons.lyrics_outlined,
-                            size: 20,
-                            color: tokens.text2,
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        TextButton.icon(
-                          key: const Key('mobile-player-up-next-btn'),
-                          onPressed: () =>
-                              setState(() => _view = _MobilePlayerView.queue),
-                          icon: Icon(
-                            Icons.playlist_play_rounded,
-                            size: 18,
-                            color: tokens.text,
-                          ),
-                          label: Text(
-                            'Up Next',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
-                              color: tokens.text,
-                            ),
                           ),
                         ),
                       ],

@@ -177,7 +177,7 @@ class HermesDevicePreferences {
         (a) => a.apiValue == cellValue,
         orElse: () => AudioQualityPreset.high160,
       ),
-      cacheCapMb: rawCacheMb.clamp(128, 2048),
+      cacheCapMb: rawCacheMb.clamp(128, 10240),
     );
   }
 }
