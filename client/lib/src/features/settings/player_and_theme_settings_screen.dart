@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:material_ui/material_ui.dart';
 
 import '../../core/settings/hermes_preferences.dart';
@@ -6,6 +8,11 @@ import '../../core/widgets/hermes_icons.dart';
 import '../cinema/cinema_models.dart';
 import '../cinema/hermes_video_player.dart';
 import '../music/music_models.dart';
+
+bool get _isMobilePlatform =>
+    !kIsWeb &&
+    (defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS);
 
 enum SettingsTabKind { device, account }
 
@@ -234,7 +241,9 @@ class _PlayerAndThemeSettingsScreenState
                       children: [
                         Icon(
                           _activeTab == SettingsTabKind.device
-                              ? Icons.laptop_mac_outlined
+                              ? (_isMobilePlatform
+                                  ? Icons.smartphone_rounded
+                                  : Icons.laptop_mac_outlined)
                               : Icons.link_rounded,
                           size: 16,
                           color: tokens.text2,
@@ -375,20 +384,32 @@ class _PlayerAndThemeSettingsScreenState
         Divider(height: 1, thickness: 1, color: tokens.lineSoft),
         _SettingRow(
           label: 'Video renderer',
-          description:
-              'OpenGL keeps subtitles from looking washed out on HDR titles.',
+          description: _isMobilePlatform
+              ? 'Hardware MediaCodec surface (Automatic) or OpenGL ES shader compositing for HDR subtitles.'
+              : 'OpenGL keeps subtitles from looking washed out on HDR titles.',
           tokens: tokens,
           control: HermesSegmentedControl<VideoRendererBackend>(
-            options: const [
-              HermesSegmentOption(
-                value: VideoRendererBackend.openGl,
-                label: 'OpenGL',
-              ),
-              HermesSegmentOption(
-                value: VideoRendererBackend.auto,
-                label: 'Automatic',
-              ),
-            ],
+            options: _isMobilePlatform
+                ? const [
+                    HermesSegmentOption(
+                      value: VideoRendererBackend.openGl,
+                      label: 'OpenGL ES',
+                    ),
+                    HermesSegmentOption(
+                      value: VideoRendererBackend.auto,
+                      label: 'MediaCodec (Auto)',
+                    ),
+                  ]
+                : const [
+                    HermesSegmentOption(
+                      value: VideoRendererBackend.openGl,
+                      label: 'OpenGL',
+                    ),
+                    HermesSegmentOption(
+                      value: VideoRendererBackend.auto,
+                      label: 'Automatic',
+                    ),
+                  ],
             selected: _devicePrefs.rendererBackend,
             onChanged: (renderer) {
               _updateDevicePrefs(

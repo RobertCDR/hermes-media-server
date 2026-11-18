@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:material_ui/material_ui.dart';
 
 import '../../core/theme/hermes_theme_tokens.dart';
@@ -791,7 +792,7 @@ class _TrackTableRowState extends State<_TrackTableRow> {
     final tokens = HermesThemeTokens.of(context);
     final song = widget.song;
 
-    return Semantics(
+    final rowContent = Semantics(
       container: true,
       explicitChildNodes: true,
       child: MouseRegion(
@@ -918,7 +919,7 @@ class _TrackTableRowState extends State<_TrackTableRow> {
                 ),
               ),
               SizedBox(
-                width: widget.wide ? 112 : 96,
+                width: widget.wide ? 112 : 76,
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.end,
                   mainAxisSize: MainAxisSize.min,
@@ -965,6 +966,45 @@ class _TrackTableRowState extends State<_TrackTableRow> {
         ),
       ),
     ),
+    );
+
+    if (widget.wide) {
+      return rowContent;
+    }
+
+    return Dismissible(
+      key: ValueKey('swipe-queue-${song.id}-${widget.displayIndex}-${widget.positionInList}'),
+      direction: DismissDirection.startToEnd,
+      background: Container(
+        alignment: Alignment.centerLeft,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        decoration: BoxDecoration(
+          color: tokens.accent.withValues(alpha: 0.22),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: tokens.accent.withValues(alpha: 0.45)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.queue_music_rounded, size: 18, color: tokens.accent),
+            const SizedBox(width: 8),
+            Text(
+              'Add to queue',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: tokens.text,
+              ),
+            ),
+          ],
+        ),
+      ),
+      confirmDismiss: (_) async {
+        unawaited(HapticFeedback.mediumImpact());
+        widget.onAddToQueue();
+        return false;
+      },
+      child: rowContent,
     );
   }
 }

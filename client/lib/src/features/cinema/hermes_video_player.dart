@@ -1033,37 +1033,42 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
                                       color: Colors.white,
                                     ),
                                   ),
-                                  SizedBox(
-                                    width: 84,
-                                    child: SliderTheme(
-                                      data: SliderTheme.of(context).copyWith(
-                                        activeTrackColor: Colors.white,
-                                        inactiveTrackColor:
-                                            Colors.white.withValues(alpha: 0.25),
-                                        thumbColor: Colors.white,
-                                        trackHeight: 3,
-                                        thumbShape: const RoundSliderThumbShape(
-                                          enabledThumbRadius: 5,
+                                  if (MediaQuery.sizeOf(context).width >= 640) ...[
+                                    SizedBox(
+                                      width: 84,
+                                      child: SliderTheme(
+                                        data: SliderTheme.of(context).copyWith(
+                                          activeTrackColor: Colors.white,
+                                          inactiveTrackColor: Colors.white
+                                              .withValues(alpha: 0.25),
+                                          thumbColor: Colors.white,
+                                          trackHeight: 3,
+                                          thumbShape:
+                                              const RoundSliderThumbShape(
+                                            enabledThumbRadius: 5,
+                                          ),
+                                          overlayShape:
+                                              const RoundSliderOverlayShape(
+                                            overlayRadius: 10,
+                                          ),
                                         ),
-                                        overlayShape:
-                                            const RoundSliderOverlayShape(
-                                          overlayRadius: 10,
+                                        child: Slider(
+                                          value: _muted ? 0 : _volume,
+                                          max: 100,
+                                          onChanged: (next) {
+                                            setState(() {
+                                              _volume = next;
+                                              _muted = next == 0;
+                                            });
+                                            unawaited(
+                                              _playback.setVolume(next),
+                                            );
+                                          },
                                         ),
-                                      ),
-                                      child: Slider(
-                                        value: _muted ? 0 : _volume,
-                                        max: 100,
-                                        onChanged: (next) {
-                                          setState(() {
-                                            _volume = next;
-                                            _muted = next == 0;
-                                          });
-                                          unawaited(_playback.setVolume(next));
-                                        },
                                       ),
                                     ),
-                                  ),
-                                  const SizedBox(width: 8),
+                                    const SizedBox(width: 8),
+                                  ],
                                   Expanded(
                                     child: Text(
                                       _quality == VideoQualityPreset.directPlay
@@ -1094,33 +1099,61 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
                                           : Colors.white,
                                     ),
                                   ),
+                                  IconButton(
+                                    key: const Key('vp-fullscreen-btn'),
+                                    tooltip: _isFullscreen
+                                        ? 'Exit fullscreen (F)'
+                                        : 'Fullscreen (F)',
+                                    onPressed: _toggleFullscreenMode,
+                                    icon: Icon(
+                                      _isFullscreen
+                                          ? Icons.fullscreen_exit_rounded
+                                          : Icons.fullscreen_rounded,
+                                      size: 22,
+                                      color: Colors.white,
+                                    ),
+                                  ),
                                 ],
                               ),
                             ],
                           ),
                         ),
-                        // 3-Column Tracks & Quality Panel (.vp-panel)
+                        // 3-Column / Responsive Tracks & Quality Panel (.vp-panel)
                         if (_panelOpen)
                           Positioned(
-                            right: 24,
-                            bottom: 92,
-                            child: _TracksAndQualityPanel(
-                              tokens: tokens,
-                              source: widget.source,
-                              selectedAudioIndex: _selectedAudioIndex,
-                              selectedSubtitleIndex: _selectedSubtitleIndex,
-                              selectedQuality: _quality,
-                              qualityOrder: _qualityOrder,
-                              onSelectAudio: (idx) {
-                                unawaited(_applyAudioSelection(idx));
-                              },
-                              onSelectSubtitle: (idx) {
-                                unawaited(_applySubtitleSelection(idx));
-                              },
-                              onSelectQuality: (q) {
-                                setState(() => _quality = q);
-                                unawaited(_loadPlaybackUri());
-                              },
+                            left: MediaQuery.sizeOf(context).width < 640
+                                ? 12
+                                : null,
+                            right: MediaQuery.sizeOf(context).width < 640
+                                ? 12
+                                : 24,
+                            bottom: MediaQuery.sizeOf(context).width < 640
+                                ? 80
+                                : 92,
+                            child: Listener(
+                              onPointerDown: (_) => _wakeControls(),
+                              child: _TracksAndQualityPanel(
+                                tokens: tokens,
+                                source: widget.source,
+                                selectedAudioIndex: _selectedAudioIndex,
+                                selectedSubtitleIndex: _selectedSubtitleIndex,
+                                selectedQuality: _quality,
+                                qualityOrder: _qualityOrder,
+                                onInteraction: _wakeControls,
+                                onSelectAudio: (idx) {
+                                  _wakeControls();
+                                  unawaited(_applyAudioSelection(idx));
+                                },
+                                onSelectSubtitle: (idx) {
+                                  _wakeControls();
+                                  unawaited(_applySubtitleSelection(idx));
+                                },
+                                onSelectQuality: (q) {
+                                  _wakeControls();
+                                  setState(() => _quality = q);
+                                  unawaited(_loadPlaybackUri());
+                                },
+                              ),
                             ),
                           ),
                       ],
@@ -1178,23 +1211,40 @@ class _PlayerSubtitleCaption extends StatelessWidget {
               borderRadius: BorderRadius.circular(4),
             )
           : null,
-      child: Text(
-        text,
-        textAlign: TextAlign.center,
-        style: TextStyle(
-          fontFamily: 'Figtree',
-          color: color,
-          fontSize: sizePreset.playerFontSize,
-          fontWeight: FontWeight.w600,
-          height: 1.3,
-          shadows: shadows,
-        ),
+      child: Builder(
+        builder: (context) {
+          final trimmed = text.trim();
+          final isWrappedItalic = RegExp(
+            r'^<\s*i\b[^>]*>.*<\s*/\s*i\s*>$',
+            caseSensitive: false,
+            dotAll: true,
+          ).hasMatch(trimmed);
+          final cleanedText = text
+              .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
+              .replaceAll(RegExp(r'<[^>]+>'), '')
+              .trim();
+          return Text(
+            cleanedText,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontFamily: 'Figtree',
+              color: color,
+              fontSize: sizePreset.playerFontSize,
+              fontWeight: FontWeight.w600,
+              fontStyle: isWrappedItalic ? FontStyle.italic : FontStyle.normal,
+              height: 1.3,
+              shadows: shadows,
+            ),
+          );
+        },
       ),
     );
   }
 }
 
-class _TracksAndQualityPanel extends StatelessWidget {
+enum _TrackPanelTab { subtitles, audio, quality }
+
+class _TracksAndQualityPanel extends StatefulWidget {
   const _TracksAndQualityPanel({
     required this.tokens,
     required this.source,
@@ -1205,6 +1255,7 @@ class _TracksAndQualityPanel extends StatelessWidget {
     required this.onSelectAudio,
     required this.onSelectSubtitle,
     required this.onSelectQuality,
+    this.onInteraction,
   });
 
   final HermesThemeTokens tokens;
@@ -1216,27 +1267,162 @@ class _TracksAndQualityPanel extends StatelessWidget {
   final ValueChanged<int> onSelectAudio;
   final ValueChanged<int?> onSelectSubtitle;
   final ValueChanged<VideoQualityPreset> onSelectQuality;
+  final VoidCallback? onInteraction;
+
+  @override
+  State<_TracksAndQualityPanel> createState() => _TracksAndQualityPanelState();
+}
+
+class _TracksAndQualityPanelState extends State<_TracksAndQualityPanel> {
+  _TrackPanelTab _activeTab = _TrackPanelTab.subtitles;
+
+  List<_PanelOption> _audioItems() {
+    if (widget.source.audioStreams.isEmpty) {
+      return [
+        _PanelOption(
+          label: widget.source.audioCodec.isEmpty
+              ? 'Default audio'
+              : widget.source.audioCodec.toUpperCase(),
+          active: true,
+          onTap: () {},
+        ),
+      ];
+    }
+    return widget.source.audioStreams
+        .map(
+          (s) => _PanelOption(
+            label: '${s.language.toUpperCase()} (${s.codec})',
+            active: widget.selectedAudioIndex == s.streamIndex,
+            onTap: () => widget.onSelectAudio(s.streamIndex),
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  List<_PanelOption> _subtitleItems() {
+    return [
+      _PanelOption(
+        label: 'Off',
+        active: widget.selectedSubtitleIndex == null,
+        onTap: () => widget.onSelectSubtitle(null),
+      ),
+      ...widget.source.subtitleStreams.map(
+        (s) => _PanelOption(
+          label: '${s.language.toUpperCase()} (${s.title})',
+          active: widget.selectedSubtitleIndex == s.streamIndex,
+          onTap: () => widget.onSelectSubtitle(s.streamIndex),
+        ),
+      ),
+    ];
+  }
+
+  List<_PanelOption> _qualityItems() {
+    return widget.qualityOrder
+        .map(
+          (q) => _PanelOption(
+            label: q == VideoQualityPreset.directPlay
+                ? 'Original · ${widget.source.shortTag}'
+                : q.label,
+            active: widget.selectedQuality == q,
+            onTap: () => widget.onSelectQuality(q),
+          ),
+        )
+        .toList(growable: false);
+  }
 
   @override
   Widget build(BuildContext context) {
+    final compact = MediaQuery.sizeOf(context).width < 640;
+    final tokens = widget.tokens;
+    final decoration = BoxDecoration(
+      color: const Color(0xF0101010),
+      borderRadius: BorderRadius.circular(10),
+      border: Border.all(color: tokens.line),
+      boxShadow: const [
+        BoxShadow(
+          color: Color(0x80000000),
+          blurRadius: 36,
+          offset: Offset(0, 16),
+        ),
+      ],
+    );
+
+    if (compact) {
+      final items = switch (_activeTab) {
+        _TrackPanelTab.subtitles => _subtitleItems(),
+        _TrackPanelTab.audio => _audioItems(),
+        _TrackPanelTab.quality => _qualityItems(),
+      };
+      return Material(
+        color: Colors.transparent,
+        child: Container(
+          key: const Key('vp-panel'),
+          constraints: const BoxConstraints(maxHeight: 240),
+          padding: const EdgeInsets.all(12),
+          decoration: decoration,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  _CompactTabChip(
+                    label: 'Subtitles',
+                    selected: _activeTab == _TrackPanelTab.subtitles,
+                    tokens: tokens,
+                    onTap: () {
+                      widget.onInteraction?.call();
+                      setState(() => _activeTab = _TrackPanelTab.subtitles);
+                    },
+                  ),
+                  const SizedBox(width: 6),
+                  _CompactTabChip(
+                    label: 'Audio',
+                    selected: _activeTab == _TrackPanelTab.audio,
+                    tokens: tokens,
+                    onTap: () {
+                      widget.onInteraction?.call();
+                      setState(() => _activeTab = _TrackPanelTab.audio);
+                    },
+                  ),
+                  const SizedBox(width: 6),
+                  _CompactTabChip(
+                    label: 'Quality',
+                    selected: _activeTab == _TrackPanelTab.quality,
+                    tokens: tokens,
+                    onTap: () {
+                      widget.onInteraction?.call();
+                      setState(() => _activeTab = _TrackPanelTab.quality);
+                    },
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Flexible(
+                child: _PanelColumn(
+                  title: switch (_activeTab) {
+                    _TrackPanelTab.subtitles => 'Subtitles',
+                    _TrackPanelTab.audio => 'Audio',
+                    _TrackPanelTab.quality => 'Quality',
+                  },
+                  tokens: tokens,
+                  items: items,
+                  fillWidth: true,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Material(
       color: Colors.transparent,
       child: Container(
         key: const Key('vp-panel'),
         constraints: const BoxConstraints(maxWidth: 560, maxHeight: 320),
         padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: const Color(0xF0101010),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: tokens.line),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x80000000),
-              blurRadius: 36,
-              offset: Offset(0, 16),
-            ),
-          ],
-        ),
+        decoration: decoration,
         child: SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: Row(
@@ -1245,62 +1431,69 @@ class _TracksAndQualityPanel extends StatelessWidget {
               _PanelColumn(
                 title: 'Audio',
                 tokens: tokens,
-                items: source.audioStreams.isEmpty
-                    ? [
-                        _PanelOption(
-                          label: source.audioCodec.isEmpty
-                              ? 'Default audio'
-                              : source.audioCodec.toUpperCase(),
-                          active: true,
-                          onTap: () {},
-                        ),
-                      ]
-                    : source.audioStreams
-                        .map(
-                          (s) => _PanelOption(
-                            label: '${s.language.toUpperCase()} (${s.codec})',
-                            active: selectedAudioIndex == s.streamIndex,
-                            onTap: () => onSelectAudio(s.streamIndex),
-                          ),
-                        )
-                        .toList(growable: false),
+                items: _audioItems(),
               ),
               const SizedBox(width: 12),
               _PanelColumn(
                 title: 'Subtitles',
                 tokens: tokens,
-                items: [
-                  _PanelOption(
-                    label: 'Off',
-                    active: selectedSubtitleIndex == null,
-                    onTap: () => onSelectSubtitle(null),
-                  ),
-                  ...source.subtitleStreams.map(
-                    (s) => _PanelOption(
-                      label: '${s.language.toUpperCase()} (${s.title})',
-                      active: selectedSubtitleIndex == s.streamIndex,
-                      onTap: () => onSelectSubtitle(s.streamIndex),
-                    ),
-                  ),
-                ],
+                items: _subtitleItems(),
               ),
               const SizedBox(width: 12),
               _PanelColumn(
                 title: 'Quality',
                 tokens: tokens,
-                items: qualityOrder
-                    .map(
-                      (q) => _PanelOption(
-                        label: q == VideoQualityPreset.directPlay
-                            ? 'Original · ${source.shortTag}'
-                            : q.label,
-                        active: selectedQuality == q,
-                        onTap: () => onSelectQuality(q),
-                      ),
-                    )
-                    .toList(growable: false),
+                items: _qualityItems(),
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CompactTabChip extends StatelessWidget {
+  const _CompactTabChip({
+    required this.label,
+    required this.selected,
+    required this.tokens,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final HermesThemeTokens tokens;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 7),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: selected
+                ? tokens.accent.withValues(alpha: 0.24)
+                : Colors.white.withValues(alpha: 0.06),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: selected ? tokens.accent : tokens.line,
+            ),
+          ),
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontFamily: 'Figtree',
+              fontSize: 12,
+              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+              color: selected ? Colors.white : Colors.white.withValues(alpha: 0.78),
+            ),
           ),
         ),
       ),
@@ -1313,21 +1506,22 @@ class _PanelColumn extends StatelessWidget {
     required this.title,
     required this.tokens,
     required this.items,
+    this.fillWidth = false,
   });
 
   final String title;
   final HermesThemeTokens tokens;
   final List<_PanelOption> items;
+  final bool fillWidth;
 
   @override
   Widget build(BuildContext context) {
-    return ConstrainedBox(
-      constraints: const BoxConstraints(minWidth: 150),
-      child: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
+    final column = SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (!fillWidth)
             Padding(
               padding: const EdgeInsets.fromLTRB(10, 0, 10, 8),
               child: Text(
@@ -1340,30 +1534,49 @@ class _PanelColumn extends StatelessWidget {
                 ),
               ),
             ),
-            ...items.map(
-              (item) => InkWell(
-                borderRadius: BorderRadius.circular(6),
-                hoverColor: Colors.white.withValues(alpha: 0.1),
-                onTap: item.onTap,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 8,
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      SizedBox(
-                        width: 18,
-                        child: item.active
-                            ? Icon(
-                                Icons.check_rounded,
-                                size: 16,
-                                color: tokens.accent,
-                              )
-                            : null,
-                      ),
-                      const SizedBox(width: 6),
+          ...items.map(
+            (item) => InkWell(
+              borderRadius: BorderRadius.circular(6),
+              hoverColor: Colors.white.withValues(alpha: 0.1),
+              onTap: item.onTap,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+                child: Row(
+                  mainAxisSize: fillWidth ? MainAxisSize.max : MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: 18,
+                      child: item.active
+                          ? Icon(
+                              Icons.check_rounded,
+                              size: 16,
+                              color: tokens.accent,
+                            )
+                          : null,
+                    ),
+                    const SizedBox(width: 6),
+                    if (fillWidth)
+                      Flexible(
+                        child: Text(
+                          item.label,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontFamily: 'Figtree',
+                            fontSize: 14,
+                            fontWeight: item.active
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                            color: item.active
+                                ? Colors.white
+                                : Colors.white.withValues(alpha: 0.85),
+                          ),
+                        ),
+                      )
+                    else
                       Text(
                         item.label,
                         style: TextStyle(
@@ -1376,14 +1589,20 @@ class _PanelColumn extends StatelessWidget {
                               : Colors.white.withValues(alpha: 0.85),
                         ),
                       ),
-                    ],
-                  ),
+                  ],
                 ),
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
+    );
+    if (fillWidth) {
+      return column;
+    }
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minWidth: 150),
+      child: column,
     );
   }
 }

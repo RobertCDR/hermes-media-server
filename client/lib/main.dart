@@ -374,14 +374,14 @@ class _HermesAppState extends State<HermesApp> {
     await showModalBottomSheet<void>(
       context: ctx,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (sheetCtx) => FractionallySizedBox(
-        heightFactor: 0.88,
-        child: NowPlayingPanel(
+        heightFactor: 0.96,
+        child: MobileNowPlayingPage(
           coordinator: coordinator,
           musicService: musicService,
           localDeviceId: session.deviceId,
-          isModal: true,
           onClose: () => Navigator.of(sheetCtx).pop(),
           onOpenDevices: () {
             Navigator.of(sheetCtx).pop();
@@ -682,7 +682,13 @@ class _HermesAppState extends State<HermesApp> {
                         devicePreferences: _devicePrefs,
                         accountPreferences: _accountPrefs,
                         username: session.username,
-                        deviceName: kIsWeb ? 'Web Browser' : Platform.localHostname,
+                        deviceName: kIsWeb
+                            ? 'Web Browser'
+                            : switch (defaultTargetPlatform) {
+                                TargetPlatform.android => 'Android Phone',
+                                TargetPlatform.iOS => 'iPhone',
+                                _ => Platform.localHostname,
+                              },
                         initialTab: _settingsInitialTab,
                         onThemeChanged: (next) => setState(() => _tokens = next),
                         onRendererChanged: (next) =>
