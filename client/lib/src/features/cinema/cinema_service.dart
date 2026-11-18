@@ -23,6 +23,12 @@ class CinemaService {
   final String accessToken;
   final http.Client httpClient;
 
+  List<MovieSummary>? cachedMovies;
+  List<TvSeriesSummary>? cachedSeries;
+  List<CustomListModel>? cachedCustomLists;
+
+  bool get hasCachedCatalog => cachedMovies != null && cachedSeries != null;
+
   Map<String, String> get _authHeaders => {
         'Authorization': 'Bearer $accessToken',
         'Content-Type': 'application/json',
@@ -38,7 +44,7 @@ class CinemaService {
     }
 
     final decoded = jsonDecode(response.body) as List<dynamic>;
-    return decoded
+    return cachedMovies = decoded
         .map((e) => MovieSummary.fromJson(e as Map<String, dynamic>))
         .toList();
   }
@@ -53,7 +59,7 @@ class CinemaService {
     }
 
     final decoded = jsonDecode(response.body) as List<dynamic>;
-    return decoded
+    return cachedSeries = decoded
         .map((e) => TvSeriesSummary.fromJson(e as Map<String, dynamic>))
         .toList();
   }
@@ -192,7 +198,7 @@ class CinemaService {
       throw CinemaApiException('Failed to load custom lists', statusCode: response.statusCode);
     }
     final decoded = jsonDecode(response.body) as List<dynamic>;
-    return decoded
+    return cachedCustomLists = decoded
         .map((e) => CustomListModel.fromJson(e as Map<String, dynamic>))
         .toList();
   }

@@ -754,11 +754,17 @@ class SignalRConnectTransport implements ConnectTransport {
   }
 
   @override
-  Future<PlaybackSessionState> transferOutput(String targetDeviceId) async {
+  Future<PlaybackSessionState> transferOutput(
+    String targetDeviceId, {
+    int? positionMs,
+  }) async {
     final raw = await syncClient.invoke<Object?>(
       'TransferOutput',
       [
-        {'targetDeviceId': targetDeviceId},
+        {
+          'targetDeviceId': targetDeviceId,
+          'positionMs': ?positionMs,
+        },
       ],
     );
     return _parseSession(raw);

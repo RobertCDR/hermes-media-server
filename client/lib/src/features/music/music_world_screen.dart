@@ -60,12 +60,34 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
   bool _scrolled = false;
   bool _loading = true;
   String? _error;
+  String? _lastActiveSongId;
+  bool _lastIsPlaying = false;
+  bool _lastShuffle = false;
 
   MusicPageRoute get _currentRoute => _history[_historyIdx];
 
   @override
   void initState() {
     super.initState();
+    _lastActiveSongId = widget.coordinator.currentSong?.id;
+    _lastIsPlaying =
+        widget.coordinator.session?.state == PlaybackState.playing;
+    _lastShuffle = widget.coordinator.session?.shuffle ?? false;
+    if (widget.musicService.hasCachedCatalog) {
+      _songs = List<SongModel>.from(widget.musicService.cachedSongs!);
+      _albums =
+          List<AlbumSummaryModel>.from(widget.musicService.cachedAlbums!);
+      _artists =
+          List<ArtistSummaryModel>.from(widget.musicService.cachedArtists!);
+      _playlists = List<PlaylistSummaryModel>.from(
+        widget.musicService.cachedPlaylists ?? const [],
+      );
+      _historyEntries = List<ListeningHistoryItemModel>.from(
+        widget.musicService.cachedHistory ?? const [],
+      );
+      widget.coordinator.indexSongs(_songs);
+      _loading = false;
+    }
     widget.coordinator.addListener(_onCoordinatorChanged);
     widget.navigationController?.onRequestRoute = _navigate;
     final pending = widget.navigationController?.takePendingRoute();
@@ -74,7 +96,7 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
       _historyIdx = _history.length - 1;
     }
     _scrollController.addListener(_onScroll);
-    unawaited(_load());
+    unawaited(_performLoad(silent: !_loading));
   }
 
   @override
@@ -108,14 +130,28 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
 
   void _onCoordinatorChanged() {
     if (!mounted) return;
-    setState(() {
-      for (var i = 0; i < _songs.length; i++) {
-        final updated = widget.coordinator.songById(_songs[i].id);
-        if (updated != null && updated.isLiked != _songs[i].isLiked) {
-          _songs[i] = updated;
-        }
+    final activeId = widget.coordinator.currentSong?.id;
+    final isPlaying =
+        widget.coordinator.session?.state == PlaybackState.playing;
+    final shuffle = widget.coordinator.session?.shuffle ?? false;
+    var songsChanged = activeId != _lastActiveSongId ||
+        isPlaying != _lastIsPlaying ||
+        shuffle != _lastShuffle;
+
+    for (var i = 0; i < _songs.length; i++) {
+      final updated = widget.coordinator.songById(_songs[i].id);
+      if (updated != null && updated.isLiked != _songs[i].isLiked) {
+        _songs[i] = updated;
+        songsChanged = true;
       }
-    });
+    }
+
+    _lastActiveSongId = activeId;
+    _lastIsPlaying = isPlaying;
+    _lastShuffle = shuffle;
+    if (songsChanged) {
+      setState(() {});
+    }
   }
 
   void _onScroll() {
@@ -133,11 +169,15 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
     }
   }
 
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  Future<void> _load() => _performLoad(silent: false);
+
+  Future<void> _performLoad({required bool silent}) async {
+    if (!silent) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
     try {
       final results = await Future.wait([
         widget.musicService.listSongs(),
@@ -165,10 +205,12 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() {
-        _error = e.toString();
-        _loading = false;
-      });
+      if (!silent || _songs.isEmpty) {
+        setState(() {
+          _error = e.toString();
+          _loading = false;
+        });
+      }
     }
   }
 

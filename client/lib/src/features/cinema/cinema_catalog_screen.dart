@@ -110,8 +110,17 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
   @override
   void initState() {
     super.initState();
+    if (widget.cinemaService.hasCachedCatalog) {
+      _movies = List<MovieSummary>.from(widget.cinemaService.cachedMovies!);
+      _series =
+          List<TvSeriesSummary>.from(widget.cinemaService.cachedSeries!);
+      _customLists = List<CustomListModel>.from(
+        widget.cinemaService.cachedCustomLists ?? const [],
+      );
+      _loading = false;
+    }
     _subscribeWatchProgress();
-    _loadCatalog();
+    unawaited(_performLoadCatalog(silent: !_loading));
   }
 
   @override
@@ -200,11 +209,15 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
     }
   }
 
-  Future<void> _loadCatalog() async {
-    setState(() {
-      _loading = true;
-      _loadError = null;
-    });
+  Future<void> _loadCatalog() => _performLoadCatalog(silent: false);
+
+  Future<void> _performLoadCatalog({required bool silent}) async {
+    if (!silent) {
+      setState(() {
+        _loading = true;
+        _loadError = null;
+      });
+    }
 
     try {
       final results = await Future.wait([
@@ -224,10 +237,12 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
       });
     } catch (error) {
       if (!mounted) return;
-      setState(() {
-        _loadError = error;
-        _loading = false;
-      });
+      if (!silent || (_movies.isEmpty && _series.isEmpty)) {
+        setState(() {
+          _loadError = error;
+          _loading = false;
+        });
+      }
     }
   }
 
