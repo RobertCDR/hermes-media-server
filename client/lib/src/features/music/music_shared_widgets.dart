@@ -484,6 +484,290 @@ class _DotIconToggle extends StatelessWidget {
   }
 }
 
+const double kMusicTrackRowExtent = 56.0;
+
+List<Widget> buildMusicTrackTableSlivers({
+  required BuildContext context,
+  required double contentWidth,
+  required List<SongModel> songs,
+  required MusicService musicService,
+  required MusicPlaybackCoordinator coordinator,
+  required List<PlaylistSummaryModel> playlists,
+  required ValueChanged<int> onPlayTrackAt,
+  required ValueChanged<SongModel> onToggleLike,
+  required ValueChanged<MusicPageRoute> onNavigate,
+  bool showAlbum = true,
+  bool discGrouping = false,
+  String? playlistIdForRemoval,
+  Future<void> Function(String playlistId, int position)? onRemoveFromPlaylist,
+  Future<void> Function(String playlistId, SongModel song)? onAddToPlaylist,
+  String emptyTitle = 'No tracks yet',
+  String emptySubtitle = 'Add tracks or scan a music folder to see songs here.',
+}) {
+  if (songs.isEmpty) {
+    return [
+      SliverToBoxAdapter(
+        child: _TrackTableEmptyState(
+          emptyTitle: emptyTitle,
+          emptySubtitle: emptySubtitle,
+        ),
+      ),
+    ];
+  }
+
+  final wide = contentWidth >= 660;
+  final showAlbumCol = showAlbum && contentWidth >= 560;
+  final distinctDiscs = songs.map((s) => s.discNumber).toSet().length;
+  final showDiscHeaders = discGrouping && distinctDiscs > 1;
+  final session = coordinator.session;
+  final activeSongId = session?.currentSongId;
+  final isPlaying = session?.state == PlaybackState.playing;
+
+  final headerSliver = SliverToBoxAdapter(
+    child: Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: _TrackTableHeader(showAlbumCol: showAlbumCol, wide: wide),
+    ),
+  );
+
+  if (!showDiscHeaders) {
+    return [
+      headerSliver,
+      SliverFixedExtentList(
+        itemExtent: kMusicTrackRowExtent,
+        delegate: SliverChildBuilderDelegate(
+          (ctx, i) => RepaintBoundary(
+            child: _buildMusicTrackRowWidget(
+              context: ctx,
+              song: songs[i],
+              index: i,
+              activeSongId: activeSongId,
+              isPlaying: isPlaying,
+              discGrouping: discGrouping,
+              showAlbumCol: showAlbumCol,
+              wide: wide,
+              musicService: musicService,
+              coordinator: coordinator,
+              playlists: playlists,
+              playlistIdForRemoval: playlistIdForRemoval,
+              onPlayTrackAt: onPlayTrackAt,
+              onToggleLike: onToggleLike,
+              onAddToPlaylist: onAddToPlaylist,
+              onRemoveFromPlaylist: onRemoveFromPlaylist,
+              onNavigate: onNavigate,
+            ),
+          ),
+          childCount: songs.length,
+        ),
+      ),
+    ];
+  }
+
+  final items = <_TrackTableSliverEntry>[];
+  int? lastDisc;
+  for (var i = 0; i < songs.length; i++) {
+    final song = songs[i];
+    if (song.discNumber != lastDisc) {
+      lastDisc = song.discNumber;
+      final discDurationMs = songs
+          .where((s) => s.discNumber == lastDisc)
+          .fold<int>(0, (sum, s) => sum + s.durationMs);
+      items.add(_TrackTableSliverEntry.disc(lastDisc, discDurationMs));
+    }
+    items.add(_TrackTableSliverEntry.track(i, song));
+  }
+
+  return [
+    headerSliver,
+    SliverList(
+      delegate: SliverChildBuilderDelegate(
+        (ctx, idx) {
+          final entry = items[idx];
+          if (entry.discNumber != null) {
+            return RepaintBoundary(
+              child: _DiscHeaderRow(
+                discNumber: entry.discNumber!,
+                durationMs: entry.durationMs,
+              ),
+            );
+          }
+          return RepaintBoundary(
+            child: _buildMusicTrackRowWidget(
+              context: ctx,
+              song: entry.song!,
+              index: entry.trackIndex!,
+              activeSongId: activeSongId,
+              isPlaying: isPlaying,
+              discGrouping: discGrouping,
+              showAlbumCol: showAlbumCol,
+              wide: wide,
+              musicService: musicService,
+              coordinator: coordinator,
+              playlists: playlists,
+              playlistIdForRemoval: playlistIdForRemoval,
+              onPlayTrackAt: onPlayTrackAt,
+              onToggleLike: onToggleLike,
+              onAddToPlaylist: onAddToPlaylist,
+              onRemoveFromPlaylist: onRemoveFromPlaylist,
+              onNavigate: onNavigate,
+            ),
+          );
+        },
+        childCount: items.length,
+      ),
+    ),
+  ];
+}
+
+class _TrackTableSliverEntry {
+  const _TrackTableSliverEntry._({
+    this.discNumber,
+    this.durationMs = 0,
+    this.trackIndex,
+    this.song,
+  });
+
+  const _TrackTableSliverEntry.disc(int discNumber, int durationMs)
+      : this._(discNumber: discNumber, durationMs: durationMs);
+
+  const _TrackTableSliverEntry.track(int index, SongModel song)
+      : this._(trackIndex: index, song: song);
+
+  final int? discNumber;
+  final int durationMs;
+  final int? trackIndex;
+  final SongModel? song;
+}
+
+Widget _buildMusicTrackRowWidget({
+  required BuildContext context,
+  required SongModel song,
+  required int index,
+  required String? activeSongId,
+  required bool isPlaying,
+  required bool discGrouping,
+  required bool showAlbumCol,
+  required bool wide,
+  required MusicService musicService,
+  required MusicPlaybackCoordinator coordinator,
+  required List<PlaylistSummaryModel> playlists,
+  required String? playlistIdForRemoval,
+  required ValueChanged<int> onPlayTrackAt,
+  required ValueChanged<SongModel> onToggleLike,
+  required Future<void> Function(String playlistId, SongModel song)?
+      onAddToPlaylist,
+  required Future<void> Function(String playlistId, int position)?
+      onRemoveFromPlaylist,
+  required ValueChanged<MusicPageRoute> onNavigate,
+}) {
+  final isCurrent = song.id == activeSongId;
+  final effectiveLiked = coordinator.songById(song.id)?.isLiked ?? song.isLiked;
+  return _TrackTableRow(
+    song: song.copyWith(isLiked: effectiveLiked),
+    displayIndex: discGrouping ? song.trackNumber : (index + 1),
+    positionInList: index,
+    isCurrent: isCurrent,
+    isPlaying: isCurrent && isPlaying,
+    showArt: !discGrouping,
+    showAlbumCol: showAlbumCol,
+    wide: wide,
+    artworkUri: musicService.buildArtworkUri(song.artworkHash),
+    playlists: playlists,
+    playlistIdForRemoval: playlistIdForRemoval,
+    onPlay: () => onPlayTrackAt(index),
+    onToggleLike: () => onToggleLike(song),
+    onAddToQueue: () {
+      coordinator.addToQueue(song);
+      showMusicToast(context, 'Added "${song.title}" to queue');
+    },
+    onPlayNext: () {
+      coordinator.playNext(song);
+      showMusicToast(context, 'Playing "${song.title}" next');
+    },
+    onGoToAlbum: () => onNavigate(MusicPageRoute.album(song.albumId)),
+    onGoToArtist: () => onNavigate(MusicPageRoute.artist(song.artistId)),
+    onGoToArtistId: (artistId) => onNavigate(MusicPageRoute.artist(artistId)),
+    onAddToPlaylist: onAddToPlaylist,
+    onRemoveFromPlaylist: onRemoveFromPlaylist,
+  );
+}
+
+class _TrackTableEmptyState extends StatelessWidget {
+  const _TrackTableEmptyState({
+    required this.emptyTitle,
+    required this.emptySubtitle,
+  });
+
+  final String emptyTitle;
+  final String emptySubtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = HermesThemeTokens.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 16),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              emptyTitle,
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w800,
+                color: tokens.text,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              emptySubtitle,
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 14, color: tokens.text2),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DiscHeaderRow extends StatelessWidget {
+  const _DiscHeaderRow({
+    required this.discNumber,
+    required this.durationMs,
+  });
+
+  final int discNumber;
+  final int durationMs;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = HermesThemeTokens.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 16, 12, 6),
+      child: Row(
+        children: [
+          Icon(Icons.album_outlined, size: 16, color: tokens.text2),
+          const SizedBox(width: 8),
+          Text(
+            'Disc $discNumber',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: tokens.text,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            formatDurationMs(durationMs),
+            style: TextStyle(fontSize: 12, color: tokens.text2),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// Spotify-style track table with disc grouping, hover play/EQ, heart toggle, format tag, and overflow menu.
 class MusicTrackTable extends StatelessWidget {
   const MusicTrackTable({
@@ -521,31 +805,10 @@ class MusicTrackTable extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final tokens = HermesThemeTokens.of(context);
     if (songs.isEmpty) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 16),
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                emptyTitle,
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w800,
-                  color: tokens.text,
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                emptySubtitle,
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 14, color: tokens.text2),
-              ),
-            ],
-          ),
-        ),
+      return _TrackTableEmptyState(
+        emptyTitle: emptyTitle,
+        emptySubtitle: emptySubtitle,
       );
     }
 
@@ -574,63 +837,32 @@ class MusicTrackTable extends StatelessWidget {
                 .where((s) => s.discNumber == lastDisc)
                 .fold<int>(0, (sum, s) => sum + s.durationMs);
             children.add(
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 16, 12, 6),
-                child: Row(
-                  children: [
-                    Icon(Icons.album_outlined, size: 16, color: tokens.text2),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Disc $lastDisc',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                        color: tokens.text,
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Text(
-                      formatDurationMs(discDurationMs),
-                      style: TextStyle(fontSize: 12, color: tokens.text2),
-                    ),
-                  ],
-                ),
+              _DiscHeaderRow(
+                discNumber: lastDisc,
+                durationMs: discDurationMs,
               ),
             );
           }
 
-          final isCurrent = song.id == activeSongId;
-          final effectiveLiked =
-              coordinator.songById(song.id)?.isLiked ?? song.isLiked;
-
           children.add(
-            _TrackTableRow(
-              song: song.copyWith(isLiked: effectiveLiked),
-              displayIndex: discGrouping ? song.trackNumber : (i + 1),
-              positionInList: i,
-              isCurrent: isCurrent,
-              isPlaying: isCurrent && isPlaying,
-              showArt: !discGrouping,
+            _buildMusicTrackRowWidget(
+              context: context,
+              song: song,
+              index: i,
+              activeSongId: activeSongId,
+              isPlaying: isPlaying,
+              discGrouping: discGrouping,
               showAlbumCol: showAlbumCol,
               wide: wide,
-              artworkUri: musicService.buildArtworkUri(song.artworkHash),
+              musicService: musicService,
+              coordinator: coordinator,
               playlists: playlists,
               playlistIdForRemoval: playlistIdForRemoval,
-              onPlay: () => onPlayTrackAt(i),
-              onToggleLike: () => onToggleLike(song),
-              onAddToQueue: () {
-                coordinator.addToQueue(song);
-                showMusicToast(context, 'Added "${song.title}" to queue');
-              },
-              onPlayNext: () {
-                coordinator.playNext(song);
-                showMusicToast(context, 'Playing "${song.title}" next');
-              },
-              onGoToAlbum: () => onNavigate(MusicPageRoute.album(song.albumId)),
-              onGoToArtist: () => onNavigate(MusicPageRoute.artist(song.artistId)),
-              onGoToArtistId: (artistId) => onNavigate(MusicPageRoute.artist(artistId)),
+              onPlayTrackAt: onPlayTrackAt,
+              onToggleLike: onToggleLike,
               onAddToPlaylist: onAddToPlaylist,
               onRemoveFromPlaylist: onRemoveFromPlaylist,
+              onNavigate: onNavigate,
             ),
           );
         }

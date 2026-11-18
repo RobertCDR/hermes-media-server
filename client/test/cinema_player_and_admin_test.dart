@@ -556,6 +556,20 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Take Me Back To Eden'), findsWidgets);
+
+      final mainScrollable = find
+          .descendant(
+            of: find.byType(CustomScrollView),
+            matching: find.byType(Scrollable),
+          )
+          .first;
+      await tester.scrollUntilVisible(
+        find.text('The Summoning'),
+        300,
+        scrollable: mainScrollable,
+      );
+      await tester.pumpAndSettle();
+
       expect(find.text('The Summoning'), findsOneWidget);
       expect(find.text('FLAC'), findsOneWidget);
       expect(find.text('6:35'), findsOneWidget);

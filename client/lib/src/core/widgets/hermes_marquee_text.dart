@@ -31,6 +31,7 @@ class _HermesMarqueeTextState extends State<HermesMarqueeText>
   Timer? _pauseTimer;
   double _textWidth = 0;
   double _maxWidth = 0;
+  double _lineHeight = 0;
   bool _overflowing = false;
   bool _startedForCurrentSize = false;
 
@@ -109,6 +110,8 @@ class _HermesMarqueeTextState extends State<HermesMarqueeText>
     )..layout();
 
     final measured = painter.width;
+    final lineHeight = painter.height;
+    painter.dispose();
     final nextOverflow = measured > availableWidth + 1.0;
 
     if (!nextOverflow) {
@@ -118,6 +121,7 @@ class _HermesMarqueeTextState extends State<HermesMarqueeText>
       _overflowing = false;
       _textWidth = measured;
       _maxWidth = availableWidth;
+      _lineHeight = lineHeight;
       _startedForCurrentSize = false;
       return;
     }
@@ -127,6 +131,7 @@ class _HermesMarqueeTextState extends State<HermesMarqueeText>
         (_maxWidth - availableWidth).abs() > 1.0) {
       _textWidth = measured;
       _maxWidth = availableWidth;
+      _lineHeight = lineHeight;
       _overflowing = true;
       _startedForCurrentSize = true;
       _stopLoop();
@@ -165,48 +170,62 @@ class _HermesMarqueeTextState extends State<HermesMarqueeText>
         }
 
         final travel = _textWidth + widget.blankSpace;
-        return ClipRect(
-          child: ShaderMask(
-            blendMode: BlendMode.dstIn,
-            shaderCallback: (bounds) => const LinearGradient(
-              begin: Alignment.centerLeft,
-              end: Alignment.centerRight,
-              colors: [
-                Colors.white,
-                Colors.white,
-                Colors.transparent,
-              ],
-              stops: [0.0, 0.9, 1.0],
-            ).createShader(bounds),
-            child: AnimatedBuilder(
-              animation: _controller,
-              builder: (context, child) {
-                final dx = -_controller.value * travel;
-                return Transform.translate(
-                  offset: Offset(dx, 0),
-                  child: child,
-                );
-              },
-              child: OverflowBox(
-                alignment: Alignment.centerLeft,
-                maxWidth: double.infinity,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      widget.text,
-                      maxLines: 1,
-                      softWrap: false,
-                      style: widget.style,
-                    ),
-                    SizedBox(width: widget.blankSpace),
-                    Text(
-                      widget.text,
-                      maxLines: 1,
-                      softWrap: false,
-                      style: widget.style,
-                    ),
-                  ],
+        final boxHeight = _lineHeight > 0 ? _lineHeight : 20.0;
+        return SizedBox(
+          width: constraints.maxWidth,
+          height: boxHeight,
+          child: ClipRect(
+            child: ShaderMask(
+              blendMode: BlendMode.dstIn,
+              shaderCallback: (bounds) => const LinearGradient(
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+                colors: [
+                  Colors.white,
+                  Colors.white,
+                  Colors.transparent,
+                ],
+                stops: [0.0, 0.9, 1.0],
+              ).createShader(bounds),
+              child: AnimatedBuilder(
+                animation: _controller,
+                builder: (context, child) {
+                  final dx = -_controller.value * travel;
+                  return Transform.translate(
+                    offset: Offset(dx, 0),
+                    child: child,
+                  );
+                },
+                child: OverflowBox(
+                  alignment: Alignment.centerLeft,
+                  maxWidth: double.infinity,
+                  minHeight: boxHeight,
+                  maxHeight: boxHeight,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        widget.text,
+                        maxLines: 1,
+                        softWrap: false,
+                        style: widget.style,
+                      ),
+                      SizedBox(width: widget.blankSpace),
+                      ExcludeSemantics(
+                        child: RichText(
+                          maxLines: 1,
+                          softWrap: false,
+                          textScaler: textScaler,
+                          text: TextSpan(
+                            text: widget.text,
+                            style: DefaultTextStyle.of(context)
+                                .style
+                                .merge(widget.style),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),

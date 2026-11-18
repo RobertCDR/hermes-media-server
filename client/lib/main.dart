@@ -12,6 +12,7 @@ import 'src/core/media/hermes_media_runtime.dart';
 import 'src/core/network/endpoint_resolver.dart';
 import 'src/core/network/hermes_sync_client.dart';
 import 'src/core/settings/hermes_preferences.dart';
+import 'src/core/storage/hermes_cache_manager.dart';
 import 'src/core/theme/hermes_theme_tokens.dart';
 import 'src/core/widgets/hermes_artwork_image.dart';
 import 'src/core/widgets/hermes_icons.dart';
@@ -116,6 +117,7 @@ class _HermesAppState extends State<HermesApp> {
   late HermesWorld _lastContentWorld = _worldNotifier.value;
   final MusicNavigationController _musicNav = MusicNavigationController();
   final CinemaNavigationController _cinemaNav = CinemaNavigationController();
+  final HermesCacheManager _cacheManager = HermesCacheManager();
   bool _connectPopoverOpen = false;
   List<OnlineDeviceModel> _connectDevices = const [];
   HermesSyncClient? _syncClient;
@@ -190,6 +192,7 @@ class _HermesAppState extends State<HermesApp> {
       );
     }
 
+    _applyDevicePreferencesState(_devicePrefs, persist: false);
     _worldNotifier.addListener(_onShellNavChanged);
     _musicNav.currentRouteNotifier.addListener(_onShellNavChanged);
     _cinemaNav.mobileTabNotifier.addListener(_onShellNavChanged);
@@ -281,6 +284,7 @@ class _HermesAppState extends State<HermesApp> {
     HermesDevicePreferences next, {
     bool persist = true,
   }) {
+    _cacheManager.applyCapMb(next.cacheCapMb);
     setState(() {
       _devicePrefs = next;
       _tokens = next.toThemeTokens();
@@ -786,6 +790,11 @@ class _HermesAppState extends State<HermesApp> {
                         onChangePassword: _changePassword,
                         onSwitchServer: () => setState(() => _switchingServer = true),
                         onSignOut: () => unawaited(_signOut()),
+                        cacheManager: _cacheManager,
+                        onClearCatalogCaches: () {
+                          musicService.clearCache();
+                          cinemaService.clearCache();
+                        },
                       ),
                   cinemaBuilder: (_) => CinemaCatalogScreen(
                     cinemaService: cinemaService,
