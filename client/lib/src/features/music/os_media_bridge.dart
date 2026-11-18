@@ -229,7 +229,17 @@ class _AudioServiceHandlerAdapter extends audio_svc.BaseAudioHandler
       _onButton?.call(MediaButtonAction.previous);
 
   @override
-  Future<void> stop() async => _onButton?.call(MediaButtonAction.stop);
+  Future<void> stop() async {
+    await _onButton?.call(MediaButtonAction.stop);
+    await clearPlayback();
+    await super.stop();
+  }
+
+  @override
+  Future<void> onTaskRemoved() async {
+    await clearPlayback();
+    await super.stop();
+  }
 
   @override
   Future<void> seek(Duration position) async =>
@@ -258,7 +268,7 @@ class AndroidAudioServiceMediaBridge
         androidNotificationChannelName: 'Hermes Music',
         androidNotificationChannelDescription:
             'Playback controls for Hermes music streaming',
-        androidNotificationIcon: 'mipmap/ic_launcher',
+        androidNotificationIcon: 'drawable/ic_stat_hermes',
         androidNotificationOngoing: false,
         androidStopForegroundOnPause: true,
       ),
