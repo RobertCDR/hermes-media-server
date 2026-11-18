@@ -53,6 +53,7 @@ class _FakeConnectTransport implements ConnectTransport {
     HermesRepeatMode? repeatMode,
     bool? shuffle,
     double? volume,
+    List<String>? queueSongIds,
   }) async {
     sentCommands.add('${state.name}:$currentIndex');
     return PlaybackSessionState(
@@ -62,12 +63,14 @@ class _FakeConnectTransport implements ConnectTransport {
       activeRendererDeviceName: 'Workstation PC',
       state: state,
       repeatMode: HermesRepeatMode.off,
-      shuffle: false,
+      shuffle: shuffle ?? false,
       volume: 1.0,
       currentIndex: currentIndex ?? 0,
-      currentSongId: 'song-1',
+      currentSongId: queueSongIds != null && queueSongIds.isNotEmpty
+          ? queueSongIds[(currentIndex ?? 0).clamp(0, queueSongIds.length - 1)]
+          : 'song-1',
       positionMs: positionMs ?? 0,
-      queueSongIds: const ['song-1', 'song-2'],
+      queueSongIds: queueSongIds ?? const ['song-1', 'song-2'],
     );
   }
 

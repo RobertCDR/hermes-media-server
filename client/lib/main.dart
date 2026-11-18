@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui' show AppExitResponse;
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:http/http.dart' as http;
@@ -112,6 +113,7 @@ class _HermesAppState extends State<HermesApp> {
   StreamSubscription<PlaybackSessionState>? _syncSessionSub;
   StreamSubscription<List<OnlineDeviceModel>>? _syncDevicesSub;
   StreamSubscription<WatchProgressUpdatedEvent>? _syncWatchProgressSub;
+  AppLifecycleListener? _lifecycleListener;
   final StreamController<WatchProgressUpdatedEvent> _watchProgressController =
       StreamController<WatchProgressUpdatedEvent>.broadcast();
 
@@ -169,6 +171,15 @@ class _HermesAppState extends State<HermesApp> {
     );
     _accountPreferencesService =
         AccountPreferencesService(httpClient: _apiHttpClient);
+
+    if (!kIsWeb) {
+      _lifecycleListener = AppLifecycleListener(
+        onExitRequested: () async {
+          await _stopSyncClient();
+          return AppExitResponse.exit;
+        },
+      );
+    }
 
     unawaited(_bootstrapApp());
   }
@@ -261,6 +272,7 @@ class _HermesAppState extends State<HermesApp> {
 
   @override
   void dispose() {
+    _lifecycleListener?.dispose();
     unawaited(_stopSyncClient());
     unawaited(_watchProgressController.close());
     _worldNotifier.dispose();
