@@ -494,8 +494,21 @@ void main() {
       );
       await tester.pumpAndSettle();
 
+      final mainScrollable = find
+          .descendant(
+            of: find.byType(CustomScrollView),
+            matching: find.byType(Scrollable),
+          )
+          .first;
+
       // 1. Right-click a track row
       final trackTitle = find.text('Midnight City').first;
+      await tester.scrollUntilVisible(
+        find.text('Midnight City'),
+        300,
+        scrollable: mainScrollable,
+      );
+      await tester.pumpAndSettle();
       await tester.ensureVisible(trackTitle);
       await secondaryClick(tester, trackTitle);
       expect(find.text('Play now'), findsOneWidget);
@@ -513,6 +526,12 @@ void main() {
       await tester.tap(find.text('Add to queue'));
       await tester.pumpAndSettle();
       expect(coordinator.upNext.length, 3);
+
+      // Scroll back to top so top-of-Home cards & shortcut tiles enter the viewport.
+      await tester.drag(mainScrollable, const Offset(0, 900));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byType(MusicBrowseCard).first);
+      await tester.pumpAndSettle();
 
       // 3. Right-click an Album browse card in Home grid
       await secondaryClick(tester, find.byType(MusicBrowseCard).first);

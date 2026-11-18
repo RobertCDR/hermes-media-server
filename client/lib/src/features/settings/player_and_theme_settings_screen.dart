@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:material_ui/material_ui.dart';
 
 import '../../core/settings/hermes_preferences.dart';
+import '../../core/storage/hermes_cache_manager.dart';
 import '../../core/theme/hermes_theme_tokens.dart';
 import '../../core/widgets/hermes_icons.dart';
 import '../cinema/cinema_models.dart';
@@ -44,6 +47,8 @@ class PlayerAndThemeSettingsScreen extends StatefulWidget {
     this.onChangePassword,
     this.onSwitchServer,
     this.onSignOut,
+    this.cacheManager,
+    this.onClearCatalogCaches,
   });
 
   final HermesThemeTokens tokens;
@@ -66,6 +71,8 @@ class PlayerAndThemeSettingsScreen extends StatefulWidget {
   final ChangePasswordCallback? onChangePassword;
   final VoidCallback? onSwitchServer;
   final VoidCallback? onSignOut;
+  final HermesCacheManager? cacheManager;
+  final VoidCallback? onClearCatalogCaches;
 
   @override
   State<PlayerAndThemeSettingsScreen> createState() =>
@@ -77,6 +84,9 @@ class _PlayerAndThemeSettingsScreenState
   late SettingsTabKind _activeTab;
   late HermesDevicePreferences _devicePrefs;
   late HermesAccountPreferences _accountPrefs;
+  late final HermesCacheManager _cacheManager;
+  HermesCacheSnapshot? _cacheSnapshot;
+  bool _clearingCache = false;
 
   @override
   void initState() {
@@ -84,6 +94,41 @@ class _PlayerAndThemeSettingsScreenState
     _activeTab = widget.initialTab;
     _devicePrefs = _buildInitialDevicePrefs();
     _accountPrefs = widget.accountPreferences;
+    _cacheManager = widget.cacheManager ?? HermesCacheManager();
+    unawaited(_refreshCacheSnapshot());
+  }
+
+  Future<void> _refreshCacheSnapshot() async {
+    final snapshot = await _cacheManager.inspect(capMb: _devicePrefs.cacheCapMb);
+    if (!mounted) return;
+    setState(() => _cacheSnapshot = snapshot);
+  }
+
+  Future<void> _handleClearCache() async {
+    setState(() => _clearingCache = true);
+    try {
+      final updated = await _cacheManager.clearAll(
+        capMb: _devicePrefs.cacheCapMb,
+        onClearCatalogCaches: widget.onClearCatalogCaches,
+      );
+      if (!mounted) return;
+      setState(() {
+        _cacheSnapshot = updated;
+        _clearingCache = false;
+      });
+      ScaffoldMessenger.maybeOf(context)
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Cache cleared'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+    } catch (_) {
+      if (mounted) {
+        setState(() => _clearingCache = false);
+      }
+    }
   }
 
   @override
@@ -450,6 +495,76 @@ class _PlayerAndThemeSettingsScreenState
                 _devicePrefs.copyWith(cellularAudioPreset: preset),
               );
             },
+          ),
+        ),
+        const SizedBox(height: 36),
+        _SettingsSectionHeader(title: 'Storage & cache', tokens: tokens),
+        _SettingRow(
+          label: 'Cache usage',
+          description: 'Artwork images and temporary library cache stored on this device.',
+          stacked: true,
+          tokens: tokens,
+          control: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '${HermesCacheManager.formatBytes(_cacheSnapshot?.totalBytes ?? 0)} used of ${HermesCacheManager.formatCapMb(_devicePrefs.cacheCapMb)}',
+                key: const Key('cache-size-label'),
+                style: TextStyle(
+                  fontFamily: 'Figtree',
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: tokens.text,
+                ),
+              ),
+              const SizedBox(height: 8),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(3),
+                child: LinearProgressIndicator(
+                  value: _cacheSnapshot?.usageRatio ?? 0,
+                  minHeight: 5,
+                  color: tokens.accent,
+                  backgroundColor: tokens.surface3,
+                ),
+              ),
+            ],
+          ),
+        ),
+        Divider(height: 1, thickness: 1, color: tokens.lineSoft),
+        _SettingRow(
+          label: 'Cache size limit',
+          description: 'Caps artwork memory & disk cache before older items are evicted.',
+          tokens: tokens,
+          control: HermesFlatDropdown<int>(
+            key: const Key('cache-cap-selector'),
+            value: HermesCacheManager.capOptionsMb.contains(_devicePrefs.cacheCapMb)
+                ? _devicePrefs.cacheCapMb
+                : 512,
+            options: HermesCacheManager.capOptionsMb
+                .map(
+                  (mb) => HermesDropdownOption(
+                    value: mb,
+                    label: HermesCacheManager.formatCapMb(mb),
+                  ),
+                )
+                .toList(growable: false),
+            onChanged: (mb) {
+              _cacheManager.applyCapMb(mb);
+              _updateDevicePrefs(_devicePrefs.copyWith(cacheCapMb: mb));
+              unawaited(_refreshCacheSnapshot());
+            },
+          ),
+        ),
+        Divider(height: 1, thickness: 1, color: tokens.lineSoft),
+        _SettingRow(
+          label: 'Clear cache',
+          description: 'Frees temporary artwork and cached metadata without touching your server files.',
+          tokens: tokens,
+          control: OutlinedButton.icon(
+            key: const Key('clear-cache-btn'),
+            onPressed: _clearingCache ? null : () => unawaited(_handleClearCache()),
+            icon: const Icon(Icons.cleaning_services_outlined, size: 16),
+            label: Text(_clearingCache ? 'Clearing...' : 'Clear cache'),
           ),
         ),
       ],

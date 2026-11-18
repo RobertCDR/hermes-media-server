@@ -760,22 +760,32 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
                   Expanded(
                     child: RefreshIndicator(
                       onRefresh: _load,
-                      child: ListView(
+                      child: CustomScrollView(
                         controller: _scrollController,
-                        padding: EdgeInsets.fromLTRB(
-                          wide ? 24 : 16,
-                          12,
-                          wide ? 24 : 16,
-                          40,
-                        ),
-                        children: [
-                          if (useExternalMobile &&
-                              _currentRoute.kind == MusicPageKind.search)
-                            _buildMobileSearchView(context, tokens)
-                          else if (_searchQuery.isNotEmpty)
-                            _buildSearchResults(context, tokens)
-                          else
-                            _buildRouteContent(context, tokens),
+                        scrollCacheExtent: const ScrollCacheExtent.pixels(650),
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        slivers: [
+                          SliverPadding(
+                            padding: EdgeInsets.fromLTRB(
+                              wide ? 24 : 16,
+                              12,
+                              wide ? 24 : 16,
+                              40,
+                            ),
+                            sliver: SliverMainAxisGroup(
+                              slivers: _buildMainSlivers(
+                                context,
+                                tokens,
+                                contentWidth:
+                                    ((wide
+                                                ? constraints.maxWidth - 272
+                                                : constraints.maxWidth) -
+                                            (wide ? 48 : 32))
+                                        .clamp(240.0, 2000.0),
+                                useExternalMobile: useExternalMobile,
+                              ),
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -829,7 +839,26 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
     );
   }
 
-  Widget _buildSearchResults(BuildContext context, HermesThemeTokens tokens) {
+  List<Widget> _buildMainSlivers(
+    BuildContext context,
+    HermesThemeTokens tokens, {
+    required double contentWidth,
+    required bool useExternalMobile,
+  }) {
+    if (useExternalMobile && _currentRoute.kind == MusicPageKind.search) {
+      return _buildMobileSearchViewSlivers(context, tokens, contentWidth);
+    }
+    if (_searchQuery.isNotEmpty) {
+      return _buildSearchResultsSlivers(context, tokens, contentWidth);
+    }
+    return _buildRouteSlivers(context, tokens, contentWidth);
+  }
+
+  List<Widget> _buildSearchResultsSlivers(
+    BuildContext context,
+    HermesThemeTokens tokens,
+    double contentWidth,
+  ) {
     final q = _searchQuery.toLowerCase();
     final songs = _songs
         .where(
@@ -854,267 +883,326 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
         .toList();
 
     if (songs.isEmpty && albums.isEmpty && artists.isEmpty && playlists.isEmpty) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 64),
-        child: Center(
-          child: Column(
-            children: [
-              Text(
-                'No results for "$_searchQuery"',
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w800,
-                  color: tokens.text,
-                ),
+      return [
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 64),
+            child: Center(
+              child: Column(
+                children: [
+                  Text(
+                    'No results for "$_searchQuery"',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800,
+                      color: tokens.text,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Try a song title, artist, album or playlist name.',
+                    style: TextStyle(fontSize: 14, color: tokens.text2),
+                  ),
+                ],
               ),
-              const SizedBox(height: 6),
-              Text(
-                'Try a song title, artist, album or playlist name.',
-                style: TextStyle(fontSize: 14, color: tokens.text2),
-              ),
-            ],
+            ),
           ),
         ),
-      );
+      ];
     }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (songs.isNotEmpty) ...[
-          _ShelfTitle('Songs', tokens),
-          const SizedBox(height: 8),
-          MusicTrackTable(
-            songs: songs,
+    return [
+      if (songs.isNotEmpty) ...[
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: _ShelfTitle('Songs', tokens),
+          ),
+        ),
+        ...buildMusicTrackTableSlivers(
+          context: context,
+          contentWidth: contentWidth,
+          songs: songs,
+          musicService: widget.musicService,
+          coordinator: widget.coordinator,
+          playlists: _playlists,
+          onPlayTrackAt: (idx) => _playCollection(
+            songs,
+            startIndex: idx,
+            sourceLabel: 'Search results',
+          ),
+          onToggleLike: _toggleLike,
+          onAddToPlaylist: _addToPlaylist,
+          onNavigate: _navigate,
+        ),
+        const SliverToBoxAdapter(child: SizedBox(height: 28)),
+      ],
+      if (albums.isNotEmpty) ...[
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: _ShelfTitle('Albums', tokens),
+          ),
+        ),
+        _buildAlbumSliverGrid(albums),
+        const SliverToBoxAdapter(child: SizedBox(height: 28)),
+      ],
+      if (artists.isNotEmpty) ...[
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: _ShelfTitle('Artists', tokens),
+          ),
+        ),
+        _buildArtistSliverGrid(artists),
+        const SliverToBoxAdapter(child: SizedBox(height: 28)),
+      ],
+      if (playlists.isNotEmpty) ...[
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: _ShelfTitle('Playlists', tokens),
+          ),
+        ),
+        _buildPlaylistSliverGrid(playlists),
+      ],
+    ];
+  }
+
+  List<Widget> _buildRouteSlivers(
+    BuildContext context,
+    HermesThemeTokens tokens,
+    double contentWidth,
+  ) {
+    final route = _currentRoute;
+    switch (route.kind) {
+      case MusicPageKind.home:
+        return _buildHomeSlivers(context, tokens, contentWidth);
+      case MusicPageKind.search:
+        return _buildMobileSearchViewSlivers(context, tokens, contentWidth);
+      case MusicPageKind.albums:
+        return [
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: _ShelfTitle('Albums', tokens),
+            ),
+          ),
+          _buildAlbumSliverGrid(_albums),
+        ];
+      case MusicPageKind.artists:
+        return [
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: _ShelfTitle('Artists', tokens),
+            ),
+          ),
+          _buildArtistSliverGrid(_artists),
+        ];
+      case MusicPageKind.songs:
+        return [
+          SliverToBoxAdapter(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _ShelfTitle('Songs', tokens),
+                const SizedBox(height: 4),
+                Text(
+                  '${_songs.length} ${_songs.length == 1 ? 'track' : 'tracks'} in your library',
+                  style: TextStyle(fontSize: 13, color: tokens.text2),
+                ),
+                const SizedBox(height: 12),
+              ],
+            ),
+          ),
+          ...buildMusicTrackTableSlivers(
+            context: context,
+            contentWidth: contentWidth,
+            songs: _songs,
             musicService: widget.musicService,
             coordinator: widget.coordinator,
             playlists: _playlists,
             onPlayTrackAt: (idx) => _playCollection(
-              songs,
+              _songs,
               startIndex: idx,
-              sourceLabel: 'Search results',
+              sourceLabel: 'All songs',
+              sourceRoute: const MusicPageRoute.songs(),
             ),
             onToggleLike: _toggleLike,
             onAddToPlaylist: _addToPlaylist,
             onNavigate: _navigate,
           ),
-          const SizedBox(height: 28),
-        ],
-        if (albums.isNotEmpty) ...[
-          _ShelfTitle('Albums', tokens),
-          const SizedBox(height: 10),
-          _buildAlbumGrid(albums),
-          const SizedBox(height: 28),
-        ],
-        if (artists.isNotEmpty) ...[
-          _ShelfTitle('Artists', tokens),
-          const SizedBox(height: 10),
-          _buildArtistGrid(artists),
-          const SizedBox(height: 28),
-        ],
-        if (playlists.isNotEmpty) ...[
-          _ShelfTitle('Playlists', tokens),
-          const SizedBox(height: 10),
-          _buildPlaylistGrid(playlists),
-        ],
-      ],
-    );
-  }
-
-  Widget _buildRouteContent(BuildContext context, HermesThemeTokens tokens) {
-    final route = _currentRoute;
-    switch (route.kind) {
-      case MusicPageKind.home:
-        return _buildHome(context, tokens);
-      case MusicPageKind.search:
-        return _buildMobileSearchView(context, tokens);
-      case MusicPageKind.albums:
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _ShelfTitle('Albums', tokens),
-            const SizedBox(height: 12),
-            _buildAlbumGrid(_albums),
-          ],
-        );
-      case MusicPageKind.artists:
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _ShelfTitle('Artists', tokens),
-            const SizedBox(height: 12),
-            _buildArtistGrid(_artists),
-          ],
-        );
-      case MusicPageKind.songs:
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _ShelfTitle('Songs', tokens),
-            const SizedBox(height: 4),
-            Text(
-              '${_songs.length} ${_songs.length == 1 ? 'track' : 'tracks'} in your library',
-              style: TextStyle(fontSize: 13, color: tokens.text2),
-            ),
-            const SizedBox(height: 12),
-            MusicTrackTable(
-              songs: _songs,
-              musicService: widget.musicService,
-              coordinator: widget.coordinator,
-              playlists: _playlists,
-              onPlayTrackAt: (idx) => _playCollection(
-                _songs,
-                startIndex: idx,
-                sourceLabel: 'All songs',
-                sourceRoute: const MusicPageRoute.songs(),
-              ),
-              onToggleLike: _toggleLike,
-              onAddToPlaylist: _addToPlaylist,
-              onNavigate: _navigate,
-            ),
-          ],
-        );
+        ];
       case MusicPageKind.library:
-        return _buildMobileLibraryView(context, tokens);
+        return _buildMobileLibraryViewSlivers(context, tokens);
       case MusicPageKind.liked:
-        return MusicCollectionPage(
-          kindLabel: 'Playlist',
-          title: 'Liked Songs',
-          description: 'Songs you saved',
-          songs: _likedSongs(),
-          route: const MusicPageRoute.liked(),
-          musicService: widget.musicService,
-          coordinator: widget.coordinator,
-          playlists: _playlists,
-          isLikedCollection: true,
-          onPlayCollection: _playCollection,
-          onToggleLike: _toggleLike,
-          onAddToPlaylist: _addToPlaylist,
-          onNavigate: _navigate,
-        );
+        return [
+          MusicCollectionPage(
+            kindLabel: 'Playlist',
+            title: 'Liked Songs',
+            description: 'Songs you saved',
+            songs: _likedSongs(),
+            route: const MusicPageRoute.liked(),
+            musicService: widget.musicService,
+            coordinator: widget.coordinator,
+            playlists: _playlists,
+            isLikedCollection: true,
+            onPlayCollection: _playCollection,
+            onToggleLike: _toggleLike,
+            onAddToPlaylist: _addToPlaylist,
+            onNavigate: _navigate,
+            asSliver: true,
+            sliverContentWidth: contentWidth,
+          ),
+        ];
       case MusicPageKind.history:
         final historySongs = _historyEntries.map((h) => h.song).toList();
-        return MusicCollectionPage(
-          kindLabel: 'Listening history',
-          title: 'Recently played',
-          description: historySongs.isEmpty
-              ? 'Tracks you listen to will appear here'
-              : 'Your latest played tracks across Hermes devices',
-          songs: historySongs,
-          route: const MusicPageRoute.history(),
-          musicService: widget.musicService,
-          coordinator: widget.coordinator,
-          playlists: _playlists,
-          onPlayCollection: _playCollection,
-          onToggleLike: _toggleLike,
-          onAddToPlaylist: _addToPlaylist,
-          onNavigate: _navigate,
-        );
+        return [
+          MusicCollectionPage(
+            kindLabel: 'Listening history',
+            title: 'Recently played',
+            description: historySongs.isEmpty
+                ? 'Tracks you listen to will appear here'
+                : 'Your latest played tracks across Hermes devices',
+            songs: historySongs,
+            route: const MusicPageRoute.history(),
+            musicService: widget.musicService,
+            coordinator: widget.coordinator,
+            playlists: _playlists,
+            onPlayCollection: _playCollection,
+            onToggleLike: _toggleLike,
+            onAddToPlaylist: _addToPlaylist,
+            onNavigate: _navigate,
+            asSliver: true,
+            sliverContentWidth: contentWidth,
+          ),
+        ];
       case MusicPageKind.smart:
         final kind = SmartPlaylistKind.values.firstWhere(
           (k) => k.id == route.targetId,
           orElse: () => SmartPlaylistKind.recentlyAdded,
         );
-        return MusicCollectionPage(
-          kindLabel: 'Smart playlist',
-          title: kind.title,
-          description: kind.description,
-          songs: _smartSongs(kind),
-          route: MusicPageRoute.smart(kind.id),
-          musicService: widget.musicService,
-          coordinator: widget.coordinator,
-          playlists: _playlists,
-          smartKind: kind,
-          onPlayCollection: _playCollection,
-          onToggleLike: _toggleLike,
-          onAddToPlaylist: _addToPlaylist,
-          onNavigate: _navigate,
-        );
+        return [
+          MusicCollectionPage(
+            kindLabel: 'Smart playlist',
+            title: kind.title,
+            description: kind.description,
+            songs: _smartSongs(kind),
+            route: MusicPageRoute.smart(kind.id),
+            musicService: widget.musicService,
+            coordinator: widget.coordinator,
+            playlists: _playlists,
+            smartKind: kind,
+            onPlayCollection: _playCollection,
+            onToggleLike: _toggleLike,
+            onAddToPlaylist: _addToPlaylist,
+            onNavigate: _navigate,
+            asSliver: true,
+            sliverContentWidth: contentWidth,
+          ),
+        ];
       case MusicPageKind.album:
         final album = _albums.where((a) => a.id == route.targetId).firstOrNull;
         if (album == null) {
-          return _buildHome(context, tokens);
+          return _buildHomeSlivers(context, tokens, contentWidth);
         }
         final songs = _albumSongs(album.id);
         final more = _albums
             .where((a) => a.artistId == album.artistId && a.id != album.id)
             .toList();
-        return MusicAlbumPage(
-          album: album,
-          songs: songs,
-          moreByArtist: more,
-          musicService: widget.musicService,
-          coordinator: widget.coordinator,
-          playlists: _playlists,
-          onPlayCollection: _playCollection,
-          onPlayAlbum: (alb) => _playCollection(
-            _albumSongs(alb.id),
-            sourceLabel: alb.title,
-            sourceRoute: MusicPageRoute.album(alb.id),
+        return [
+          MusicAlbumPage(
+            album: album,
+            songs: songs,
+            moreByArtist: more,
+            musicService: widget.musicService,
+            coordinator: widget.coordinator,
+            playlists: _playlists,
+            onPlayCollection: _playCollection,
+            onPlayAlbum: (alb) => _playCollection(
+              _albumSongs(alb.id),
+              sourceLabel: alb.title,
+              sourceRoute: MusicPageRoute.album(alb.id),
+            ),
+            onQueueAlbum: (alb) => _queueCollection(_albumSongs(alb.id), alb.title),
+            onToggleLike: _toggleLike,
+            onAddToPlaylist: _addToPlaylist,
+            onNavigate: _navigate,
+            asSliver: true,
+            sliverContentWidth: contentWidth,
           ),
-          onQueueAlbum: (alb) => _queueCollection(_albumSongs(alb.id), alb.title),
-          onToggleLike: _toggleLike,
-          onAddToPlaylist: _addToPlaylist,
-          onNavigate: _navigate,
-        );
+        ];
       case MusicPageKind.artist:
         final artist = _artists.where((a) => a.id == route.targetId).firstOrNull;
         if (artist == null) {
-          return _buildHome(context, tokens);
+          return _buildHomeSlivers(context, tokens, contentWidth);
         }
         final songs = _artistSongs(artist.id);
         final featuredAlbumIds = songs.map((s) => s.albumId).toSet();
         final albums = _albums
             .where((a) => a.artistId == artist.id || featuredAlbumIds.contains(a.id))
             .toList();
-        return MusicArtistPage(
-          artist: artist,
-          albums: albums,
-          songs: songs,
-          musicService: widget.musicService,
-          coordinator: widget.coordinator,
-          playlists: _playlists,
-          onPlayCollection: _playCollection,
-          onPlayAlbum: (alb) => _playCollection(
-            _albumSongs(alb.id),
-            sourceLabel: alb.title,
-            sourceRoute: MusicPageRoute.album(alb.id),
+        return [
+          MusicArtistPage(
+            artist: artist,
+            albums: albums,
+            songs: songs,
+            musicService: widget.musicService,
+            coordinator: widget.coordinator,
+            playlists: _playlists,
+            onPlayCollection: _playCollection,
+            onPlayAlbum: (alb) => _playCollection(
+              _albumSongs(alb.id),
+              sourceLabel: alb.title,
+              sourceRoute: MusicPageRoute.album(alb.id),
+            ),
+            onQueueAlbum: (alb) => _queueCollection(_albumSongs(alb.id), alb.title),
+            onToggleLike: _toggleLike,
+            onAddToPlaylist: _addToPlaylist,
+            onNavigate: _navigate,
+            asSliver: true,
+            sliverContentWidth: contentWidth,
           ),
-          onQueueAlbum: (alb) => _queueCollection(_albumSongs(alb.id), alb.title),
-          onToggleLike: _toggleLike,
-          onAddToPlaylist: _addToPlaylist,
-          onNavigate: _navigate,
-        );
+        ];
       case MusicPageKind.playlist:
         final pl = _playlists.where((p) => p.id == route.targetId).firstOrNull;
         if (pl == null) {
-          return _buildHome(context, tokens);
+          return _buildHomeSlivers(context, tokens, contentWidth);
         }
         final detail = _playlistDetails[pl.id];
         final plSongs = detail?.tracks.map((t) => t.song).toList() ?? const <SongModel>[];
-        return MusicCollectionPage(
-          kindLabel: 'Playlist',
-          title: detail?.name ?? pl.name,
-          description: detail?.description ?? pl.description ?? '',
-          songs: plSongs,
-          route: MusicPageRoute.playlist(pl.id),
-          playlistId: pl.id,
-          coverArtworkHash: plSongs.isNotEmpty ? plSongs.first.artworkHash : null,
-          musicService: widget.musicService,
-          coordinator: widget.coordinator,
-          playlists: _playlists,
-          onPlayCollection: _playCollection,
-          onToggleLike: _toggleLike,
-          onAddToPlaylist: _addToPlaylist,
-          onRenamePlaylist: () => unawaited(_promptRenamePlaylist(pl)),
-          onDeletePlaylist: () => unawaited(_deletePlaylist(pl)),
-          onRemoveFromPlaylist: _removeFromPlaylist,
-          onNavigate: _navigate,
-        );
+        return [
+          MusicCollectionPage(
+            kindLabel: 'Playlist',
+            title: detail?.name ?? pl.name,
+            description: detail?.description ?? pl.description ?? '',
+            songs: plSongs,
+            route: MusicPageRoute.playlist(pl.id),
+            playlistId: pl.id,
+            coverArtworkHash: plSongs.isNotEmpty ? plSongs.first.artworkHash : null,
+            musicService: widget.musicService,
+            coordinator: widget.coordinator,
+            playlists: _playlists,
+            onPlayCollection: _playCollection,
+            onToggleLike: _toggleLike,
+            onAddToPlaylist: _addToPlaylist,
+            onRenamePlaylist: () => unawaited(_promptRenamePlaylist(pl)),
+            onDeletePlaylist: () => unawaited(_deletePlaylist(pl)),
+            onRemoveFromPlaylist: _removeFromPlaylist,
+            onNavigate: _navigate,
+            asSliver: true,
+            sliverContentWidth: contentWidth,
+          ),
+        ];
     }
   }
 
-  Widget _buildHome(BuildContext context, HermesThemeTokens tokens) {
+  List<Widget> _buildHomeSlivers(
+    BuildContext context,
+    HermesThemeTokens tokens,
+    double contentWidth,
+  ) {
     final likedSongs = _likedSongs();
     final shortcuts = <_HomeShortcutData>[
       _HomeShortcutData(
@@ -1167,109 +1255,129 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
         ),
     ].take(8).toList();
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (shortcuts.isNotEmpty) ...[
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final cols = constraints.maxWidth >= 920
-                  ? 4
-                  : constraints.maxWidth >= 600
-                      ? 3
-                      : constraints.maxWidth >= 340
-                          ? 2
-                          : 1;
-              return GridView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: shortcuts.length,
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: cols,
-                  mainAxisSpacing: 8,
-                  crossAxisSpacing: 8,
-                  mainAxisExtent: 56,
-                ),
-                itemBuilder: (context, index) => _HomeShortcutTile(
-                  data: shortcuts[index],
-                  onHoverChanged: (hovering) => setState(
-                    () => _hoverTint = hovering ? shortcuts[index].tint : null,
-                  ),
-                ),
-              );
-            },
+    final shortcutCols = contentWidth >= 920
+        ? 4
+        : contentWidth >= 600
+            ? 3
+            : contentWidth >= 340
+                ? 2
+                : 1;
+
+    return [
+      if (shortcuts.isNotEmpty) ...[
+        SliverGrid(
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: shortcutCols,
+            mainAxisSpacing: 8,
+            crossAxisSpacing: 8,
+            mainAxisExtent: 56,
           ),
-          const SizedBox(height: 28),
-        ],
-        if (_historyEntries.isNotEmpty) ...[
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _ShelfTitle('Recently played', tokens),
-              TextButton(
-                onPressed: () => _navigate(const MusicPageRoute.history()),
-                child: Text(
-                  'See all',
-                  style: TextStyle(fontSize: 13, color: tokens.text2),
+          delegate: SliverChildBuilderDelegate(
+            (context, index) => RepaintBoundary(
+              child: _HomeShortcutTile(
+                data: shortcuts[index],
+                onHoverChanged: (hovering) => setState(
+                  () => _hoverTint = hovering ? shortcuts[index].tint : null,
                 ),
               ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          MusicTrackTable(
-            songs: _historyEntries.take(8).map((e) => e.song).toList(),
-            musicService: widget.musicService,
-            coordinator: widget.coordinator,
-            playlists: _playlists,
-            onPlayTrackAt: (idx) => _playCollection(
-              _historyEntries.map((e) => e.song).toList(),
-              startIndex: idx,
-              sourceLabel: 'Recently played',
-              sourceRoute: const MusicPageRoute.history(),
             ),
-            onToggleLike: _toggleLike,
-            onAddToPlaylist: _addToPlaylist,
-            onNavigate: _navigate,
+            childCount: shortcuts.length,
           ),
-          const SizedBox(height: 28),
-        ],
-        if (_albums.isNotEmpty) ...[
-          _ShelfTitle('Recently added', tokens),
-          const SizedBox(height: 10),
-          _buildAlbumGrid(_albums.take(12).toList()),
-          const SizedBox(height: 28),
-        ],
-        _ShelfTitle('Made from your library', tokens),
-        const SizedBox(height: 10),
-        _buildSmartGrid(),
-        const SizedBox(height: 28),
-        if (_artists.isNotEmpty) ...[
-          _ShelfTitle('Your artists', tokens),
-          const SizedBox(height: 10),
-          _buildArtistGrid(_artists),
-          const SizedBox(height: 28),
-        ],
-        if (_songs.isNotEmpty) ...[
-          _ShelfTitle('Songs', tokens),
-          const SizedBox(height: 8),
-          MusicTrackTable(
-            songs: _songs.take(15).toList(),
-            musicService: widget.musicService,
-            coordinator: widget.coordinator,
-            playlists: _playlists,
-            onPlayTrackAt: (idx) => _playCollection(
-              _songs,
-              startIndex: idx,
-              sourceLabel: 'Library songs',
-              sourceRoute: const MusicPageRoute.songs(),
-            ),
-            onToggleLike: _toggleLike,
-            onAddToPlaylist: _addToPlaylist,
-            onNavigate: _navigate,
-          ),
-        ],
+        ),
+        const SliverToBoxAdapter(child: SizedBox(height: 28)),
       ],
-    );
+      if (_historyEntries.isNotEmpty) ...[
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                _ShelfTitle('Recently played', tokens),
+                TextButton(
+                  onPressed: () => _navigate(const MusicPageRoute.history()),
+                  child: Text(
+                    'See all',
+                    style: TextStyle(fontSize: 13, color: tokens.text2),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        ...buildMusicTrackTableSlivers(
+          context: context,
+          contentWidth: contentWidth,
+          songs: _historyEntries.take(8).map((e) => e.song).toList(),
+          musicService: widget.musicService,
+          coordinator: widget.coordinator,
+          playlists: _playlists,
+          onPlayTrackAt: (idx) => _playCollection(
+            _historyEntries.map((e) => e.song).toList(),
+            startIndex: idx,
+            sourceLabel: 'Recently played',
+            sourceRoute: const MusicPageRoute.history(),
+          ),
+          onToggleLike: _toggleLike,
+          onAddToPlaylist: _addToPlaylist,
+          onNavigate: _navigate,
+        ),
+        const SliverToBoxAdapter(child: SizedBox(height: 28)),
+      ],
+      if (_albums.isNotEmpty) ...[
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: _ShelfTitle('Recently added', tokens),
+          ),
+        ),
+        _buildAlbumSliverGrid(_albums.take(12).toList()),
+        const SliverToBoxAdapter(child: SizedBox(height: 28)),
+      ],
+      SliverToBoxAdapter(
+        child: Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: _ShelfTitle('Made from your library', tokens),
+        ),
+      ),
+      _buildSmartSliverGrid(),
+      const SliverToBoxAdapter(child: SizedBox(height: 28)),
+      if (_artists.isNotEmpty) ...[
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: _ShelfTitle('Your artists', tokens),
+          ),
+        ),
+        _buildArtistSliverGrid(_artists),
+        const SliverToBoxAdapter(child: SizedBox(height: 28)),
+      ],
+      if (_songs.isNotEmpty) ...[
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: _ShelfTitle('Songs', tokens),
+          ),
+        ),
+        ...buildMusicTrackTableSlivers(
+          context: context,
+          contentWidth: contentWidth,
+          songs: _songs.take(15).toList(),
+          musicService: widget.musicService,
+          coordinator: widget.coordinator,
+          playlists: _playlists,
+          onPlayTrackAt: (idx) => _playCollection(
+            _songs,
+            startIndex: idx,
+            sourceLabel: 'Library songs',
+            sourceRoute: const MusicPageRoute.songs(),
+          ),
+          onToggleLike: _toggleLike,
+          onAddToPlaylist: _addToPlaylist,
+          onNavigate: _navigate,
+        ),
+      ],
+    ];
   }
 
   String _routeTitle(MusicPageRoute route) => switch (route.kind) {
@@ -1304,258 +1412,295 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
             'Playlist',
       };
 
-  Widget _buildMobileSearchView(
+  List<Widget> _buildMobileSearchViewSlivers(
+    BuildContext context,
+    HermesThemeTokens tokens,
+    double contentWidth,
+  ) {
+    return [
+      SliverToBoxAdapter(
+        child: Column(
+          key: const Key('music-mobile-search-view'),
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _ShelfTitle('Search', tokens),
+            const SizedBox(height: 12),
+            HermesSearchPill(
+              inputKey: const Key('music-search-input'),
+              clearKey: const Key('music-search-clear'),
+              controller: _searchController,
+              focusNode: _searchFocusNode,
+              hintText: 'Songs, artists, albums, playlists...',
+              hasQuery: _searchQuery.isNotEmpty,
+              onChanged: (val) => setState(() => _searchQuery = val.trim()),
+              onClear: () {
+                _searchController.clear();
+                setState(() => _searchQuery = '');
+              },
+            ),
+            const SizedBox(height: 20),
+          ],
+        ),
+      ),
+      if (_searchQuery.isNotEmpty)
+        ..._buildSearchResultsSlivers(context, tokens, contentWidth)
+      else
+        SliverToBoxAdapter(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Browse your music',
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                  color: tokens.text,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  ActionChip(
+                    avatar: Icon(Icons.favorite_rounded, size: 16, color: tokens.accent),
+                    label: const Text('Liked Songs'),
+                    onPressed: () => _navigate(const MusicPageRoute.liked()),
+                  ),
+                  ActionChip(
+                    avatar: Icon(Icons.music_note_rounded, size: 16, color: tokens.text2),
+                    label: const Text('Songs'),
+                    onPressed: () => _navigate(const MusicPageRoute.songs()),
+                  ),
+                  ActionChip(
+                    avatar: Icon(Icons.album_rounded, size: 16, color: tokens.text2),
+                    label: const Text('Albums'),
+                    onPressed: () => _navigate(const MusicPageRoute.albums()),
+                  ),
+                  ActionChip(
+                    avatar: Icon(Icons.person_rounded, size: 16, color: tokens.text2),
+                    label: const Text('Artists'),
+                    onPressed: () => _navigate(const MusicPageRoute.artists()),
+                  ),
+                  ActionChip(
+                    avatar: Icon(Icons.history_rounded, size: 16, color: tokens.text2),
+                    label: const Text('Recently played'),
+                    onPressed: () => _navigate(const MusicPageRoute.history()),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+    ];
+  }
+
+  List<Widget> _buildMobileLibraryViewSlivers(
     BuildContext context,
     HermesThemeTokens tokens,
   ) {
-    return Column(
-      key: const Key('music-mobile-search-view'),
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _ShelfTitle('Search', tokens),
-        const SizedBox(height: 12),
-        HermesSearchPill(
-          inputKey: const Key('music-search-input'),
-          clearKey: const Key('music-search-clear'),
-          controller: _searchController,
-          focusNode: _searchFocusNode,
-          hintText: 'Songs, artists, albums, playlists...',
-          hasQuery: _searchQuery.isNotEmpty,
-          onChanged: (val) => setState(() => _searchQuery = val.trim()),
-          onClear: () {
-            _searchController.clear();
-            setState(() => _searchQuery = '');
-          },
-        ),
-        const SizedBox(height: 20),
-        if (_searchQuery.isNotEmpty)
-          _buildSearchResults(context, tokens)
-        else ...[
-          Text(
-            'Browse your music',
-            style: TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w700,
-              color: tokens.text,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              ActionChip(
-                avatar: Icon(Icons.favorite_rounded, size: 16, color: tokens.accent),
-                label: const Text('Liked Songs'),
-                onPressed: () => _navigate(const MusicPageRoute.liked()),
-              ),
-              ActionChip(
-                avatar: Icon(Icons.music_note_rounded, size: 16, color: tokens.text2),
-                label: const Text('Songs'),
-                onPressed: () => _navigate(const MusicPageRoute.songs()),
-              ),
-              ActionChip(
-                avatar: Icon(Icons.album_rounded, size: 16, color: tokens.text2),
-                label: const Text('Albums'),
-                onPressed: () => _navigate(const MusicPageRoute.albums()),
-              ),
-              ActionChip(
-                avatar: Icon(Icons.person_rounded, size: 16, color: tokens.text2),
-                label: const Text('Artists'),
-                onPressed: () => _navigate(const MusicPageRoute.artists()),
-              ),
-              ActionChip(
-                avatar: Icon(Icons.history_rounded, size: 16, color: tokens.text2),
-                label: const Text('Recently played'),
-                onPressed: () => _navigate(const MusicPageRoute.history()),
-              ),
-            ],
-          ),
-        ],
-      ],
-    );
-  }
-
-  Widget _buildMobileLibraryView(BuildContext context, HermesThemeTokens tokens) {
     final liked = _likedSongs();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Wrap(
-          alignment: WrapAlignment.spaceBetween,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          spacing: 12,
-          runSpacing: 8,
-          children: [
-            _ShelfTitle('Your Library', tokens),
-            FilledButton.tonalIcon(
-              onPressed: _promptCreatePlaylist,
-              icon: const Icon(Icons.add_rounded, size: 18),
-              label: const Text('New playlist'),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            children: [
-              ActionChip(
-                key: const Key('music-lib-songs'),
-                avatar: Icon(Icons.music_note_rounded, size: 16, color: tokens.text2),
-                label: const Text('Songs'),
-                onPressed: () => _navigate(const MusicPageRoute.songs()),
-              ),
-              const SizedBox(width: 8),
-              ActionChip(
-                key: const Key('music-lib-albums'),
-                avatar: Icon(Icons.album_rounded, size: 16, color: tokens.text2),
-                label: const Text('Albums'),
-                onPressed: () => _navigate(const MusicPageRoute.albums()),
-              ),
-              const SizedBox(width: 8),
-              ActionChip(
-                key: const Key('music-lib-artists'),
-                avatar: Icon(Icons.person_rounded, size: 16, color: tokens.text2),
-                label: const Text('Artists'),
-                onPressed: () => _navigate(const MusicPageRoute.artists()),
-              ),
-              const SizedBox(width: 8),
-              ActionChip(
-                key: const Key('music-lib-history'),
-                avatar: Icon(Icons.history_rounded, size: 16, color: tokens.text2),
-                label: const Text('History'),
-                onPressed: () => _navigate(const MusicPageRoute.history()),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 12),
-        _LibraryRowButton(
-          title: 'Liked Songs',
-          subtitle: 'Playlist • ${liked.length} songs',
-          active: false,
-          playing: false,
-          isLiked: true,
-          onTap: () => _navigate(const MusicPageRoute.liked()),
-          onSecondaryTapDown: (d) => unawaited(
-            openMusicCollectionContextMenu(
-              context,
-              d.globalPosition,
-              openLabel: 'Open Liked Songs',
-              onOpen: () => _navigate(const MusicPageRoute.liked()),
-              onPlay: () => unawaited(
-                _playCollection(
-                  liked,
-                  sourceLabel: 'Liked Songs',
-                  sourceRoute: const MusicPageRoute.liked(),
-                ),
-              ),
-              onAddToQueue: () => _queueCollection(liked, 'Liked Songs'),
-            ),
-          ),
-        ),
-        for (final pl in _playlists)
-          _LibraryRowButton(
-            title: pl.name,
-            subtitle: 'Playlist • ${pl.trackCount} songs',
+    final rowBuilders = <Widget Function()>[
+      () => _LibraryRowButton(
+            title: 'Liked Songs',
+            subtitle: 'Playlist • ${liked.length} songs',
             active: false,
             playing: false,
-            isPlaylist: true,
-            onTap: () => _navigate(MusicPageRoute.playlist(pl.id)),
+            isLiked: true,
+            onTap: () => _navigate(const MusicPageRoute.liked()),
             onSecondaryTapDown: (d) => unawaited(
               openMusicCollectionContextMenu(
                 context,
                 d.globalPosition,
-                openLabel: 'Open playlist',
-                onOpen: () => _navigate(MusicPageRoute.playlist(pl.id)),
-                onPlay: () => unawaited(_playPlaylist(pl)),
-                onAddToQueue: () => unawaited(_queuePlaylist(pl)),
-                extraItems: const [
-                  PopupMenuItem(value: 'rename', child: Text('Rename playlist')),
-                  PopupMenuItem(value: 'delete', child: Text('Delete playlist')),
-                ],
-                onExtraSelected: (action) {
-                  if (action == 'rename') {
-                    unawaited(_promptRenamePlaylist(pl));
-                  } else if (action == 'delete') {
-                    unawaited(_deletePlaylist(pl));
-                  }
-                },
+                openLabel: 'Open Liked Songs',
+                onOpen: () => _navigate(const MusicPageRoute.liked()),
+                onPlay: () => unawaited(
+                  _playCollection(
+                    liked,
+                    sourceLabel: 'Liked Songs',
+                    sourceRoute: const MusicPageRoute.liked(),
+                  ),
+                ),
+                onAddToQueue: () => _queueCollection(liked, 'Liked Songs'),
               ),
             ),
           ),
-        for (final smart in SmartPlaylistKind.values)
-          _LibraryRowButton(
-            title: smart.title,
-            subtitle: 'Smart playlist',
-            active: false,
-            playing: false,
-            smartKind: smart,
-            onTap: () => _navigate(MusicPageRoute.smart(smart.id)),
-            onSecondaryTapDown: (d) {
-              final songs = _smartSongs(smart);
-              unawaited(
+      for (final pl in _playlists)
+        () => _LibraryRowButton(
+              title: pl.name,
+              subtitle: 'Playlist • ${pl.trackCount} songs',
+              active: false,
+              playing: false,
+              isPlaylist: true,
+              onTap: () => _navigate(MusicPageRoute.playlist(pl.id)),
+              onSecondaryTapDown: (d) => unawaited(
                 openMusicCollectionContextMenu(
                   context,
                   d.globalPosition,
                   openLabel: 'Open playlist',
-                  onOpen: () => _navigate(MusicPageRoute.smart(smart.id)),
-                  onPlay: () => unawaited(
-                    _playCollection(
-                      songs,
-                      sourceLabel: smart.title,
-                      sourceRoute: MusicPageRoute.smart(smart.id),
-                    ),
-                  ),
-                  onAddToQueue: () => _queueCollection(songs, smart.title),
+                  onOpen: () => _navigate(MusicPageRoute.playlist(pl.id)),
+                  onPlay: () => unawaited(_playPlaylist(pl)),
+                  onAddToQueue: () => unawaited(_queuePlaylist(pl)),
+                  extraItems: const [
+                    PopupMenuItem(value: 'rename', child: Text('Rename playlist')),
+                    PopupMenuItem(value: 'delete', child: Text('Delete playlist')),
+                  ],
+                  onExtraSelected: (action) {
+                    if (action == 'rename') {
+                      unawaited(_promptRenamePlaylist(pl));
+                    } else if (action == 'delete') {
+                      unawaited(_deletePlaylist(pl));
+                    }
+                  },
                 ),
-              );
-            },
-          ),
-        for (final alb in _albums)
-          _LibraryRowButton(
-            title: alb.title,
-            subtitle: 'Album • ${alb.artistName}',
-            active: false,
-            playing: false,
-            artworkUri: widget.musicService.buildArtworkUri(alb.artworkHash),
-            onTap: () => _navigate(MusicPageRoute.album(alb.id)),
-            onSecondaryTapDown: (d) {
-              final songs = _albumSongs(alb.id);
-              unawaited(
-                openMusicCollectionContextMenu(
-                  context,
-                  d.globalPosition,
-                  openLabel: 'Open album',
-                  onOpen: () => _navigate(MusicPageRoute.album(alb.id)),
-                  onPlay: () => unawaited(
-                    _playCollection(
-                      songs,
-                      sourceLabel: alb.title,
-                      sourceRoute: MusicPageRoute.album(alb.id),
+              ),
+            ),
+      for (final smart in SmartPlaylistKind.values)
+        () => _LibraryRowButton(
+              title: smart.title,
+              subtitle: 'Smart playlist',
+              active: false,
+              playing: false,
+              smartKind: smart,
+              onTap: () => _navigate(MusicPageRoute.smart(smart.id)),
+              onSecondaryTapDown: (d) {
+                final songs = _smartSongs(smart);
+                unawaited(
+                  openMusicCollectionContextMenu(
+                    context,
+                    d.globalPosition,
+                    openLabel: 'Open playlist',
+                    onOpen: () => _navigate(MusicPageRoute.smart(smart.id)),
+                    onPlay: () => unawaited(
+                      _playCollection(
+                        songs,
+                        sourceLabel: smart.title,
+                        sourceRoute: MusicPageRoute.smart(smart.id),
+                      ),
                     ),
+                    onAddToQueue: () => _queueCollection(songs, smart.title),
                   ),
-                  onAddToQueue: () => _queueCollection(songs, alb.title),
+                );
+              },
+            ),
+      for (final alb in _albums)
+        () => _LibraryRowButton(
+              title: alb.title,
+              subtitle: 'Album • ${alb.artistName}',
+              active: false,
+              playing: false,
+              artworkUri: widget.musicService.buildArtworkUri(alb.artworkHash),
+              onTap: () => _navigate(MusicPageRoute.album(alb.id)),
+              onSecondaryTapDown: (d) {
+                final songs = _albumSongs(alb.id);
+                unawaited(
+                  openMusicCollectionContextMenu(
+                    context,
+                    d.globalPosition,
+                    openLabel: 'Open album',
+                    onOpen: () => _navigate(MusicPageRoute.album(alb.id)),
+                    onPlay: () => unawaited(
+                      _playCollection(
+                        songs,
+                        sourceLabel: alb.title,
+                        sourceRoute: MusicPageRoute.album(alb.id),
+                      ),
+                    ),
+                    onAddToQueue: () => _queueCollection(songs, alb.title),
+                  ),
+                );
+              },
+            ),
+    ];
+
+    return [
+      SliverToBoxAdapter(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 12,
+              runSpacing: 8,
+              children: [
+                _ShelfTitle('Your Library', tokens),
+                FilledButton.tonalIcon(
+                  onPressed: _promptCreatePlaylist,
+                  icon: const Icon(Icons.add_rounded, size: 18),
+                  label: const Text('New playlist'),
                 ),
-              );
-            },
-          ),
-      ],
-    );
+              ],
+            ),
+            const SizedBox(height: 12),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  ActionChip(
+                    key: const Key('music-lib-songs'),
+                    avatar: Icon(Icons.music_note_rounded, size: 16, color: tokens.text2),
+                    label: const Text('Songs'),
+                    onPressed: () => _navigate(const MusicPageRoute.songs()),
+                  ),
+                  const SizedBox(width: 8),
+                  ActionChip(
+                    key: const Key('music-lib-albums'),
+                    avatar: Icon(Icons.album_rounded, size: 16, color: tokens.text2),
+                    label: const Text('Albums'),
+                    onPressed: () => _navigate(const MusicPageRoute.albums()),
+                  ),
+                  const SizedBox(width: 8),
+                  ActionChip(
+                    key: const Key('music-lib-artists'),
+                    avatar: Icon(Icons.person_rounded, size: 16, color: tokens.text2),
+                    label: const Text('Artists'),
+                    onPressed: () => _navigate(const MusicPageRoute.artists()),
+                  ),
+                  const SizedBox(width: 8),
+                  ActionChip(
+                    key: const Key('music-lib-history'),
+                    avatar: Icon(Icons.history_rounded, size: 16, color: tokens.text2),
+                    label: const Text('History'),
+                    onPressed: () => _navigate(const MusicPageRoute.history()),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
+        ),
+      ),
+      SliverList(
+        delegate: SliverChildBuilderDelegate(
+          (_, index) => RepaintBoundary(child: rowBuilders[index]()),
+          childCount: rowBuilders.length,
+        ),
+      ),
+    ];
   }
 
-  Widget _buildAlbumGrid(List<AlbumSummaryModel> albums) {
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      itemCount: albums.length,
+  Widget _buildMusicCardSliverGrid({
+    required int itemCount,
+    required IndexedWidgetBuilder itemBuilder,
+  }) {
+    return SliverGrid(
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
         maxCrossAxisExtent: 204,
         mainAxisSpacing: 8,
         crossAxisSpacing: 8,
         childAspectRatio: 0.78,
       ),
+      delegate: SliverChildBuilderDelegate(
+        (context, index) => RepaintBoundary(child: itemBuilder(context, index)),
+        childCount: itemCount,
+      ),
+    );
+  }
+
+  Widget _buildAlbumSliverGrid(List<AlbumSummaryModel> albums) {
+    return _buildMusicCardSliverGrid(
+      itemCount: albums.length,
       itemBuilder: (context, index) {
         final alb = albums[index];
         final year = alb.year != null ? '${alb.year} • ' : '';
@@ -1577,18 +1722,10 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
     );
   }
 
-  Widget _buildSmartGrid() {
+  Widget _buildSmartSliverGrid() {
     const smarts = SmartPlaylistKind.values;
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
+    return _buildMusicCardSliverGrid(
       itemCount: smarts.length,
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 204,
-        mainAxisSpacing: 8,
-        crossAxisSpacing: 8,
-        childAspectRatio: 0.78,
-      ),
       itemBuilder: (context, index) {
         final smart = smarts[index];
         final songs = _smartSongs(smart);
@@ -1609,23 +1746,16 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
     );
   }
 
-  Widget _buildArtistGrid(List<ArtistSummaryModel> artists) {
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
+  Widget _buildArtistSliverGrid(List<ArtistSummaryModel> artists) {
+    return _buildMusicCardSliverGrid(
       itemCount: artists.length,
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 204,
-        mainAxisSpacing: 8,
-        crossAxisSpacing: 8,
-        childAspectRatio: 0.78,
-      ),
       itemBuilder: (context, index) {
         final art = artists[index];
         final songs = _artistSongs(art.id);
         return MusicBrowseCard(
           title: art.name,
-          subtitle: 'Artist • ${art.albumCount} ${art.albumCount == 1 ? 'album' : 'albums'}',
+          subtitle:
+              'Artist • ${art.albumCount} ${art.albumCount == 1 ? 'album' : 'albums'}',
           openLabel: 'Open artist',
           artworkUri: widget.musicService.buildArtworkUri(art.artworkHash),
           circular: true,
@@ -1641,17 +1771,9 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
     );
   }
 
-  Widget _buildPlaylistGrid(List<PlaylistSummaryModel> playlists) {
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
+  Widget _buildPlaylistSliverGrid(List<PlaylistSummaryModel> playlists) {
+    return _buildMusicCardSliverGrid(
       itemCount: playlists.length,
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 204,
-        mainAxisSpacing: 8,
-        crossAxisSpacing: 8,
-        childAspectRatio: 0.78,
-      ),
       itemBuilder: (context, index) {
         final pl = playlists[index];
         return MusicBrowseCard(

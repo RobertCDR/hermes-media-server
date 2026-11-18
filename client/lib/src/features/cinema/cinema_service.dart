@@ -29,6 +29,12 @@ class CinemaService {
 
   bool get hasCachedCatalog => cachedMovies != null && cachedSeries != null;
 
+  void clearCache() {
+    cachedMovies = null;
+    cachedSeries = null;
+    cachedCustomLists = null;
+  }
+
   Map<String, String> get _authHeaders => {
         'Authorization': 'Bearer $accessToken',
         'Content-Type': 'application/json',

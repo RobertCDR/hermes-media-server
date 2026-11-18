@@ -32,6 +32,14 @@ class MusicService {
   bool get hasCachedCatalog =>
       cachedSongs != null && cachedAlbums != null && cachedArtists != null;
 
+  void clearCache() {
+    cachedSongs = null;
+    cachedAlbums = null;
+    cachedArtists = null;
+    cachedPlaylists = null;
+    cachedHistory = null;
+  }
+
   Map<String, String> get _headers => {
         'Authorization': 'Bearer $accessToken',
         'Content-Type': 'application/json',

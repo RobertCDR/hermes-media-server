@@ -82,6 +82,7 @@ class HermesDevicePreferences {
     this.rendererBackend = VideoRendererBackend.openGl,
     this.wifiAudioPreset = AudioQualityPreset.lossless,
     this.cellularAudioPreset = AudioQualityPreset.high160,
+    this.cacheCapMb = 512,
   });
 
   final HermesThemeId themeId;
@@ -92,6 +93,7 @@ class HermesDevicePreferences {
   final VideoRendererBackend rendererBackend;
   final AudioQualityPreset wifiAudioPreset;
   final AudioQualityPreset cellularAudioPreset;
+  final int cacheCapMb;
 
   HermesThemeTokens toThemeTokens() {
     return HermesThemeTokens.resolve(
@@ -103,9 +105,11 @@ class HermesDevicePreferences {
   AudioQualityPolicy toAudioQualityPolicy() {
     return AudioQualityPolicy(
       wifiPreset: wifiAudioPreset,
-      cellularPreset: cellularAudioPreset,
+      cellularPreset: cellularPresetOrDefault,
     );
   }
+
+  AudioQualityPreset get cellularPresetOrDefault => cellularAudioPreset;
 
   HermesDevicePreferences copyWith({
     HermesThemeId? themeId,
@@ -116,6 +120,7 @@ class HermesDevicePreferences {
     VideoRendererBackend? rendererBackend,
     AudioQualityPreset? wifiAudioPreset,
     AudioQualityPreset? cellularAudioPreset,
+    int? cacheCapMb,
   }) {
     return HermesDevicePreferences(
       themeId: themeId ?? this.themeId,
@@ -126,6 +131,7 @@ class HermesDevicePreferences {
       rendererBackend: rendererBackend ?? this.rendererBackend,
       wifiAudioPreset: wifiAudioPreset ?? this.wifiAudioPreset,
       cellularAudioPreset: cellularAudioPreset ?? this.cellularAudioPreset,
+      cacheCapMb: cacheCapMb ?? this.cacheCapMb,
     );
   }
 
@@ -139,6 +145,7 @@ class HermesDevicePreferences {
       'rendererBackend': rendererBackend.name,
       'wifiAudioPreset': wifiAudioPreset.apiValue,
       'cellularAudioPreset': cellularAudioPreset.apiValue,
+      'cacheCapMb': cacheCapMb,
     };
   }
 
@@ -147,6 +154,7 @@ class HermesDevicePreferences {
     final rendererName = json['rendererBackend'] as String?;
     final wifiValue = json['wifiAudioPreset'] as String?;
     final cellValue = json['cellularAudioPreset'] as String?;
+    final rawCacheMb = (json['cacheCapMb'] as num?)?.toInt() ?? 512;
 
     return HermesDevicePreferences(
       themeId: HermesThemeId.fromId(json['themeId'] as String?),
@@ -169,6 +177,7 @@ class HermesDevicePreferences {
         (a) => a.apiValue == cellValue,
         orElse: () => AudioQualityPreset.high160,
       ),
+      cacheCapMb: rawCacheMb.clamp(128, 2048),
     );
   }
 }
