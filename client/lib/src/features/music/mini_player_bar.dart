@@ -124,10 +124,19 @@ class _MiniPlayerBarState extends State<MiniPlayerBar> {
                           ),
                           const SizedBox(width: 10),
                           Expanded(
-                            child: _TrackIdentityMeta(
-                              song: song,
-                              onTapTitle: widget.onTapTitle,
-                              onTapArtist: widget.onTapArtist,
+                            child: GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap:
+                                  widget.onToggleNowPlaying ?? widget.onTapTitle,
+                              child: _TrackIdentityMeta(
+                                song: song,
+                                onTapTitle:
+                                    widget.onToggleNowPlaying ??
+                                    widget.onTapTitle,
+                                onTapArtist:
+                                    widget.onToggleNowPlaying ??
+                                    widget.onTapArtist,
+                              ),
                             ),
                           ),
                           if (widget.onToggleLike != null)

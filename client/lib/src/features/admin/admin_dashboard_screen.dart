@@ -1356,8 +1356,13 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Hardware acceleration',
+          'Server transcode GPU (host)',
           style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: tokens.text),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          'Runs inside the Hermes server host or container, never on phones or client devices.',
+          style: TextStyle(fontSize: 11, color: tokens.text3),
         ),
         const SizedBox(height: 6),
         DropdownButtonFormField<HardwareAccelerationMode>(

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:material_ui/material_ui.dart';
 
 import '../../core/theme/hermes_theme_tokens.dart';
+import '../../core/widgets/hermes_artwork_image.dart';
 import 'music_models.dart';
 import 'music_playback_coordinator.dart';
 import 'music_service.dart';
@@ -710,6 +711,911 @@ class _QueueRowTile extends StatelessWidget {
                 padding: EdgeInsets.zero,
                 visualDensity: VisualDensity.compact,
                 icon: Icon(Icons.close_rounded, size: 16, color: tokens.text2),
+                onPressed: onRemove,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+enum _MobilePlayerView { player, queue, lyrics }
+
+/// Dedicated Spotify-style fullscreen player & queue view for mobile viewports.
+class MobileNowPlayingPage extends StatefulWidget {
+  const MobileNowPlayingPage({
+    super.key,
+    required this.coordinator,
+    required this.musicService,
+    required this.localDeviceId,
+    required this.onClose,
+    required this.onOpenDevices,
+    required this.onNavigate,
+  });
+
+  final MusicPlaybackCoordinator coordinator;
+  final MusicService musicService;
+  final String localDeviceId;
+  final VoidCallback onClose;
+  final VoidCallback onOpenDevices;
+  final ValueChanged<MusicPageRoute> onNavigate;
+
+  @override
+  State<MobileNowPlayingPage> createState() => _MobileNowPlayingPageState();
+}
+
+class _MobileNowPlayingPageState extends State<MobileNowPlayingPage> {
+  _MobilePlayerView _view = _MobilePlayerView.player;
+  int? _dragPositionMs;
+  String? _loadedSongId;
+  SongLyricsModel? _lyrics;
+  bool _loadingLyrics = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.coordinator.addListener(_onCoordinatorChanged);
+    unawaited(_ensureLyrics());
+  }
+
+  @override
+  void didUpdateWidget(covariant MobileNowPlayingPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.coordinator != widget.coordinator) {
+      oldWidget.coordinator.removeListener(_onCoordinatorChanged);
+      widget.coordinator.addListener(_onCoordinatorChanged);
+      unawaited(_ensureLyrics());
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.coordinator.removeListener(_onCoordinatorChanged);
+    super.dispose();
+  }
+
+  void _onCoordinatorChanged() {
+    if (!mounted) return;
+    setState(() {});
+    unawaited(_ensureLyrics());
+  }
+
+  Future<void> _ensureLyrics() async {
+    final song = widget.coordinator.currentSong;
+    if (song == null) {
+      if (_loadedSongId != null && mounted) {
+        setState(() {
+          _loadedSongId = null;
+          _lyrics = null;
+          _loadingLyrics = false;
+        });
+      }
+      return;
+    }
+    if (song.id == _loadedSongId) return;
+
+    final songId = song.id;
+    setState(() {
+      _loadedSongId = songId;
+      _loadingLyrics = true;
+      _lyrics = null;
+    });
+
+    try {
+      final fetched = await widget.musicService.getSongLyrics(songId);
+      if (mounted && _loadedSongId == songId) {
+        setState(() {
+          _lyrics = fetched;
+          _loadingLyrics = false;
+        });
+      }
+    } catch (_) {
+      if (mounted && _loadedSongId == songId) {
+        setState(() {
+          _lyrics = SongLyricsModel(
+            songId: songId,
+            isSynced: false,
+            source: 'none',
+            lines: const [],
+          );
+          _loadingLyrics = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = HermesThemeTokens.of(context);
+    final coordinator = widget.coordinator;
+    final session = coordinator.session;
+    final song = coordinator.currentSong;
+    final isPlaying = session?.state == PlaybackState.playing;
+    final queueCount =
+        coordinator.upNext.length + coordinator.upcomingFromSource.length;
+    final bgTop =
+        Color.lerp(const Color(0xFF050507), tokens.accent, 0.18) ??
+        const Color(0xFF14070B);
+
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        key: const Key('mobile-now-playing-page'),
+        decoration: BoxDecoration(
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [bgTop, const Color(0xFF050507), tokens.bgSunken],
+            stops: const [0.0, 0.55, 1.0],
+          ),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            children: [
+              // Drag pill + Top bar
+              const SizedBox(height: 8),
+              Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.24),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(8, 6, 8, 4),
+                child: Row(
+                  children: [
+                    IconButton(
+                      key: const Key('mobile-player-close'),
+                      tooltip: 'Close player',
+                      onPressed: widget.onClose,
+                      icon: Icon(
+                        Icons.keyboard_arrow_down_rounded,
+                        size: 28,
+                        color: tokens.text,
+                      ),
+                    ),
+                    Expanded(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            _view == _MobilePlayerView.queue
+                                ? 'QUEUE'
+                                : _view == _MobilePlayerView.lyrics
+                                    ? 'LYRICS'
+                                    : 'NOW PLAYING',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 1.4,
+                              color: tokens.text3,
+                            ),
+                          ),
+                          if ((coordinator.activeSourceLabel ?? '').isNotEmpty)
+                            Text(
+                              coordinator.activeSourceLabel!,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: tokens.text2,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        IconButton(
+                          key: const Key('mobile-player-queue-toggle'),
+                          tooltip: _view == _MobilePlayerView.queue
+                              ? 'Back to player'
+                              : 'View queue',
+                          onPressed: () {
+                            setState(() {
+                              _view = _view == _MobilePlayerView.queue
+                                  ? _MobilePlayerView.player
+                                  : _MobilePlayerView.queue;
+                            });
+                          },
+                          icon: Icon(
+                            Icons.queue_music_rounded,
+                            size: 22,
+                            color: _view == _MobilePlayerView.queue
+                                ? tokens.accent
+                                : tokens.text,
+                          ),
+                        ),
+                        if (queueCount > 0)
+                          Positioned(
+                            right: 6,
+                            top: 6,
+                            child: IgnorePointer(
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 4,
+                                  vertical: 1,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: tokens.accent,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text(
+                                  '$queueCount',
+                                  style: TextStyle(
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w800,
+                                    color: tokens.accentInk,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: song == null
+                    ? Center(
+                        child: Text(
+                          'Nothing playing right now.',
+                          style: TextStyle(fontSize: 14, color: tokens.text2),
+                        ),
+                      )
+                    : switch (_view) {
+                        _MobilePlayerView.player => _buildPlayerBody(
+                            context,
+                            tokens,
+                            song,
+                            session,
+                            isPlaying,
+                          ),
+                        _MobilePlayerView.queue => _buildQueueBody(
+                            context,
+                            tokens,
+                            song,
+                            session,
+                          ),
+                        _MobilePlayerView.lyrics => _buildLyricsBody(
+                            context,
+                            tokens,
+                            song,
+                          ),
+                      },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPlayerBody(
+    BuildContext context,
+    HermesThemeTokens tokens,
+    SongModel song,
+    PlaybackSessionState? session,
+    bool isPlaying,
+  ) {
+    final coordinator = widget.coordinator;
+    final maxMs = song.durationMs > 0 ? song.durationMs : 1;
+    final activeMs = (_dragPositionMs ?? coordinator.currentPositionMs).clamp(
+      0,
+      maxMs,
+    );
+    final shuffleOn = session?.shuffle ?? false;
+    final repeatMode = session?.repeatMode ?? HermesRepeatMode.off;
+    final rendererLabel = coordinator.isLocalRenderer
+        ? 'This device'
+        : (session?.activeRendererDeviceName?.isNotEmpty == true
+            ? session!.activeRendererDeviceName!
+            : 'Remote device');
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final artSize = (constraints.maxHeight * 0.42)
+            .clamp(120.0, 320.0)
+            .clamp(120.0, (constraints.maxWidth - 48).clamp(120.0, 320.0));
+
+        return SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              minHeight: (constraints.maxHeight - 24).clamp(0.0, 1200.0),
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const SizedBox(height: 4),
+                Center(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.55),
+                          blurRadius: 28,
+                          offset: const Offset(0, 14),
+                        ),
+                      ],
+                    ),
+                    child: HermesArtworkImage(
+                      uri: widget.musicService.buildArtworkUri(
+                        song.artworkHash,
+                      ),
+                      fallbackTitle: song.albumTitle,
+                      fallbackIcon: Icons.music_note_rounded,
+                      width: artSize,
+                      height: artSize,
+                      borderRadius: BorderRadius.circular(16),
+                      showFallbackLabel: false,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Column(
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              InkWell(
+                                onTap: song.albumId.isNotEmpty
+                                    ? () => widget.onNavigate(
+                                          MusicPageRoute.album(song.albumId),
+                                        )
+                                    : null,
+                                child: Text(
+                                  song.title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 22,
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: -0.3,
+                                    color: tokens.text,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 3),
+                              InkWell(
+                                onTap: song.artistId.isNotEmpty
+                                    ? () => widget.onNavigate(
+                                          MusicPageRoute.artist(song.artistId),
+                                        )
+                                    : null,
+                                child: Text(
+                                  song.artistName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 15,
+                                    color: tokens.text2,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          key: const Key('mobile-player-like'),
+                          tooltip: song.isLiked
+                              ? 'Remove from Liked Songs'
+                              : 'Save to Liked Songs',
+                          onPressed: () =>
+                              unawaited(coordinator.toggleLikeSong(song.id)),
+                          icon: Icon(
+                            song.isLiked
+                                ? Icons.favorite_rounded
+                                : Icons.favorite_border_rounded,
+                            size: 26,
+                            color: song.isLiked ? tokens.accent : tokens.text2,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    SliderTheme(
+                      data: SliderTheme.of(context).copyWith(
+                        trackHeight: 4,
+                        activeTrackColor: tokens.accent,
+                        inactiveTrackColor: Colors.white.withValues(alpha: 0.16),
+                        thumbColor: tokens.text,
+                        overlayColor: tokens.accent.withValues(alpha: 0.2),
+                        thumbShape: const RoundSliderThumbShape(
+                          enabledThumbRadius: 6,
+                        ),
+                      ),
+                      child: Slider(
+                        key: const Key('mobile-player-seek'),
+                        value: activeMs.toDouble(),
+                        min: 0,
+                        max: maxMs.toDouble(),
+                        onChanged: (v) =>
+                            setState(() => _dragPositionMs = v.round()),
+                        onChangeEnd: (v) {
+                          final target = v.round();
+                          setState(() => _dragPositionMs = null);
+                          unawaited(coordinator.seekTo(target));
+                        },
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            formatDurationMs(activeMs),
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontFeatures: const [
+                                FontFeature.tabularFigures(),
+                              ],
+                              color: tokens.text2,
+                            ),
+                          ),
+                          Text(
+                            formatDurationMs(maxMs),
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontFeatures: const [
+                                FontFeature.tabularFigures(),
+                              ],
+                              color: tokens.text2,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        IconButton(
+                          key: const Key('mobile-player-shuffle'),
+                          tooltip: shuffleOn ? 'Shuffle on' : 'Shuffle off',
+                          onPressed: () => unawaited(coordinator.toggleShuffle()),
+                          icon: Icon(
+                            Icons.shuffle_rounded,
+                            size: 22,
+                            color: shuffleOn ? tokens.accent : tokens.text2,
+                          ),
+                        ),
+                        IconButton(
+                          key: const Key('mobile-player-prev'),
+                          tooltip: 'Previous Track',
+                          onPressed: () =>
+                              unawaited(coordinator.skipPrevious()),
+                          icon: Icon(
+                            Icons.skip_previous_rounded,
+                            size: 34,
+                            color: tokens.text,
+                          ),
+                        ),
+                        Material(
+                          color: tokens.accent,
+                          shape: const CircleBorder(),
+                          child: InkWell(
+                            key: const Key('mobile-player-play-pause'),
+                            customBorder: const CircleBorder(),
+                            onTap: () =>
+                                unawaited(coordinator.togglePlayPause()),
+                            child: SizedBox(
+                              width: 64,
+                              height: 64,
+                              child: Icon(
+                                isPlaying
+                                    ? Icons.pause_rounded
+                                    : Icons.play_arrow_rounded,
+                                size: 36,
+                                color: tokens.accentInk,
+                              ),
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          key: const Key('mobile-player-next'),
+                          tooltip: 'Next Track',
+                          onPressed: () => unawaited(coordinator.skipNext()),
+                          icon: Icon(
+                            Icons.skip_next_rounded,
+                            size: 34,
+                            color: tokens.text,
+                          ),
+                        ),
+                        IconButton(
+                          key: const Key('mobile-player-repeat'),
+                          tooltip: 'Repeat: ${repeatMode.name}',
+                          onPressed: () =>
+                              unawaited(coordinator.cycleRepeatMode()),
+                          icon: Icon(
+                            repeatMode == HermesRepeatMode.one
+                                ? Icons.repeat_one_rounded
+                                : Icons.repeat_rounded,
+                            size: 22,
+                            color: repeatMode == HermesRepeatMode.off
+                                ? tokens.text2
+                                : tokens.accent,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: InkWell(
+                              key: const Key('mobile-player-devices'),
+                              borderRadius: BorderRadius.circular(18),
+                              onTap: widget.onOpenDevices,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 8,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withValues(alpha: 0.08),
+                                  borderRadius: BorderRadius.circular(18),
+                                  border: Border.all(
+                                    color: coordinator.isLocalRenderer
+                                        ? Colors.white.withValues(alpha: 0.12)
+                                        : tokens.accent.withValues(alpha: 0.6),
+                                  ),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.speaker_group_rounded,
+                                      size: 16,
+                                      color: coordinator.isLocalRenderer
+                                          ? tokens.text2
+                                          : tokens.accent,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Flexible(
+                                      child: Text(
+                                        rendererLabel,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                          color: tokens.text,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          key: const Key('mobile-player-lyrics-toggle'),
+                          tooltip: 'Lyrics',
+                          onPressed: () => setState(
+                            () => _view = _MobilePlayerView.lyrics,
+                          ),
+                          icon: Icon(
+                            Icons.lyrics_outlined,
+                            size: 20,
+                            color: tokens.text2,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        TextButton.icon(
+                          key: const Key('mobile-player-up-next-btn'),
+                          onPressed: () =>
+                              setState(() => _view = _MobilePlayerView.queue),
+                          icon: Icon(
+                            Icons.playlist_play_rounded,
+                            size: 18,
+                            color: tokens.text,
+                          ),
+                          label: Text(
+                            'Up Next',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: tokens.text,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildQueueBody(
+    BuildContext context,
+    HermesThemeTokens tokens,
+    SongModel song,
+    PlaybackSessionState? session,
+  ) {
+    final coordinator = widget.coordinator;
+    final upNext = coordinator.upNext;
+    final fromSource = coordinator.upcomingFromSource;
+
+    return Container(
+      key: const Key('mobile-player-queue-view'),
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
+        children: [
+          Text(
+            'Now playing',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: tokens.text2,
+            ),
+          ),
+          const SizedBox(height: 6),
+          _MobileQueueRow(
+            song: song,
+            artworkUri: widget.musicService.buildArtworkUri(song.artworkHash),
+            active: true,
+            tokens: tokens,
+            onTap: () => setState(() => _view = _MobilePlayerView.player),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Next in queue',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: tokens.text2,
+                  ),
+                ),
+              ),
+              if (upNext.isNotEmpty)
+                TextButton(
+                  onPressed: coordinator.clearUpNext,
+                  child: Text(
+                    'Clear',
+                    style: TextStyle(fontSize: 12, color: tokens.text2),
+                  ),
+                ),
+            ],
+          ),
+          if (upNext.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Text(
+                'Swipe any song right to add it to the queue.',
+                style: TextStyle(fontSize: 12, color: tokens.text3),
+              ),
+            )
+          else
+            for (var i = 0; i < upNext.length; i++)
+              _MobileQueueRow(
+                song: upNext[i],
+                artworkUri: widget.musicService.buildArtworkUri(
+                  upNext[i].artworkHash,
+                ),
+                active: false,
+                tokens: tokens,
+                onTap: () => unawaited(coordinator.playUpNextAt(i)),
+                onRemove: () => coordinator.removeFromUpNext(i),
+              ),
+          if (fromSource.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            Text(
+              'Up next from ${coordinator.activeSourceLabel ?? "library"}',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: tokens.text2,
+              ),
+            ),
+            const SizedBox(height: 6),
+            for (var i = 0; i < fromSource.length; i++)
+              _MobileQueueRow(
+                song: fromSource[i],
+                artworkUri: widget.musicService.buildArtworkUri(
+                  fromSource[i].artworkHash,
+                ),
+                active: false,
+                tokens: tokens,
+                onTap: () => unawaited(
+                  coordinator.playAtIndex((session?.currentIndex ?? 0) + 1 + i),
+                ),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLyricsBody(
+    BuildContext context,
+    HermesThemeTokens tokens,
+    SongModel song,
+  ) {
+    final posMs = widget.coordinator.currentPositionMs;
+    if (_loadingLyrics) {
+      return Container(
+        key: const Key('mobile-player-lyrics-view'),
+        alignment: Alignment.center,
+        child: CircularProgressIndicator(color: tokens.accent),
+      );
+    }
+    final lyrics = _lyrics;
+    if (lyrics == null || lyrics.lines.isEmpty) {
+      return Container(
+        key: const Key('mobile-player-lyrics-view'),
+        padding: const EdgeInsets.all(24),
+        alignment: Alignment.center,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.lyrics_outlined, size: 36, color: tokens.text3),
+            const SizedBox(height: 10),
+            Text(
+              'No lyrics available for "${song.title}"',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                color: tokens.text,
+              ),
+            ),
+            const SizedBox(height: 14),
+            OutlinedButton(
+              onPressed: () => setState(() => _view = _MobilePlayerView.player),
+              child: const Text('Back to player'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    var activeIndex = -1;
+    if (lyrics.isSynced) {
+      for (var i = 0; i < lyrics.lines.length; i++) {
+        final ts = lyrics.lines[i].timestampMs;
+        if (ts != null && ts <= posMs) {
+          activeIndex = i;
+        }
+      }
+    }
+
+    return Container(
+      key: const Key('mobile-player-lyrics-view'),
+      child: Column(
+        children: [
+          Expanded(
+            child: ListView.builder(
+              padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
+              itemCount: lyrics.lines.length,
+              itemBuilder: (_, i) {
+                final line = lyrics.lines[i];
+                final active = i == activeIndex;
+                return InkWell(
+                  onTap: line.timestampMs != null
+                      ? () => unawaited(
+                            widget.coordinator.seekTo(line.timestampMs!),
+                          )
+                      : null,
+                  borderRadius: BorderRadius.circular(8),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 8,
+                      horizontal: 4,
+                    ),
+                    child: Text(
+                      line.text,
+                      style: TextStyle(
+                        fontSize: active ? 20 : 17,
+                        height: 1.35,
+                        fontWeight: FontWeight.w700,
+                        color: !lyrics.isSynced || active
+                            ? tokens.text
+                            : tokens.text3,
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: TextButton.icon(
+              onPressed: () => setState(() => _view = _MobilePlayerView.player),
+              icon: const Icon(Icons.arrow_back_rounded, size: 18),
+              label: const Text('Back to player'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MobileQueueRow extends StatelessWidget {
+  const _MobileQueueRow({
+    required this.song,
+    required this.artworkUri,
+    required this.active,
+    required this.tokens,
+    required this.onTap,
+    this.onRemove,
+  });
+
+  final SongModel song;
+  final Uri? artworkUri;
+  final bool active;
+  final HermesThemeTokens tokens;
+  final VoidCallback onTap;
+  final VoidCallback? onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+        child: Row(
+          children: [
+            MusicArtworkTile(
+              size: 44,
+              title: song.albumTitle,
+              uri: artworkUri,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    song.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: active ? tokens.accent : tokens.text,
+                    ),
+                  ),
+                  ArtistCreditLine(
+                    song: song,
+                    style: TextStyle(fontSize: 12, color: tokens.text2),
+                  ),
+                ],
+              ),
+            ),
+            if (onRemove != null)
+              IconButton(
+                tooltip: 'Remove from queue',
+                padding: EdgeInsets.zero,
+                visualDensity: VisualDensity.compact,
+                icon: Icon(Icons.close_rounded, size: 18, color: tokens.text2),
                 onPressed: onRemove,
               ),
           ],
