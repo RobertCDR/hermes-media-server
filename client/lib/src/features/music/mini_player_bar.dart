@@ -3,6 +3,7 @@ import 'package:material_ui/material_ui.dart';
 import '../../core/theme/hermes_theme_tokens.dart';
 import '../../core/widgets/hermes_artwork_image.dart';
 import '../../core/widgets/hermes_icons.dart';
+import '../../core/widgets/hermes_marquee_text.dart';
 import 'music_models.dart';
 
 /// Figma v4 `.now-bar`: aligned transport controls with optically centered [HermesPlayIcon],
@@ -111,23 +112,33 @@ class _MiniPlayerBarState extends State<MiniPlayerBar> {
                       child: Row(
                         children: [
                           GestureDetector(
-                            onTap: widget.onToggleNowPlaying ?? widget.onTapTitle,
+                            onTap:
+                                widget.onToggleNowPlaying ?? widget.onTapTitle,
                             child: HermesArtworkImage(
                               uri: widget.artworkUri,
                               fallbackTitle: song.albumTitle,
                               fallbackIcon: Icons.music_note_rounded,
-                              width: 44,
-                              height: 44,
-                              borderRadius: BorderRadius.circular(4),
+                              width: 48,
+                              height: 48,
+                              borderRadius: BorderRadius.circular(6),
                               showFallbackLabel: false,
                             ),
                           ),
-                          const SizedBox(width: 10),
+                          const SizedBox(width: 12),
                           Expanded(
                             child: GestureDetector(
+                              key: const Key('mini-player-mobile-swipe-area'),
                               behavior: HitTestBehavior.opaque,
                               onTap:
                                   widget.onToggleNowPlaying ?? widget.onTapTitle,
+                              onHorizontalDragEnd: (details) {
+                                final velocity = details.primaryVelocity ?? 0;
+                                if (velocity < -180) {
+                                  widget.onSkipNext();
+                                } else if (velocity > 180) {
+                                  widget.onSkipPrevious?.call();
+                                }
+                              },
                               child: _TrackIdentityMeta(
                                 song: song,
                                 onTapTitle:
@@ -139,39 +150,36 @@ class _MiniPlayerBarState extends State<MiniPlayerBar> {
                               ),
                             ),
                           ),
-                          if (widget.onToggleLike != null)
-                            _CompactIconSlot(
-                              tooltip: song.isLiked
-                                  ? 'Remove from Liked Songs'
-                                  : 'Save to Liked Songs',
-                              icon: song.isLiked
-                                  ? Icons.favorite_rounded
-                                  : Icons.favorite_border_rounded,
-                              color: song.isLiked ? tokens.accent : tokens.text2,
-                              onPressed: widget.onToggleLike,
+                          if (widget.onToggleLike != null) ...[
+                            SizedBox(
+                              width: 44,
+                              height: 44,
+                              child: IconButton(
+                                key: const Key('mini-player-mobile-like'),
+                                tooltip: song.isLiked
+                                    ? 'Remove from Liked Songs'
+                                    : 'Save to Liked Songs',
+                                padding: EdgeInsets.zero,
+                                iconSize: 24,
+                                onPressed: widget.onToggleLike,
+                                icon: Icon(
+                                  song.isLiked
+                                      ? Icons.favorite_rounded
+                                      : Icons.favorite_border_rounded,
+                                  color: song.isLiked
+                                      ? tokens.accent
+                                      : tokens.text2,
+                                ),
+                              ),
                             ),
-                          if (widget.onSkipPrevious != null)
-                            _CompactIconSlot(
-                              tooltip: 'Previous Track',
-                              icon: Icons.skip_previous_rounded,
-                              color: tokens.text,
-                              onPressed: widget.onSkipPrevious,
-                            ),
+                            const SizedBox(width: 6),
+                          ],
                           _CircularTransportPlayButton(
+                            buttonKey: const Key('mini-player-mobile-play'),
                             isPlaying: isPlaying,
                             onPressed: widget.onTogglePlayPause,
-                          ),
-                          _CompactIconSlot(
-                            tooltip: 'Next Track',
-                            icon: Icons.skip_next_rounded,
-                            color: tokens.text,
-                            onPressed: widget.onSkipNext,
-                          ),
-                          _CompactIconSlot(
-                            tooltip: 'Connect Devices',
-                            icon: Icons.devices_rounded,
-                            color: isRemote ? tokens.accent : tokens.text2,
-                            onPressed: widget.onOpenDevicePicker,
+                            size: 42,
+                            iconSize: 22,
                           ),
                         ],
                       ),
@@ -514,15 +522,13 @@ class _TrackIdentityMeta extends StatelessWidget {
   Widget build(BuildContext context) {
     final tokens = HermesThemeTokens.of(context);
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
         InkWell(
           onTap: onTapTitle,
-          child: Text(
+          child: HermesMarqueeText(
             song.title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
             style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w600,
@@ -533,10 +539,8 @@ class _TrackIdentityMeta extends StatelessWidget {
         const SizedBox(height: 1),
         InkWell(
           onTap: onTapArtist,
-          child: Text(
+          child: HermesMarqueeText(
             song.artistName,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
             style: TextStyle(
               fontSize: 11,
               color: tokens.text2,
@@ -552,10 +556,16 @@ class _CircularTransportPlayButton extends StatefulWidget {
   const _CircularTransportPlayButton({
     required this.isPlaying,
     required this.onPressed,
+    this.buttonKey,
+    this.size = 34,
+    this.iconSize = 16,
   });
 
   final bool isPlaying;
   final VoidCallback onPressed;
+  final Key? buttonKey;
+  final double size;
+  final double iconSize;
 
   @override
   State<_CircularTransportPlayButton> createState() =>
@@ -588,15 +598,22 @@ class _CircularTransportPlayButtonState
               shape: const CircleBorder(),
               clipBehavior: Clip.antiAlias,
               child: InkWell(
+                key: widget.buttonKey,
                 onTap: widget.onPressed,
                 customBorder: const CircleBorder(),
                 child: SizedBox(
-                  width: 34,
-                  height: 34,
+                  width: widget.size,
+                  height: widget.size,
                   child: Center(
                     child: widget.isPlaying
-                        ? HermesPauseIcon(size: 16, color: tokens.bgSunken)
-                        : HermesPlayIcon(size: 16, color: tokens.bgSunken),
+                        ? HermesPauseIcon(
+                            size: widget.iconSize,
+                            color: tokens.bgSunken,
+                          )
+                        : HermesPlayIcon(
+                            size: widget.iconSize,
+                            color: tokens.bgSunken,
+                          ),
                   ),
                 ),
               ),

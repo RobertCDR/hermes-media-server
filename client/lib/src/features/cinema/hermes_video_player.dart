@@ -1,5 +1,8 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -164,6 +167,9 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
   Uri? _activeStreamUri;
   Uri? _activeSubtitleUri;
   String? _ticket;
+  late final String _clientSessionKey =
+      'p-${DateTime.now().microsecondsSinceEpoch}';
+  bool _startedHls = false;
   bool _playing = true;
   bool _buffering = false;
   bool _scrubbing = false;
@@ -192,6 +198,14 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
   StreamSubscription<List<String>>? _subLinesSub;
   StreamSubscription<String>? _errorSub;
 
+  bool get _isRealMobileRuntime =>
+      !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+
+  bool get _isMobilePlatform =>
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS);
+
   @override
   void initState() {
     super.initState();
@@ -200,6 +214,22 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
       0,
       widget.source.durationMs > 0 ? widget.source.durationMs : 1 << 30,
     );
+
+    if (_isRealMobileRuntime) {
+      _isFullscreen = true;
+      unawaited(
+        SystemChrome.setEnabledSystemUIMode(
+          SystemUiMode.immersiveSticky,
+          overlays: const [],
+        ),
+      );
+      unawaited(
+        SystemChrome.setPreferredOrientations(const [
+          DeviceOrientation.landscapeLeft,
+          DeviceOrientation.landscapeRight,
+        ]),
+      );
+    }
 
     final defaultAudio = widget.source.audioStreams
             .where((s) => s.isDefault)
@@ -310,8 +340,25 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
     unawaited(_errorSub?.cancel());
     unawaited(_reporter.reportNow());
     _reporter.dispose();
+    if (_startedHls && _ticket != null) {
+      unawaited(
+        widget.cinemaService.stopClientHlsSessions(
+          mediaSourceId: widget.source.id,
+          clientSession: _clientSessionKey,
+          ticket: _ticket!,
+        ),
+      );
+    }
     if (_isFullscreen) {
-      unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
+      unawaited(
+        SystemChrome.setEnabledSystemUIMode(
+          SystemUiMode.edgeToEdge,
+          overlays: SystemUiOverlay.values,
+        ),
+      );
+      if (_isMobilePlatform) {
+        unawaited(SystemChrome.setPreferredOrientations(DeviceOrientation.values));
+      }
     }
     _playerFocusNode.dispose();
     unawaited(_playback.dispose());
@@ -347,18 +394,34 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
     return issued;
   }
 
-  Future<void> _loadPlaybackUri({int? overridePositionMs}) async {
+  Future<void> _loadPlaybackUri({
+    int? overridePositionMs,
+    bool forceFreshTicket = false,
+  }) async {
     try {
+      if (forceFreshTicket) {
+        final prevTicket = _ticket;
+        _ticket = null;
+        try {
+          _ticket = await widget.cinemaService.issueStreamTicket(widget.source.id);
+        } catch (_) {
+          _ticket = prevTicket;
+        }
+      }
       final ticket = await _ensureTicket();
       final targetPosMs = overridePositionMs ?? _positionMs;
       final isDirect = _quality == VideoQualityPreset.directPlay;
       final anchorMs = isDirect ? 0 : (targetPosMs ~/ 1000) * 1000;
+      if (!isDirect) {
+        _startedHls = true;
+      }
       final streamUri = widget.cinemaService.buildVideoStreamUri(
         mediaSourceId: widget.source.id,
         ticket: ticket,
         quality: _quality,
         audioStreamIndex: _selectedAudioIndex,
         startSeconds: targetPosMs ~/ 1000,
+        clientSession: isDirect ? null : _clientSessionKey,
       );
       final subStream = _findSubtitleStream(_selectedSubtitleIndex);
       final subUri = _selectedSubtitleIndex == null
@@ -487,8 +550,21 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
     unawaited(
       SystemChrome.setEnabledSystemUIMode(
         next ? SystemUiMode.immersiveSticky : SystemUiMode.edgeToEdge,
+        overlays: next ? const [] : SystemUiOverlay.values,
       ),
     );
+    if (_isMobilePlatform) {
+      unawaited(
+        SystemChrome.setPreferredOrientations(
+          next
+              ? const [
+                  DeviceOrientation.landscapeLeft,
+                  DeviceOrientation.landscapeRight,
+                ]
+              : DeviceOrientation.values,
+        ),
+      );
+    }
     _wakeControls();
   }
 
@@ -1151,7 +1227,12 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
                                 onSelectQuality: (q) {
                                   _wakeControls();
                                   setState(() => _quality = q);
-                                  unawaited(_loadPlaybackUri());
+                                  unawaited(
+                                    _loadPlaybackUri(
+                                      forceFreshTicket:
+                                          q != VideoQualityPreset.directPlay,
+                                    ),
+                                  );
                                 },
                               ),
                             ),
