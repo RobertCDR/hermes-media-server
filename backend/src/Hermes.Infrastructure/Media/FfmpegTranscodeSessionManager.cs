@@ -69,14 +69,57 @@ public sealed class FfmpegTranscodeSessionManager : ITranscodeSessionManager, IA
                 }
             }
 
-            for (var i = 0; i < 10 && !File.Exists(playlistPath); i++)
+            for (var i = 0; i < 80; i++)
             {
+                if (File.Exists(playlistPath) && Directory.EnumerateFiles(segmentDir, "*.ts").Any())
+                {
+                    break;
+                }
+
                 if (process is null || process.HasExited)
                 {
                     break;
                 }
 
-                await Task.Delay(35, cancellationToken);
+                await Task.Delay(100, cancellationToken);
+            }
+
+            if ((process is null || process.HasExited) &&
+                !File.Exists(playlistPath) &&
+                hardwareAcceleration != HardwareAccelerationMode.None)
+            {
+                process?.Dispose();
+                process = TryLaunchHlsFfmpeg(
+                    sourceFilePath,
+                    quality,
+                    audioStreamIndex,
+                    startSeconds,
+                    segmentDir,
+                    playlistPath,
+                    HardwareAccelerationMode.None);
+
+                lock (_gate)
+                {
+                    if (_sessions.TryGetValue(sessionId, out var current))
+                    {
+                        _sessions[sessionId] = current with { Process = process };
+                    }
+                }
+
+                for (var i = 0; i < 80; i++)
+                {
+                    if (File.Exists(playlistPath) && Directory.EnumerateFiles(segmentDir, "*.ts").Any())
+                    {
+                        break;
+                    }
+
+                    if (process is null || process.HasExited)
+                    {
+                        break;
+                    }
+
+                    await Task.Delay(100, cancellationToken);
+                }
             }
 
             if (!File.Exists(playlistPath))
@@ -313,6 +356,8 @@ public sealed class FfmpegTranscodeSessionManager : ITranscodeSessionManager, IA
         {
             args.Add("-vf");
             args.Add($"scale=-2:min({maxHeight}\\,ih)");
+            args.Add("-pix_fmt");
+            args.Add("yuv420p");
             switch (hardwareAcceleration)
             {
                 case HardwareAccelerationMode.Nvenc:
@@ -344,14 +389,20 @@ public sealed class FfmpegTranscodeSessionManager : ITranscodeSessionManager, IA
 
         args.Add("-c:a");
         args.Add("aac");
+        args.Add("-ac");
+        args.Add("2");
         args.Add("-b:a");
         args.Add("192k");
         args.Add("-f");
         args.Add("hls");
+        args.Add("-hls_init_time");
+        args.Add("2");
         args.Add("-hls_time");
         args.Add("4");
         args.Add("-hls_list_size");
         args.Add("0");
+        args.Add("-hls_flags");
+        args.Add("temp_file+independent_segments");
         args.Add("-hls_segment_filename");
         args.Add(Path.Combine(segmentDir, "seg_%04d.ts"));
         args.Add(playlistPath);
@@ -398,6 +449,30 @@ public sealed class FfmpegTranscodeSessionManager : ITranscodeSessionManager, IA
                 process.Dispose();
                 return null;
             }
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await process.StandardError.ReadToEndAsync();
+                }
+                catch
+                {
+                    // Process disposed or exited.
+                }
+            });
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await process.StandardOutput.ReadToEndAsync();
+                }
+                catch
+                {
+                    // Process disposed or exited.
+                }
+            });
 
             return process;
         }

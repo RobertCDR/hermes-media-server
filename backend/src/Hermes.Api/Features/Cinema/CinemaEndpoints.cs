@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Hermes.Api.Features.System;
 using Hermes.Api.Hubs;
 using Hermes.Domain.Entities;
+using Hermes.Domain.Enums;
 using Hermes.Infrastructure.Media;
 using Hermes.Infrastructure.Persistence;
 using Microsoft.AspNetCore.SignalR;
@@ -346,19 +347,9 @@ public static class CinemaEndpoints
         sources
             .OrderByDescending(s => s.Height)
             .ThenByDescending(s => s.BitrateBps)
-            .Select(s => new MediaSourceDto(
-                s.Id,
-                s.SourceLabel,
-                s.Container,
-                s.VideoCodec,
-                s.AudioCodec,
-                s.Width,
-                s.Height,
-                s.IsHdr,
-                s.BitrateBps,
-                s.DurationMs,
-                s.MissingSinceUtc is null,
-                s.Streams
+            .Select(s =>
+            {
+                var streams = s.Streams
                     .OrderBy(st => st.StreamIndex)
                     .Select(st => new MediaStreamDto(
                         st.StreamIndex,
@@ -367,6 +358,39 @@ public static class CinemaEndpoints
                         st.Language,
                         st.Title,
                         st.IsDefault))
-                    .ToList()))
+                    .ToList();
+
+                var existingIndices = streams.Select(st => st.StreamIndex).ToHashSet();
+                var hasDefaultSub = streams.Any(st => st.Kind == StreamKind.Subtitle && st.IsDefault);
+                foreach (var sc in SubtitleExtractorService.DiscoverSidecarSubtitles(s.FilePath))
+                {
+                    if (existingIndices.Contains(sc.StreamIndex))
+                    {
+                        continue;
+                    }
+
+                    streams.Add(new MediaStreamDto(
+                        sc.StreamIndex,
+                        StreamKind.Subtitle,
+                        sc.Codec,
+                        sc.Language,
+                        sc.Title,
+                        !hasDefaultSub && sc.StreamIndex == SubtitleExtractorService.SidecarStreamIndexOffset));
+                }
+
+                return new MediaSourceDto(
+                    s.Id,
+                    s.SourceLabel,
+                    s.Container,
+                    s.VideoCodec,
+                    s.AudioCodec,
+                    s.Width,
+                    s.Height,
+                    s.IsHdr,
+                    s.BitrateBps,
+                    s.DurationMs,
+                    s.MissingSinceUtc is null,
+                    streams);
+            })
             .ToList();
 }

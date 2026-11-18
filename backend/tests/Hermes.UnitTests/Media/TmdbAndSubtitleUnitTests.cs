@@ -415,6 +415,59 @@ public class TmdbAndSubtitleUnitTests
         secondAcquired.Should().BeTrue();
     }
 
+    [Fact]
+    public async Task SubtitleExtractorService_DecodesWindows1250RomanianDiacriticsAndDiscoversSidecars()
+    {
+        // Windows-1250 bytes: "două înainte când Şi ţară" -> 0xE3 ('ă'), 0xEE ('î'), 0xE2 ('â'), 0xAA ('Ş'->'Ș'), 0xFE ('ţ'->'ț')
+        byte[] win1250Bytes =
+        [
+            (byte)'1', (byte)'\n',
+            (byte)'0', (byte)'0', (byte)':', (byte)'0', (byte)'0', (byte)':', (byte)'0', (byte)'1', (byte)',', (byte)'0', (byte)'0', (byte)'0',
+            (byte)' ', (byte)'-', (byte)'-', (byte)'>', (byte)' ',
+            (byte)'0', (byte)'0', (byte)':', (byte)'0', (byte)'0', (byte)':', (byte)'0', (byte)'3', (byte)',', (byte)'0', (byte)'0', (byte)'0', (byte)'\n',
+            (byte)'d', (byte)'o', (byte)'u', 0xE3, (byte)' ',
+            0xEE, (byte)'n', (byte)'a', (byte)'i', (byte)'n', (byte)'t', (byte)'e', (byte)' ',
+            (byte)'c', 0xE2, (byte)'n', (byte)'d', (byte)' ',
+            0xAA, (byte)'i', (byte)' ',
+            0xFE, (byte)'a', (byte)'r', 0xE3, (byte)'\n',
+        ];
+
+        var decoded = SubtitleExtractorService.DecodeSubtitleBytes(win1250Bytes);
+        decoded.Should().Contain("două înainte când Ș"+"i țară");
+
+        var tempDir = Path.Combine(Path.GetTempPath(), $"hermes-sub-1250-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var moviePath = Path.Combine(tempDir, "Primal.Fear.1996.2160p.mkv");
+            var srtPath = Path.Combine(tempDir, "Primal.Fear.1996.2160p.srt");
+            await File.WriteAllBytesAsync(moviePath, [0x01, 0x02]);
+            await File.WriteAllBytesAsync(srtPath, win1250Bytes);
+
+            var discovered = SubtitleExtractorService.DiscoverSidecarSubtitles(moviePath);
+            discovered.Should().ContainSingle(s =>
+                s.StreamIndex == SubtitleExtractorService.SidecarStreamIndexOffset &&
+                s.Language == "rum" &&
+                s.Codec == "srt");
+
+            var extractor = new SubtitleExtractorService();
+            var vtt = await extractor.ExtractWebVttAsync(
+                moviePath,
+                SubtitleExtractorService.SidecarStreamIndexOffset,
+                CancellationToken.None);
+            vtt.Should().NotBeNull();
+            vtt!.Should().StartWith("WEBVTT");
+            vtt.Should().Contain("două înainte când Ș"+"i țară");
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, recursive: true);
+            }
+        }
+    }
+
     private static HttpResponseMessage JsonOk(string json) =>
         new(HttpStatusCode.OK)
         {
