@@ -23,6 +23,15 @@ class MusicService {
   final String accessToken;
   final http.Client httpClient;
 
+  List<SongModel>? cachedSongs;
+  List<AlbumSummaryModel>? cachedAlbums;
+  List<ArtistSummaryModel>? cachedArtists;
+  List<PlaylistSummaryModel>? cachedPlaylists;
+  List<ListeningHistoryItemModel>? cachedHistory;
+
+  bool get hasCachedCatalog =>
+      cachedSongs != null && cachedAlbums != null && cachedArtists != null;
+
   Map<String, String> get _headers => {
         'Authorization': 'Bearer $accessToken',
         'Content-Type': 'application/json',
@@ -34,7 +43,9 @@ class MusicService {
       throw MusicApiException('Failed to load artists', statusCode: response.statusCode);
     }
     final decoded = jsonDecode(response.body) as List<dynamic>;
-    return decoded.map((e) => ArtistSummaryModel.fromJson(e as Map<String, dynamic>)).toList();
+    return cachedArtists = decoded
+        .map((e) => ArtistSummaryModel.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
   Future<List<AlbumSummaryModel>> listAlbums() async {
@@ -43,7 +54,9 @@ class MusicService {
       throw MusicApiException('Failed to load albums', statusCode: response.statusCode);
     }
     final decoded = jsonDecode(response.body) as List<dynamic>;
-    return decoded.map((e) => AlbumSummaryModel.fromJson(e as Map<String, dynamic>)).toList();
+    return cachedAlbums = decoded
+        .map((e) => AlbumSummaryModel.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
   Future<AlbumDetailModel> getAlbum(String albumId) async {
@@ -68,7 +81,8 @@ class MusicService {
       throw MusicApiException('Failed to load songs', statusCode: response.statusCode);
     }
     final decoded = jsonDecode(response.body) as List<dynamic>;
-    return decoded.map((e) => SongModel.fromJson(e as Map<String, dynamic>)).toList();
+    return cachedSongs =
+        decoded.map((e) => SongModel.fromJson(e as Map<String, dynamic>)).toList();
   }
 
   Future<List<SongModel>> listLikedSongs() async {
@@ -89,7 +103,7 @@ class MusicService {
       throw MusicApiException('Failed to load listening history', statusCode: response.statusCode);
     }
     final decoded = jsonDecode(response.body) as List<dynamic>;
-    return decoded
+    return cachedHistory = decoded
         .map((e) => ListeningHistoryItemModel.fromJson(e as Map<String, dynamic>))
         .toList();
   }
@@ -132,7 +146,9 @@ class MusicService {
       throw MusicApiException('Failed to load playlists', statusCode: response.statusCode);
     }
     final decoded = jsonDecode(response.body) as List<dynamic>;
-    return decoded.map((e) => PlaylistSummaryModel.fromJson(e as Map<String, dynamic>)).toList();
+    return cachedPlaylists = decoded
+        .map((e) => PlaylistSummaryModel.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
   Future<PlaylistDetailModel> createPlaylist({required String name, String? description}) async {

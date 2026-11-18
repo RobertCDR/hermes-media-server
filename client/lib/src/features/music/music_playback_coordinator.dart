@@ -15,7 +15,7 @@ abstract interface class ConnectTransport {
     bool? shuffle,
     double? volume,
   });
-  Future<PlaybackSessionState> transferOutput(String targetDeviceId);
+  Future<PlaybackSessionState> transferOutput(String targetDeviceId, {int? positionMs});
   Future<List<OnlineDeviceModel>> getOnlineDevices();
 }
 
@@ -98,6 +98,7 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
 
   StreamSubscription<int>? _positionSub;
   StreamSubscription<void>? _completedSub;
+  Timer? _remoteTickTimer;
   String? _loadedTrackId;
   AudioQualityPreset? _loadedQuality;
   PlaybackState _loadedEngineState = PlaybackState.stopped;
@@ -109,7 +110,9 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
   int get lastAppliedVersion => _lastAppliedVersion;
   PlaybackSessionState? get session => _session;
   int get currentPositionMs =>
-      _loadedTrackId != null ? _livePositionMs : (_session?.positionMs ?? 0);
+      _session != null && _session!.state != PlaybackState.stopped
+          ? _livePositionMs
+          : (_session?.positionMs ?? 0);
   NetworkTransportMode get networkMode => _networkMode;
   AudioQualityPreset get effectiveQuality => audioQualityPolicy.presetFor(_networkMode);
   bool get nowPlayingOpen => _nowPlayingOpen;
@@ -241,11 +244,39 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _remoteTickTimer?.cancel();
+    _remoteTickTimer = null;
     unawaited(_positionSub?.cancel());
     unawaited(_completedSub?.cancel());
     _positionSub = null;
     _completedSub = null;
     super.dispose();
+  }
+
+  void _syncRemoteProgressTimer() {
+    final shouldTick =
+        !_disposed && !isLocalRenderer && _session?.state == PlaybackState.playing;
+    if (!shouldTick) {
+      _remoteTickTimer?.cancel();
+      _remoteTickTimer = null;
+      return;
+    }
+
+    if (_remoteTickTimer != null && _remoteTickTimer!.isActive) {
+      return;
+    }
+
+    _remoteTickTimer = Timer.periodic(const Duration(milliseconds: 250), (_) {
+      if (_disposed || isLocalRenderer || _session?.state != PlaybackState.playing) {
+        _remoteTickTimer?.cancel();
+        _remoteTickTimer = null;
+        return;
+      }
+      final maxDur = currentSong?.durationMs ?? 0;
+      final next = _livePositionMs + 250;
+      _livePositionMs = maxDur > 0 ? next.clamp(0, maxDur) : next;
+      notifyListeners();
+    });
   }
 
   void _onEnginePositionMs(int positionMs) {
@@ -257,7 +288,7 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
       _lastNotifiedPositionMs = positionMs;
       notifyListeners();
     }
-    if ((positionMs - _lastHeartbeatPositionMs).abs() >= 5000) {
+    if ((positionMs - _lastHeartbeatPositionMs).abs() >= 3000) {
       _lastHeartbeatPositionMs = positionMs;
       final cb = onProgressHeartbeat;
       if (cb != null) {
@@ -322,7 +353,7 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
 
   Future<void> applyServerSession(PlaybackSessionState incoming) async {
     // Strict monotonic Connect guard: discard stale/reordered packets.
-    if (_disposed || incoming.version <= _lastAppliedVersion) {
+    if (_disposed || incoming.version < _lastAppliedVersion) {
       return;
     }
 
@@ -336,15 +367,19 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
     final rendererLocal = incoming.activeRendererDeviceId == localDeviceId;
 
     if (!rendererLocal) {
-      // Remote Control mode: silence local output without stealing ActiveRenderer.
+      // Remote Control mode: silence local output and clear OS media notification without stealing ActiveRenderer.
       _loadedTrackId = null;
       _loadedQuality = null;
       _loadedEngineState = PlaybackState.stopped;
       _livePositionMs = incoming.positionMs;
+      _syncRemoteProgressTimer();
       await audioEngine.stop();
+      await mediaBridge.clearState();
       notifyListeners();
       return;
     }
+
+    _syncRemoteProgressTimer();
 
     final trackId = incoming.currentSongId;
     final track = trackId == null ? null : _songsById[trackId];
@@ -634,7 +669,10 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
 
   Future<void> transferOutputTo(String targetDeviceId) async {
     if (transport != null) {
-      final updated = await transport!.transferOutput(targetDeviceId);
+      final updated = await transport!.transferOutput(
+        targetDeviceId,
+        positionMs: currentPositionMs,
+      );
       await applyServerSession(updated);
     }
   }

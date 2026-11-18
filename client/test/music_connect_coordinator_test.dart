@@ -90,7 +90,10 @@ class _FakeConnectTransport implements ConnectTransport {
   }
 
   @override
-  Future<PlaybackSessionState> transferOutput(String targetDeviceId) async {
+  Future<PlaybackSessionState> transferOutput(
+    String targetDeviceId, {
+    int? positionMs,
+  }) async {
     lastTransferredTarget = targetDeviceId;
     return PlaybackSessionState(
       sessionId: 'sess-1',

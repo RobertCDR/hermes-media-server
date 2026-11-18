@@ -83,6 +83,11 @@ class HermesArtworkImage extends StatelessWidget {
       ),
     );
 
+    final dpr = MediaQuery.maybeDevicePixelRatioOf(context) ?? 2.0;
+    final cacheW = (width != null && width!.isFinite && width! > 0)
+        ? (width! * dpr).round().clamp(64, 1280)
+        : null;
+
     final image = uri == null
         ? placeholder
         : Image.network(
@@ -90,6 +95,9 @@ class HermesArtworkImage extends StatelessWidget {
             width: width,
             height: height,
             fit: fit,
+            cacheWidth: cacheW,
+            gaplessPlayback: true,
+            filterQuality: FilterQuality.medium,
             errorBuilder: (_, _, _) => placeholder,
             loadingBuilder: (context, child, progress) {
               if (progress == null) {
