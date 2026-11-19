@@ -8,6 +8,7 @@ import '../../core/settings/hermes_preferences.dart';
 import '../../core/storage/hermes_cache_manager.dart';
 import '../../core/theme/hermes_theme_tokens.dart';
 import '../../core/widgets/hermes_icons.dart';
+import '../../core/window/hermes_desktop_titlebar.dart';
 import '../cinema/cinema_models.dart';
 import '../cinema/hermes_video_player.dart';
 import '../music/music_models.dart';
@@ -16,6 +17,12 @@ bool get _isMobilePlatform =>
     !kIsWeb &&
     (defaultTargetPlatform == TargetPlatform.android ||
         defaultTargetPlatform == TargetPlatform.iOS);
+
+bool get _isDesktopPlatform =>
+    !kIsWeb &&
+    (defaultTargetPlatform == TargetPlatform.windows ||
+        defaultTargetPlatform == TargetPlatform.macOS ||
+        defaultTargetPlatform == TargetPlatform.linux);
 
 enum SettingsTabKind { device, account }
 
@@ -567,6 +574,53 @@ class _PlayerAndThemeSettingsScreenState
             label: Text(_clearingCache ? 'Clearing...' : 'Clear cache'),
           ),
         ),
+        if (_isDesktopPlatform) ...[
+          const SizedBox(height: 36),
+          _SettingsSectionHeader(title: 'Desktop & Window', tokens: tokens),
+          _SettingRow(
+            label: 'Close to system tray',
+            description:
+                'Keeps music playing in the system tray when closing the window.',
+            tokens: tokens,
+            control: Switch(
+              key: const Key('setting-close-to-tray-switch'),
+              value: _devicePrefs.closeToTray,
+              onChanged: (value) {
+                _updateDevicePrefs(_devicePrefs.copyWith(closeToTray: value));
+              },
+            ),
+          ),
+          Divider(height: 1, thickness: 1, color: tokens.lineSoft),
+          _SettingRow(
+            label: 'Media key flyout',
+            description:
+                'Shows a compact always-on-top track card when media keys are pressed.',
+            tokens: tokens,
+            control: Switch(
+              key: const Key('setting-media-flyout-switch'),
+              value: _devicePrefs.showMediaFlyout,
+              onChanged: (value) {
+                _updateDevicePrefs(
+                  _devicePrefs.copyWith(showMediaFlyout: value),
+                );
+              },
+            ),
+          ),
+          Divider(height: 1, thickness: 1, color: tokens.lineSoft),
+          _SettingRow(
+            label: 'Keyboard & mouse shortcuts',
+            description:
+                'View global, playback, Mouse 4/5 navigation, and video hotkeys.',
+            tokens: tokens,
+            control: OutlinedButton.icon(
+              key: const Key('setting-shortcuts-btn'),
+              onPressed: () =>
+                  unawaited(showHermesKeyboardShortcutsDialog(context)),
+              icon: const Icon(Icons.keyboard_alt_outlined, size: 16),
+              label: const Text('View shortcuts'),
+            ),
+          ),
+        ],
       ],
     );
   }

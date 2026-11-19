@@ -83,6 +83,8 @@ class HermesDevicePreferences {
     this.wifiAudioPreset = AudioQualityPreset.lossless,
     this.cellularAudioPreset = AudioQualityPreset.high160,
     this.cacheCapMb = 512,
+    this.closeToTray = true,
+    this.showMediaFlyout = true,
   });
 
   final HermesThemeId themeId;
@@ -94,6 +96,8 @@ class HermesDevicePreferences {
   final AudioQualityPreset wifiAudioPreset;
   final AudioQualityPreset cellularAudioPreset;
   final int cacheCapMb;
+  final bool closeToTray;
+  final bool showMediaFlyout;
 
   HermesThemeTokens toThemeTokens() {
     return HermesThemeTokens.resolve(
@@ -121,6 +125,8 @@ class HermesDevicePreferences {
     AudioQualityPreset? wifiAudioPreset,
     AudioQualityPreset? cellularAudioPreset,
     int? cacheCapMb,
+    bool? closeToTray,
+    bool? showMediaFlyout,
   }) {
     return HermesDevicePreferences(
       themeId: themeId ?? this.themeId,
@@ -132,6 +138,8 @@ class HermesDevicePreferences {
       wifiAudioPreset: wifiAudioPreset ?? this.wifiAudioPreset,
       cellularAudioPreset: cellularAudioPreset ?? this.cellularAudioPreset,
       cacheCapMb: cacheCapMb ?? this.cacheCapMb,
+      closeToTray: closeToTray ?? this.closeToTray,
+      showMediaFlyout: showMediaFlyout ?? this.showMediaFlyout,
     );
   }
 
@@ -146,6 +154,8 @@ class HermesDevicePreferences {
       'wifiAudioPreset': wifiAudioPreset.apiValue,
       'cellularAudioPreset': cellularAudioPreset.apiValue,
       'cacheCapMb': cacheCapMb,
+      'closeToTray': closeToTray,
+      'showMediaFlyout': showMediaFlyout,
     };
   }
 
@@ -178,6 +188,8 @@ class HermesDevicePreferences {
         orElse: () => AudioQualityPreset.high160,
       ),
       cacheCapMb: rawCacheMb.clamp(128, 10240),
+      closeToTray: json['closeToTray'] as bool? ?? true,
+      showMediaFlyout: json['showMediaFlyout'] as bool? ?? true,
     );
   }
 }
