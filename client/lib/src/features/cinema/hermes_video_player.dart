@@ -754,20 +754,16 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
               _nudgeVolume(event.scrollDelta.dy < 0 ? 5 : -5);
             }
           },
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: _wakeControls,
-            onDoubleTap: _isMobilePlatform ? null : _toggleFullscreenMode,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                if (_playback.hasVideoOutput)
-                  Positioned.fill(
-                    child: _playback.buildVideoSurface(
-                      context,
-                      fit: _aspectMode.boxFit,
-                    ),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (_playback.hasVideoOutput)
+                Positioned.fill(
+                  child: _playback.buildVideoSurface(
+                    context,
+                    fit: _aspectMode.boxFit,
                   ),
+                ),
               // Frame placeholder / backdrop before video frames start rendering
               if ((!_playback.hasVideoOutput || !_hasVideoFrame) &&
                   widget.backdropUri != null)
@@ -783,6 +779,14 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
                     ),
                   ),
                 ),
+              Positioned.fill(
+                child: GestureDetector(
+                  key: const Key('vp-canvas-gestures'),
+                  behavior: HitTestBehavior.translucent,
+                  onTap: _wakeControls,
+                  onDoubleTap: _isMobilePlatform ? null : _toggleFullscreenMode,
+                ),
+              ),
               // Center stream metadata (visible on stub backend without native surface)
               if (!_playback.hasVideoOutput)
                 Center(
@@ -1442,7 +1446,6 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
         ),
         ),
       ),
-    ),
     );
   }
 }
