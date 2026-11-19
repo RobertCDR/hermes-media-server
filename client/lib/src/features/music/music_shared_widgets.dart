@@ -1204,39 +1204,174 @@ class _TrackTableRowState extends State<_TrackTableRow> {
       return rowContent;
     }
 
-    return Dismissible(
+    return _SpotifySwipeToQueue(
       key: ValueKey('swipe-queue-${song.id}-${widget.displayIndex}-${widget.positionInList}'),
-      direction: DismissDirection.startToEnd,
-      background: Container(
-        alignment: Alignment.centerLeft,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        decoration: BoxDecoration(
-          color: tokens.accent.withValues(alpha: 0.22),
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: tokens.accent.withValues(alpha: 0.45)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
+      accentColor: tokens.accent,
+      textColor: tokens.text,
+      surfaceColor: tokens.surface2,
+      onTriggered: widget.onAddToQueue,
+      child: rowContent,
+    );
+  }
+}
+
+class _SpotifySwipeToQueue extends StatefulWidget {
+  const _SpotifySwipeToQueue({
+    super.key,
+    required this.accentColor,
+    required this.textColor,
+    required this.surfaceColor,
+    required this.onTriggered,
+    required this.child,
+  });
+
+  final Color accentColor;
+  final Color textColor;
+  final Color surfaceColor;
+  final VoidCallback onTriggered;
+  final Widget child;
+
+  @override
+  State<_SpotifySwipeToQueue> createState() => _SpotifySwipeToQueueState();
+}
+
+class _SpotifySwipeToQueueState extends State<_SpotifySwipeToQueue>
+    with SingleTickerProviderStateMixin {
+  static const double _armThreshold = 56.0;
+  static const double _maxOffset = 84.0;
+
+  late final AnimationController _snapController;
+  double _rawDrag = 0.0;
+  double _dragOffset = 0.0;
+  double _snapFrom = 0.0;
+  bool _armed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _snapController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 160),
+    )..addListener(() {
+        if (!mounted) return;
+        final t = Curves.easeOutCubic.transform(_snapController.value);
+        setState(() {
+          _dragOffset = _snapFrom * (1.0 - t);
+        });
+      });
+  }
+
+  @override
+  void dispose() {
+    _snapController.dispose();
+    super.dispose();
+  }
+
+  void _handleDragStart(DragStartDetails _) {
+    _snapController.stop();
+    setState(() {
+      _rawDrag = 0.0;
+      _dragOffset = 0.0;
+      _armed = false;
+    });
+  }
+
+  void _handleDragUpdate(DragUpdateDetails details) {
+    final nextRaw = (_rawDrag + details.delta.dx).clamp(0.0, 240.0);
+    final nextOffset = (nextRaw <= _armThreshold
+            ? nextRaw
+            : _armThreshold + (nextRaw - _armThreshold) * 0.28)
+        .clamp(0.0, _maxOffset);
+    final nextArmed = nextOffset >= _armThreshold;
+    if (nextArmed && !_armed) {
+      unawaited(HapticFeedback.mediumImpact());
+    }
+    setState(() {
+      _rawDrag = nextRaw;
+      _dragOffset = nextOffset;
+      _armed = nextArmed;
+    });
+  }
+
+  void _snapBack() {
+    _snapFrom = _dragOffset;
+    _rawDrag = 0.0;
+    _armed = false;
+    if (_snapFrom <= 0.0) {
+      if (_dragOffset != 0.0) {
+        setState(() => _dragOffset = 0.0);
+      }
+      return;
+    }
+    _snapController.forward(from: 0.0);
+  }
+
+  void _handleDragEnd(DragEndDetails _) {
+    if (_armed) {
+      widget.onTriggered();
+    }
+    _snapBack();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onHorizontalDragStart: _handleDragStart,
+      onHorizontalDragUpdate: _handleDragUpdate,
+      onHorizontalDragEnd: _handleDragEnd,
+      onHorizontalDragCancel: _snapBack,
+      child: ClipRect(
+        child: Stack(
+          alignment: Alignment.centerLeft,
           children: [
-            Icon(Icons.queue_music_rounded, size: 18, color: tokens.accent),
-            const SizedBox(width: 8),
-            Text(
-              'Add to queue',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-                color: tokens.text,
+            if (_dragOffset > 0.5)
+              Positioned.fill(
+                child: Container(
+                  alignment: Alignment.centerLeft,
+                  padding: const EdgeInsets.only(left: 14),
+                  decoration: BoxDecoration(
+                    color: _armed
+                        ? widget.accentColor.withValues(alpha: 0.26)
+                        : widget.surfaceColor.withValues(alpha: 0.85),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: AnimatedScale(
+                    scale: _armed ? 1.18 : 1.0,
+                    duration: const Duration(milliseconds: 90),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.queue_music_rounded,
+                          size: 18,
+                          color: _armed
+                              ? widget.accentColor
+                              : widget.textColor.withValues(alpha: 0.72),
+                        ),
+                        if (_dragOffset >= 44) ...[
+                          const SizedBox(width: 6),
+                          Text(
+                            'Queue',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: widget.textColor,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
               ),
+            Transform.translate(
+              offset: Offset(_dragOffset, 0),
+              child: widget.child,
             ),
           ],
         ),
       ),
-      confirmDismiss: (_) async {
-        unawaited(HapticFeedback.mediumImpact());
-        widget.onAddToQueue();
-        return false;
-      },
-      child: rowContent,
     );
   }
 }

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:material_ui/material_ui.dart' show PaintingBinding, VoidCallback;
@@ -27,7 +28,7 @@ class HermesCacheSnapshot {
 class HermesCacheManager {
   HermesCacheManager({this.diskCacheDir});
 
-  static const List<int> capOptionsMb = [128, 256, 512, 1024, 2048];
+  static const List<int> capOptionsMb = [128, 256, 512, 1024, 2048, 5120, 10240];
 
   final Directory? diskCacheDir;
 
@@ -38,14 +39,16 @@ class HermesCacheManager {
       );
 
   void applyCapMb(int capMb) {
-    final clampedMb = capMb.clamp(128, 2048);
+    final clampedMb = capMb.clamp(128, 10240);
     final imageCache = PaintingBinding.instance.imageCache;
-    imageCache.maximumSizeBytes = clampedMb * 1024 * 1024;
-    imageCache.maximumSize = (clampedMb * 4).clamp(250, 4000);
+    // Keep decoded in-memory RAM cache bounded even when disk cache caps are 5 GB / 10 GB.
+    final ramCapMb = math.min(clampedMb, 1024);
+    imageCache.maximumSizeBytes = ramCapMb * 1024 * 1024;
+    imageCache.maximumSize = (ramCapMb * 4).clamp(250, 4000);
   }
 
   Future<HermesCacheSnapshot> inspect({required int capMb}) async {
-    final clampedMb = capMb.clamp(128, 2048);
+    final clampedMb = capMb.clamp(128, 10240);
     final imageCache = PaintingBinding.instance.imageCache;
     final diskBytes = await _measureDiskCacheBytes();
 

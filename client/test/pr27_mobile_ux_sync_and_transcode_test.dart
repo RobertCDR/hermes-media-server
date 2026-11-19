@@ -142,6 +142,7 @@ class _Pr27VideoPlaybackController implements HermesVideoPlaybackController {
 
   final List<Uri> openedUris = [];
   final List<int> audioSelections = [];
+  final List<double> subtitleDelays = [];
 
   @override
   bool get hasVideoOutput => true;
@@ -193,6 +194,11 @@ class _Pr27VideoPlaybackController implements HermesVideoPlaybackController {
     required List<MediaStreamModel> availableAudioStreams,
   }) async {
     audioSelections.add(streamIndex);
+  }
+
+  @override
+  Future<void> setSubtitleDelaySeconds(double seconds) async {
+    subtitleDelays.add(seconds);
   }
 
   @override

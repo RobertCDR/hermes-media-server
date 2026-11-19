@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:material_ui/material_ui.dart';
 
+import '../../core/storage/search_history_store.dart';
 import '../../core/theme/hermes_theme_tokens.dart';
 import '../../core/widgets/hermes_search_pill.dart';
 import 'music_detail_views.dart';
@@ -27,6 +29,7 @@ class MusicWorldScreen extends StatefulWidget {
     required this.musicService,
     required this.coordinator,
     this.navigationController,
+    this.searchHistoryStore,
     this.reduceMotion = false,
     this.externalMobileNav = false,
   });
@@ -34,6 +37,7 @@ class MusicWorldScreen extends StatefulWidget {
   final MusicService musicService;
   final MusicPlaybackCoordinator coordinator;
   final MusicNavigationController? navigationController;
+  final SearchHistoryStore? searchHistoryStore;
   final bool reduceMotion;
   final bool externalMobileNav;
 
@@ -51,6 +55,7 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
   List<ArtistSummaryModel> _artists = [];
   List<PlaylistSummaryModel> _playlists = [];
   List<ListeningHistoryItemModel> _historyEntries = [];
+  List<MusicSearchHistoryItem> _musicSearchHistory = const [];
   final Map<String, PlaylistDetailModel> _playlistDetails = {};
 
   final List<MusicPageRoute> _history = [const MusicPageRoute.home()];
@@ -58,6 +63,7 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
 
   _LibraryFilter? _libraryFilter;
   String _searchQuery = '';
+  bool _searchFocused = false;
   Color? _hoverTint;
   bool _scrolled = false;
   bool _loading = true;
@@ -66,11 +72,16 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
   bool _lastIsPlaying = false;
   bool _lastShuffle = false;
 
+  SearchHistoryStore get _searchHistoryStore =>
+      widget.searchHistoryStore ?? SharedPrefsSearchHistoryStore();
+
   MusicPageRoute get _currentRoute => _history[_historyIdx];
 
   @override
   void initState() {
     super.initState();
+    _searchFocusNode.addListener(_onSearchFocusChanged);
+    unawaited(_loadMusicSearchHistory());
     _lastActiveSongId = widget.coordinator.currentSong?.id;
     _lastIsPlaying =
         widget.coordinator.session?.state == PlaybackState.playing;
@@ -126,6 +137,7 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
 
   @override
   void dispose() {
+    _searchFocusNode.removeListener(_onSearchFocusChanged);
     _detachNavigationController(widget.navigationController);
     widget.coordinator.removeListener(_onCoordinatorChanged);
     _scrollController
@@ -134,6 +146,93 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
     _searchFocusNode.dispose();
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _onSearchFocusChanged() {
+    if (!mounted) return;
+    final next = _searchFocusNode.hasFocus;
+    if (next != _searchFocused) {
+      setState(() => _searchFocused = next);
+    }
+  }
+
+  Future<void> _loadMusicSearchHistory() async {
+    final loaded = await _searchHistoryStore.loadMusicHistory();
+    if (!mounted) return;
+    setState(() => _musicSearchHistory = loaded);
+  }
+
+  Future<void> _recordMusicSearchItem(MusicSearchHistoryItem item) async {
+    final updated = await _searchHistoryStore.addMusicItem(item);
+    if (!mounted) return;
+    setState(() => _musicSearchHistory = updated);
+  }
+
+  Future<void> _removeMusicSearchItem(String id) async {
+    final updated = await _searchHistoryStore.removeMusicItem(id);
+    if (!mounted) return;
+    setState(() => _musicSearchHistory = updated);
+  }
+
+  Future<void> _clearMusicSearchHistory() async {
+    await _searchHistoryStore.clearMusicHistory();
+    if (!mounted) return;
+    setState(() => _musicSearchHistory = const []);
+  }
+
+  void _openMusicSearchHistoryItem(MusicSearchHistoryItem item) {
+    final touched = MusicSearchHistoryItem(
+      id: item.id,
+      kind: item.kind,
+      title: item.title,
+      subtitle: item.subtitle,
+      artworkHash: item.artworkHash,
+      targetId: item.targetId,
+      timestampMs: DateTime.now().millisecondsSinceEpoch,
+    );
+    unawaited(_recordMusicSearchItem(touched));
+
+    switch (item.kind) {
+      case MusicSearchHistoryKind.song:
+        final found = _songs.where((s) => s.id == item.targetId).firstOrNull;
+        if (found != null) {
+          _searchFocusNode.unfocus();
+          unawaited(
+            _playCollection(
+              [found],
+              startIndex: 0,
+              sourceLabel: 'Search results',
+            ),
+          );
+          return;
+        }
+      case MusicSearchHistoryKind.album:
+        if (item.targetId != null && item.targetId!.isNotEmpty) {
+          _searchFocusNode.unfocus();
+          _navigate(MusicPageRoute.album(item.targetId!));
+          return;
+        }
+      case MusicSearchHistoryKind.artist:
+        if (item.targetId != null && item.targetId!.isNotEmpty) {
+          _searchFocusNode.unfocus();
+          _navigate(MusicPageRoute.artist(item.targetId!));
+          return;
+        }
+      case MusicSearchHistoryKind.playlist:
+        if (item.targetId != null && item.targetId!.isNotEmpty) {
+          _searchFocusNode.unfocus();
+          _navigate(MusicPageRoute.playlist(item.targetId!));
+          return;
+        }
+      case MusicSearchHistoryKind.query:
+        break;
+    }
+
+    _searchController.value = TextEditingValue(
+      text: item.title,
+      selection: TextSelection.collapsed(offset: item.title.length),
+    );
+    setState(() => _searchQuery = item.title.trim());
   }
 
   void _attachNavigationController(MusicNavigationController? controller) {
@@ -738,6 +837,7 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
                       onBack: _goBack,
                       onQueryChanged: (val) =>
                           setState(() => _searchQuery = val.trim()),
+                      onSubmitted: _submitMusicSearchQuery,
                       onClearSearch: () {
                         _searchController.clear();
                         setState(() => _searchQuery = '');
@@ -792,6 +892,24 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
                   ),
                 ],
               ),
+              if (!useExternalMobile &&
+                  _searchFocused &&
+                  _searchQuery.isEmpty &&
+                  _musicSearchHistory.isNotEmpty)
+                Positioned(
+                  top: 62,
+                  left: 60,
+                  width: math.min(
+                    420.0,
+                    math.max(
+                      240.0,
+                      (wide ? constraints.maxWidth - 272 : constraints.maxWidth) - 76,
+                    ),
+                  ),
+                  child: TextFieldTapRegion(
+                    child: _buildMusicSearchHistoryCard(tokens, isDropdown: true),
+                  ),
+                ),
             ],
           ),
         );
@@ -926,11 +1044,29 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
           musicService: widget.musicService,
           coordinator: widget.coordinator,
           playlists: _playlists,
-          onPlayTrackAt: (idx) => _playCollection(
-            songs,
-            startIndex: idx,
-            sourceLabel: 'Search results',
-          ),
+          onPlayTrackAt: (idx) {
+            final tapped = songs[idx];
+            unawaited(
+              _recordMusicSearchItem(
+                MusicSearchHistoryItem(
+                  id: 'song:${tapped.id}',
+                  kind: MusicSearchHistoryKind.song,
+                  title: tapped.title,
+                  subtitle: 'Song • ${tapped.artistName}',
+                  artworkHash: tapped.artworkHash,
+                  targetId: tapped.id,
+                  timestampMs: DateTime.now().millisecondsSinceEpoch,
+                ),
+              ),
+            );
+            unawaited(
+              _playCollection(
+                songs,
+                startIndex: idx,
+                sourceLabel: 'Search results',
+              ),
+            );
+          },
           onToggleLike: _toggleLike,
           onAddToPlaylist: _addToPlaylist,
           onNavigate: _navigate,
@@ -944,7 +1080,22 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
             child: _ShelfTitle('Albums', tokens),
           ),
         ),
-        _buildAlbumSliverGrid(albums),
+        _buildAlbumSliverGrid(
+          albums,
+          onOpened: (alb) => unawaited(
+            _recordMusicSearchItem(
+              MusicSearchHistoryItem(
+                id: 'album:${alb.id}',
+                kind: MusicSearchHistoryKind.album,
+                title: alb.title,
+                subtitle: 'Album • ${alb.artistName}',
+                artworkHash: alb.artworkHash,
+                targetId: alb.id,
+                timestampMs: DateTime.now().millisecondsSinceEpoch,
+              ),
+            ),
+          ),
+        ),
         const SliverToBoxAdapter(child: SizedBox(height: 28)),
       ],
       if (artists.isNotEmpty) ...[
@@ -954,7 +1105,22 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
             child: _ShelfTitle('Artists', tokens),
           ),
         ),
-        _buildArtistSliverGrid(artists),
+        _buildArtistSliverGrid(
+          artists,
+          onOpened: (art) => unawaited(
+            _recordMusicSearchItem(
+              MusicSearchHistoryItem(
+                id: 'artist:${art.id}',
+                kind: MusicSearchHistoryKind.artist,
+                title: art.name,
+                subtitle: 'Artist',
+                artworkHash: art.artworkHash,
+                targetId: art.id,
+                timestampMs: DateTime.now().millisecondsSinceEpoch,
+              ),
+            ),
+          ),
+        ),
         const SliverToBoxAdapter(child: SizedBox(height: 28)),
       ],
       if (playlists.isNotEmpty) ...[
@@ -964,7 +1130,21 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
             child: _ShelfTitle('Playlists', tokens),
           ),
         ),
-        _buildPlaylistSliverGrid(playlists),
+        _buildPlaylistSliverGrid(
+          playlists,
+          onOpened: (pl) => unawaited(
+            _recordMusicSearchItem(
+              MusicSearchHistoryItem(
+                id: 'playlist:${pl.id}',
+                kind: MusicSearchHistoryKind.playlist,
+                title: pl.name,
+                subtitle: 'Playlist • ${pl.trackCount} songs',
+                targetId: pl.id,
+                timestampMs: DateTime.now().millisecondsSinceEpoch,
+              ),
+            ),
+          ),
+        ),
       ],
     ];
   }
@@ -979,7 +1159,7 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
       case MusicPageKind.home:
         return _buildHomeSlivers(context, tokens, contentWidth);
       case MusicPageKind.search:
-        return _buildMobileSearchViewSlivers(context, tokens, contentWidth);
+        return _buildHomeSlivers(context, tokens, contentWidth);
       case MusicPageKind.albums:
         return [
           SliverToBoxAdapter(
@@ -1412,6 +1592,169 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
             'Playlist',
       };
 
+  void _submitMusicSearchQuery(String value) {
+    final clean = value.trim();
+    if (clean.isEmpty) return;
+    unawaited(
+      _recordMusicSearchItem(
+        MusicSearchHistoryItem(
+          id: 'query:${clean.toLowerCase()}',
+          kind: MusicSearchHistoryKind.query,
+          title: clean,
+          subtitle: 'Search',
+          timestampMs: DateTime.now().millisecondsSinceEpoch,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMusicSearchHistoryCard(
+    HermesThemeTokens tokens, {
+    required bool isDropdown,
+  }) {
+    final list = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: EdgeInsets.fromLTRB(isDropdown ? 14 : 0, isDropdown ? 10 : 0, isDropdown ? 8 : 0, 6),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Recent searches',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: tokens.text,
+                  ),
+                ),
+              ),
+              TextButton(
+                key: const Key('music-clear-search-history'),
+                onPressed: () => unawaited(_clearMusicSearchHistory()),
+                child: Text(
+                  'Clear',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: tokens.text2,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        for (final item in _musicSearchHistory)
+          InkWell(
+            onTap: () => _openMusicSearchHistoryItem(item),
+            borderRadius: BorderRadius.circular(8),
+            child: Padding(
+              padding: EdgeInsets.symmetric(
+                horizontal: isDropdown ? 12 : 4,
+                vertical: 6,
+              ),
+              child: Row(
+                children: [
+                  if (item.kind == MusicSearchHistoryKind.query)
+                    Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: tokens.surface3,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        Icons.history_rounded,
+                        size: 20,
+                        color: tokens.text2,
+                      ),
+                    )
+                  else
+                    MusicArtworkTile(
+                      size: 44,
+                      title: item.title,
+                      uri: widget.musicService.buildArtworkUri(item.artworkHash),
+                      circular: item.kind == MusicSearchHistoryKind.artist,
+                      isPlaylist: item.kind == MusicSearchHistoryKind.playlist,
+                      borderRadius: 4,
+                    ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          item.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: tokens.text,
+                          ),
+                        ),
+                        const SizedBox(height: 1),
+                        Text(
+                          item.subtitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: tokens.text2,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Remove from recent searches',
+                    padding: EdgeInsets.zero,
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () => unawaited(_removeMusicSearchItem(item.id)),
+                    icon: Icon(
+                      Icons.close_rounded,
+                      size: 18,
+                      color: tokens.text3,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+
+    if (!isDropdown) {
+      return Container(
+        key: const Key('music-recent-searches'),
+        child: list,
+      );
+    }
+
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        key: const Key('music-recent-searches'),
+        constraints: const BoxConstraints(maxHeight: 360),
+        padding: const EdgeInsets.only(bottom: 8),
+        decoration: BoxDecoration(
+          color: tokens.surface2,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: tokens.line),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x88000000),
+              blurRadius: 24,
+              offset: Offset(0, 10),
+            ),
+          ],
+        ),
+        child: SingleChildScrollView(child: list),
+      ),
+    );
+  }
+
   List<Widget> _buildMobileSearchViewSlivers(
     BuildContext context,
     HermesThemeTokens tokens,
@@ -1433,6 +1776,7 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
               hintText: 'Songs, artists, albums, playlists...',
               hasQuery: _searchQuery.isNotEmpty,
               onChanged: (val) => setState(() => _searchQuery = val.trim()),
+              onSubmitted: _submitMusicSearchQuery,
               onClear: () {
                 _searchController.clear();
                 setState(() => _searchQuery = '');
@@ -1449,6 +1793,10 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              if (_musicSearchHistory.isNotEmpty) ...[
+                _buildMusicSearchHistoryCard(tokens, isDropdown: false),
+                const SizedBox(height: 22),
+              ],
               Text(
                 'Browse your music',
                 style: TextStyle(
@@ -1698,7 +2046,10 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
     );
   }
 
-  Widget _buildAlbumSliverGrid(List<AlbumSummaryModel> albums) {
+  Widget _buildAlbumSliverGrid(
+    List<AlbumSummaryModel> albums, {
+    ValueChanged<AlbumSummaryModel>? onOpened,
+  }) {
     return _buildMusicCardSliverGrid(
       itemCount: albums.length,
       itemBuilder: (context, index) {
@@ -1710,7 +2061,10 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
           subtitle: '$year${alb.artistName}',
           openLabel: 'Open album',
           artworkUri: widget.musicService.buildArtworkUri(alb.artworkHash),
-          onOpen: () => _navigate(MusicPageRoute.album(alb.id)),
+          onOpen: () {
+            onOpened?.call(alb);
+            _navigate(MusicPageRoute.album(alb.id));
+          },
           onPlay: () => _playCollection(
             songs,
             sourceLabel: alb.title,
@@ -1746,7 +2100,10 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
     );
   }
 
-  Widget _buildArtistSliverGrid(List<ArtistSummaryModel> artists) {
+  Widget _buildArtistSliverGrid(
+    List<ArtistSummaryModel> artists, {
+    ValueChanged<ArtistSummaryModel>? onOpened,
+  }) {
     return _buildMusicCardSliverGrid(
       itemCount: artists.length,
       itemBuilder: (context, index) {
@@ -1759,7 +2116,10 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
           openLabel: 'Open artist',
           artworkUri: widget.musicService.buildArtworkUri(art.artworkHash),
           circular: true,
-          onOpen: () => _navigate(MusicPageRoute.artist(art.id)),
+          onOpen: () {
+            onOpened?.call(art);
+            _navigate(MusicPageRoute.artist(art.id));
+          },
           onPlay: () => _playCollection(
             songs,
             sourceLabel: art.name,
@@ -1771,7 +2131,10 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
     );
   }
 
-  Widget _buildPlaylistSliverGrid(List<PlaylistSummaryModel> playlists) {
+  Widget _buildPlaylistSliverGrid(
+    List<PlaylistSummaryModel> playlists, {
+    ValueChanged<PlaylistSummaryModel>? onOpened,
+  }) {
     return _buildMusicCardSliverGrid(
       itemCount: playlists.length,
       itemBuilder: (context, index) {
@@ -1781,7 +2144,10 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
           subtitle: 'Playlist • ${pl.trackCount} songs',
           openLabel: 'Open playlist',
           isPlaylist: true,
-          onOpen: () => _navigate(MusicPageRoute.playlist(pl.id)),
+          onOpen: () {
+            onOpened?.call(pl);
+            _navigate(MusicPageRoute.playlist(pl.id));
+          },
           onPlay: () => unawaited(_playPlaylist(pl)),
           onAddToQueue: () => unawaited(_queuePlaylist(pl)),
           extraMenuItems: const [
@@ -2294,6 +2660,7 @@ class _MusicTopbar extends StatelessWidget {
     required this.hasQuery,
     required this.onBack,
     required this.onQueryChanged,
+    required this.onSubmitted,
     required this.onClearSearch,
   });
 
@@ -2305,6 +2672,7 @@ class _MusicTopbar extends StatelessWidget {
   final bool hasQuery;
   final VoidCallback onBack;
   final ValueChanged<String> onQueryChanged;
+  final ValueChanged<String> onSubmitted;
   final VoidCallback onClearSearch;
 
   @override
@@ -2346,15 +2714,18 @@ class _MusicTopbar extends StatelessWidget {
               alignment: Alignment.centerLeft,
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 420),
-                child: HermesSearchPill(
-                  inputKey: const Key('music-search-input'),
-                  clearKey: const Key('music-search-clear'),
-                  controller: controller,
-                  focusNode: focusNode,
-                  hintText: 'Search your music',
-                  hasQuery: hasQuery,
-                  onChanged: onQueryChanged,
-                  onClear: onClearSearch,
+                child: TextFieldTapRegion(
+                  child: HermesSearchPill(
+                    inputKey: const Key('music-search-input'),
+                    clearKey: const Key('music-search-clear'),
+                    controller: controller,
+                    focusNode: focusNode,
+                    hintText: 'Search your music',
+                    hasQuery: hasQuery,
+                    onChanged: onQueryChanged,
+                    onSubmitted: onSubmitted,
+                    onClear: onClearSearch,
+                  ),
                 ),
               ),
             ),

@@ -166,6 +166,9 @@ class _StubVideoPlaybackController implements HermesVideoPlaybackController {
   }) async {}
 
   @override
+  Future<void> setSubtitleDelaySeconds(double seconds) async {}
+
+  @override
   Future<void> play() async {
     playCalls++;
     playingController.add(true);
