@@ -59,6 +59,7 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
   final Map<String, PlaylistDetailModel> _playlistDetails = {};
 
   final List<MusicPageRoute> _history = [const MusicPageRoute.home()];
+  final Map<int, double> _historyScrollOffsets = {};
   int _historyIdx = 0;
 
   _LibraryFilter? _libraryFilter;
@@ -271,17 +272,21 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
       return true;
     }
     if (_currentRoute.kind != MusicPageKind.home) {
+      final homeOffset = _historyScrollOffsets[0] ?? 0.0;
       setState(() {
         _hoverTint = null;
         _history
           ..clear()
           ..add(const MusicPageRoute.home());
         _historyIdx = 0;
+        _historyScrollOffsets.removeWhere((k, _) => k > 0);
       });
       _publishCurrentRoute();
-      if (_scrollController.hasClients) {
-        _scrollController.jumpTo(0);
-      }
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_scrollController.hasClients) return;
+        final maxExtent = _scrollController.position.maxScrollExtent;
+        _scrollController.jumpTo(homeOffset.clamp(0.0, maxExtent));
+      });
       return true;
     }
     return false;
@@ -380,13 +385,18 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
   }
 
   void _navigate(MusicPageRoute route) {
+    if (_scrollController.hasClients) {
+      _historyScrollOffsets[_historyIdx] = _scrollController.offset;
+    }
     setState(() {
       _hoverTint = null;
       _searchQuery = '';
       _searchController.clear();
       if (_currentRoute != route) {
         if (_historyIdx < _history.length - 1) {
-          _history.removeRange(_historyIdx + 1, _history.length);
+          final cutoff = _historyIdx + 1;
+          _history.removeRange(cutoff, _history.length);
+          _historyScrollOffsets.removeWhere((k, _) => k >= cutoff);
         }
         _history.add(route);
         _historyIdx = _history.length - 1;
@@ -405,14 +415,18 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
 
   void _goBack() {
     if (_historyIdx <= 0) return;
+    final targetIdx = _historyIdx - 1;
+    final savedOffset = _historyScrollOffsets[targetIdx] ?? 0.0;
     setState(() {
       _hoverTint = null;
-      _historyIdx--;
+      _historyIdx = targetIdx;
     });
     _publishCurrentRoute();
-    if (_scrollController.hasClients) {
-      _scrollController.jumpTo(0);
-    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      final maxExtent = _scrollController.position.maxScrollExtent;
+      _scrollController.jumpTo(savedOffset.clamp(0.0, maxExtent));
+    });
   }
 
   Future<void> _ensurePlaylistLoaded(String playlistId) async {

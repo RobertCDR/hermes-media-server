@@ -829,12 +829,30 @@ class MobileNowPlayingPage extends StatefulWidget {
 }
 
 class _MobileNowPlayingPageState extends State<MobileNowPlayingPage> {
-  _MobilePlayerView _view = _MobilePlayerView.player;
+  final List<_MobilePlayerView> _viewStack = [_MobilePlayerView.player];
+  _MobilePlayerView get _view => _viewStack.last;
   int? _dragPositionMs;
   String? _loadedSongId;
   SongLyricsModel? _lyrics;
   bool _loadingLyrics = false;
   final _LyricsAutoScrollTracker _lyricsTracker = _LyricsAutoScrollTracker();
+
+  void _toggleSubView(_MobilePlayerView target) {
+    setState(() {
+      if (_view == target) {
+        if (_viewStack.length > 1) {
+          _viewStack.removeLast();
+        } else {
+          _viewStack
+            ..clear()
+            ..add(_MobilePlayerView.player);
+        }
+      } else {
+        _viewStack.removeWhere((v) => v == target);
+        _viewStack.add(target);
+      }
+    });
+  }
 
   @override
   void initState() {
@@ -925,9 +943,16 @@ class _MobileNowPlayingPageState extends State<MobileNowPlayingPage> {
         Color.lerp(const Color(0xFF050507), tokens.accent, 0.18) ??
         const Color(0xFF14070B);
 
-    return Material(
-      color: Colors.transparent,
-      child: Container(
+    return PopScope(
+      canPop: _viewStack.length <= 1,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _viewStack.length > 1) {
+          setState(() => _viewStack.removeLast());
+        }
+      },
+      child: Material(
+        color: Colors.transparent,
+        child: Container(
         key: const Key('mobile-now-playing-page'),
         decoration: BoxDecoration(
           borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
@@ -1049,6 +1074,7 @@ class _MobileNowPlayingPageState extends State<MobileNowPlayingPage> {
           ),
         ),
       ),
+    ),
     );
   }
 
@@ -1349,15 +1375,13 @@ class _MobileNowPlayingPageState extends State<MobileNowPlayingPage> {
           IconButton(
             key: const Key('mobile-player-lyrics-toggle'),
             tooltip: _view == _MobilePlayerView.lyrics
-                ? 'Back to player'
+                ? 'Hide lyrics'
                 : 'Lyrics',
             onPressed: () {
-              if (_view == _MobilePlayerView.lyrics) {
-                setState(() => _view = _MobilePlayerView.player);
-              } else {
+              if (_view != _MobilePlayerView.lyrics) {
                 _lyricsTracker.resumeNow();
-                setState(() => _view = _MobilePlayerView.lyrics);
               }
+              _toggleSubView(_MobilePlayerView.lyrics);
             },
             icon: Icon(
               Icons.lyrics_outlined,
@@ -1371,15 +1395,9 @@ class _MobileNowPlayingPageState extends State<MobileNowPlayingPage> {
           IconButton(
             key: const Key('mobile-player-queue-toggle'),
             tooltip: _view == _MobilePlayerView.queue
-                ? 'Back to player'
+                ? 'Hide queue'
                 : 'View queue',
-            onPressed: () {
-              setState(() {
-                _view = _view == _MobilePlayerView.queue
-                    ? _MobilePlayerView.player
-                    : _MobilePlayerView.queue;
-              });
-            },
+            onPressed: () => _toggleSubView(_MobilePlayerView.queue),
             icon: Icon(
               Icons.queue_music_rounded,
               size: 22,
@@ -1676,7 +1694,11 @@ class _MobileNowPlayingPageState extends State<MobileNowPlayingPage> {
             artworkUri: widget.musicService.buildArtworkUri(song.artworkHash),
             active: true,
             tokens: tokens,
-            onTap: () => setState(() => _view = _MobilePlayerView.player),
+            onTap: () => setState(() {
+              _viewStack
+                ..clear()
+                ..add(_MobilePlayerView.player);
+            }),
           ),
           const SizedBox(height: 14),
           Row(
@@ -1783,11 +1805,6 @@ class _MobileNowPlayingPageState extends State<MobileNowPlayingPage> {
                 color: tokens.text,
               ),
             ),
-            const SizedBox(height: 14),
-            OutlinedButton(
-              onPressed: () => setState(() => _view = _MobilePlayerView.player),
-              child: const Text('Back to player'),
-            ),
           ],
         ),
       );
@@ -1857,14 +1874,6 @@ class _MobileNowPlayingPageState extends State<MobileNowPlayingPage> {
                   ],
                 ),
               ),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: TextButton.icon(
-              onPressed: () => setState(() => _view = _MobilePlayerView.player),
-              icon: const Icon(Icons.arrow_back_rounded, size: 18),
-              label: const Text('Back to player'),
             ),
           ),
         ],

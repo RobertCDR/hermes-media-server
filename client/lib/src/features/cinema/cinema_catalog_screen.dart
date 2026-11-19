@@ -867,12 +867,14 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
   Widget build(BuildContext context) {
     final tokens = HermesThemeTokens.of(context);
 
-    // Inline Nuvio Dedicated Detail Page
+    // Build inline detail overlay while keeping catalog ListView mounted Offstage
+    // so navigating back restores the exact scroll position.
+    Widget? activeDetail;
     if (_selectedMovieId != null) {
       final movie =
           _movies.where((m) => m.id == _selectedMovieId).firstOrNull;
       if (movie != null) {
-        return CinemaDetailPage(
+        activeDetail = CinemaDetailPage(
           movie: movie,
           cinemaService: widget.cinemaService,
           defaultQuality: widget.defaultQuality,
@@ -895,13 +897,11 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
           }),
         );
       }
-    }
-
-    if (_selectedSeriesId != null) {
+    } else if (_selectedSeriesId != null) {
       final show =
           _series.where((s) => s.id == _selectedSeriesId).firstOrNull;
       if (show != null) {
-        return CinemaDetailPage(
+        activeDetail = CinemaDetailPage(
           series: show,
           cinemaService: widget.cinemaService,
           defaultQuality: widget.defaultQuality,
@@ -924,6 +924,10 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
           }),
         );
       }
+    }
+
+    if (activeDetail != null && _loading) {
+      return activeDetail;
     }
 
     if (_loading) {
@@ -1001,7 +1005,7 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
           )
         : tokens;
 
-    return Theme(
+    final catalogBody = Theme(
       data: heroTokens.toThemeData(),
       child: Material(
         color: heroTokens.bg,
@@ -1121,6 +1125,21 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
           },
         ),
       ),
+    );
+
+    return IndexedStack(
+      index: activeDetail == null ? 0 : 1,
+      sizing: StackFit.expand,
+      children: [
+        TickerMode(enabled: activeDetail == null, child: catalogBody),
+        if (activeDetail != null)
+          KeyedSubtree(
+            key: ValueKey(
+              'cinema-detail-${_selectedMovieId ?? _selectedSeriesId}',
+            ),
+            child: activeDetail,
+          ),
+      ],
     );
   }
 
