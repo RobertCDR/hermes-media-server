@@ -1159,7 +1159,7 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
       case MusicPageKind.home:
         return _buildHomeSlivers(context, tokens, contentWidth);
       case MusicPageKind.search:
-        return _buildMobileSearchViewSlivers(context, tokens, contentWidth);
+        return _buildHomeSlivers(context, tokens, contentWidth);
       case MusicPageKind.albums:
         return [
           SliverToBoxAdapter(
