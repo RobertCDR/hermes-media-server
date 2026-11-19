@@ -358,26 +358,43 @@ class _DualWorldShellState extends State<DualWorldShell> {
                 : _lastContentWorld;
         final showOverlayBack =
             _world == HermesWorld.settings || _world == HermesWorld.admin;
+        final activeWorldWidget = _buildActiveWorld(context);
+        final topChromeClearance = MediaQuery.paddingOf(context).top + 54;
 
         return Scaffold(
           backgroundColor: tokens.bg,
-          body: SafeArea(
-            bottom: false,
-            child: Column(
-              children: [
-                _MobileTopBar(
-                  activeWorld: _world,
-                  showBack: showOverlayBack,
-                  avatarInitial: _avatarInitial,
-                  onBackFromOverlay: () => _selectWorld(_lastContentWorld),
-                  onSelectMusic: () => _selectWorld(HermesWorld.music),
-                  onSelectCinema: () => _selectWorld(HermesWorld.cinema),
-                  onOpenAccountMenu: () =>
-                      unawaited(_openMobileAccountSheet(context)),
+          body: Stack(
+            children: [
+              Positioned.fill(
+                child: showOverlayBack
+                    ? Padding(
+                        padding: EdgeInsets.only(top: topChromeClearance),
+                        child: activeWorldWidget,
+                      )
+                    : activeWorldWidget,
+              ),
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: SafeArea(
+                  bottom: false,
+                  child: _MobileTopBar(
+                    activeWorld: activeContentWorld,
+                    showBack: showOverlayBack,
+                    avatarInitial: _avatarInitial,
+                    onBackFromOverlay: () => _selectWorld(_lastContentWorld),
+                    onToggleWorld: () => _selectWorld(
+                      activeContentWorld == HermesWorld.music
+                          ? HermesWorld.cinema
+                          : HermesWorld.music,
+                    ),
+                    onOpenAccountMenu: () =>
+                        unawaited(_openMobileAccountSheet(context)),
+                  ),
                 ),
-                Expanded(child: _buildActiveWorld(context)),
-              ],
-            ),
+              ),
+            ],
           ),
           bottomNavigationBar: Column(
             mainAxisSize: MainAxisSize.min,
@@ -554,8 +571,7 @@ class _MobileTopBar extends StatelessWidget {
     required this.showBack,
     required this.avatarInitial,
     required this.onBackFromOverlay,
-    required this.onSelectMusic,
-    required this.onSelectCinema,
+    required this.onToggleWorld,
     required this.onOpenAccountMenu,
   });
 
@@ -563,135 +579,156 @@ class _MobileTopBar extends StatelessWidget {
   final bool showBack;
   final String avatarInitial;
   final VoidCallback onBackFromOverlay;
-  final VoidCallback onSelectMusic;
-  final VoidCallback onSelectCinema;
+  final VoidCallback onToggleWorld;
   final VoidCallback onOpenAccountMenu;
+
+  static const _floatingDecoration = BoxShadow(
+    color: Color(0x55000000),
+    blurRadius: 12,
+    offset: Offset(0, 4),
+  );
 
   @override
   Widget build(BuildContext context) {
     final tokens = HermesThemeTokens.of(context);
-    return Container(
+    final floatingSurface = tokens.bg.withValues(alpha: 0.78);
+    final floatingBorder = Colors.white.withValues(alpha: 0.16);
+    final toggleTargetLabel = activeWorld == HermesWorld.music
+        ? 'Switch to Cinema'
+        : 'Switch to Music';
+
+    return SizedBox(
       height: 52,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      decoration: BoxDecoration(
-        color: tokens.bg,
-        border: Border(bottom: BorderSide(color: tokens.lineSoft)),
-      ),
-      child: Row(
-        children: [
-          if (showBack) ...[
-            IconButton(
-              key: const Key('mobile-overlay-back-btn'),
-              tooltip: 'Back',
-              onPressed: onBackFromOverlay,
-              icon: Icon(
-                Icons.arrow_back_rounded,
-                size: 20,
-                color: tokens.text,
-              ),
-            ),
-            const SizedBox(width: 4),
-          ],
-          Container(
-            key: const Key('mobile-world-pill'),
-            padding: const EdgeInsets.all(3),
-            decoration: BoxDecoration(
-              color: tokens.surface2,
-              borderRadius: BorderRadius.circular(22),
-              border: Border.all(color: tokens.line),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _WorldPillIconButton(
-                  buttonKey: const Key('mobile-world-pill-music'),
-                  tooltip: 'Music',
-                  icon: Icons.music_note_rounded,
-                  selected: activeWorld == HermesWorld.music,
-                  onTap: onSelectMusic,
-                ),
-                const SizedBox(width: 2),
-                _WorldPillIconButton(
-                  buttonKey: const Key('mobile-world-pill-cinema'),
-                  tooltip: 'Cinema',
-                  icon: Icons.movie_rounded,
-                  selected: activeWorld == HermesWorld.cinema,
-                  onTap: onSelectCinema,
-                ),
-              ],
-            ),
-          ),
-          const Spacer(),
-          Tooltip(
-            message: 'Account & Server',
-            child: InkWell(
-              key: const Key('mobile-account-btn'),
-              onTap: onOpenAccountMenu,
-              customBorder: const CircleBorder(),
-              child: Container(
-                width: 34,
-                height: 34,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        child: Row(
+          children: [
+            if (showBack) ...[
+              Container(
                 decoration: BoxDecoration(
+                  color: floatingSurface,
                   shape: BoxShape.circle,
-                  color: tokens.surface3,
-                  border: Border.all(color: tokens.line),
+                  border: Border.all(color: floatingBorder),
+                  boxShadow: const [_floatingDecoration],
                 ),
-                alignment: Alignment.center,
-                child: Text(
-                  avatarInitial,
-                  style: TextStyle(
-                    fontFamily: 'Figtree',
-                    fontSize: 13,
-                    fontWeight: FontWeight.w800,
+                child: IconButton(
+                  key: const Key('mobile-overlay-back-btn'),
+                  tooltip: 'Back',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: onBackFromOverlay,
+                  icon: Icon(
+                    Icons.arrow_back_rounded,
+                    size: 20,
                     color: tokens.text,
                   ),
                 ),
               ),
+              const SizedBox(width: 8),
+            ],
+            Tooltip(
+              message: toggleTargetLabel,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: floatingSurface,
+                  borderRadius: BorderRadius.circular(22),
+                  border: Border.all(color: floatingBorder),
+                  boxShadow: const [_floatingDecoration],
+                ),
+                child: Material(
+                  color: Colors.transparent,
+                  borderRadius: BorderRadius.circular(22),
+                  clipBehavior: Clip.antiAlias,
+                  child: InkWell(
+                    key: const Key('mobile-world-pill'),
+                    onTap: onToggleWorld,
+                    borderRadius: BorderRadius.circular(22),
+                    child: Padding(
+                      padding: const EdgeInsets.all(3),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _WorldPillSegment(
+                            segmentKey: const Key('mobile-world-pill-music'),
+                            icon: Icons.music_note_rounded,
+                            selected: activeWorld == HermesWorld.music,
+                          ),
+                          const SizedBox(width: 2),
+                          _WorldPillSegment(
+                            segmentKey: const Key('mobile-world-pill-cinema'),
+                            icon: Icons.movie_rounded,
+                            selected: activeWorld == HermesWorld.cinema,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             ),
-          ),
-        ],
+            const Spacer(),
+            Tooltip(
+              message: 'Account & Server',
+              child: InkWell(
+                key: const Key('mobile-account-btn'),
+                onTap: onOpenAccountMenu,
+                customBorder: const CircleBorder(),
+                child: Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: floatingSurface,
+                    border: Border.all(color: floatingBorder),
+                    boxShadow: const [_floatingDecoration],
+                  ),
+                  alignment: Alignment.center,
+                  child: Text(
+                    avatarInitial,
+                    style: TextStyle(
+                      fontFamily: 'Figtree',
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      color: tokens.text,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 }
 
-class _WorldPillIconButton extends StatelessWidget {
-  const _WorldPillIconButton({
-    required this.buttonKey,
-    required this.tooltip,
+class _WorldPillSegment extends StatelessWidget {
+  const _WorldPillSegment({
+    required this.segmentKey,
     required this.icon,
     required this.selected,
-    required this.onTap,
   });
 
-  final Key buttonKey;
-  final String tooltip;
+  final Key segmentKey;
   final IconData icon;
   final bool selected;
-  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final tokens = HermesThemeTokens.of(context);
-    return Tooltip(
-      message: tooltip,
-      child: Material(
+    return AnimatedContainer(
+      key: segmentKey,
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOutCubic,
+      width: 36,
+      height: 30,
+      decoration: BoxDecoration(
         color: selected ? tokens.accent : Colors.transparent,
         borderRadius: BorderRadius.circular(18),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          key: buttonKey,
-          onTap: onTap,
-          child: SizedBox(
-            width: 38,
-            height: 30,
-            child: Icon(
-              icon,
-              size: 18,
-              color: selected ? tokens.accentInk : tokens.text2,
-            ),
-          ),
-        ),
+      ),
+      child: Icon(
+        icon,
+        size: 18,
+        color: selected ? tokens.accentInk : tokens.text2,
       ),
     );
   }

@@ -849,13 +849,18 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
                         onSelect: _navigate,
                       ),
                   ] else if (!isMobileMainTab)
-                    _MusicMobileSubpageBar(
-                      title: _routeTitle(_currentRoute),
-                      onBack: () {
-                        if (!_handleBack()) {
-                          _navigate(const MusicPageRoute.home());
-                        }
-                      },
+                    Padding(
+                      padding: EdgeInsets.only(
+                        top: MediaQuery.paddingOf(context).top + 52,
+                      ),
+                      child: _MusicMobileSubpageBar(
+                        title: _routeTitle(_currentRoute),
+                        onBack: () {
+                          if (!_handleBack()) {
+                            _navigate(const MusicPageRoute.home());
+                          }
+                        },
+                      ),
                     ),
                   Expanded(
                     child: RefreshIndicator(
@@ -868,7 +873,9 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
                           SliverPadding(
                             padding: EdgeInsets.fromLTRB(
                               wide ? 24 : 16,
-                              12,
+                              (useExternalMobile && isMobileMainTab)
+                                  ? MediaQuery.paddingOf(context).top + 56
+                                  : 12,
                               wide ? 24 : 16,
                               40,
                             ),

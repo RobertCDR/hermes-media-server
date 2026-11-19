@@ -1320,20 +1320,7 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
         : tokens.text2;
 
     if (hideNavigationBar) {
-      return Row(
-        mainAxisAlignment: MainAxisAlignment.end,
-        children: [
-          IconButton(
-            tooltip: 'Refresh catalog',
-            onPressed: _loadCatalog,
-            icon: Icon(
-              Icons.refresh_rounded,
-              size: 20,
-              color: refreshIconColor,
-            ),
-          ),
-        ],
-      );
+      return SizedBox(height: MediaQuery.paddingOf(context).top + 36);
     }
 
     final tabs = SingleChildScrollView(
@@ -1824,46 +1811,26 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Wrap(
-            alignment: WrapAlignment.spaceBetween,
-            crossAxisAlignment: WrapCrossAlignment.end,
-            spacing: 16,
-            runSpacing: 8,
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Watchlist',
-                    style: TextStyle(
-                      fontFamily: 'Figtree',
-                      fontSize: 32,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: -0.64,
-                      color: tokens.text,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    summary,
-                    style: TextStyle(
-                      fontFamily: 'Figtree',
-                      fontSize: 13,
-                      color: tokens.text2,
-                    ),
-                  ),
-                ],
+              Text(
+                'Watchlist',
+                style: TextStyle(
+                  fontFamily: 'Figtree',
+                  fontSize: 32,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.64,
+                  color: tokens.text,
+                ),
               ),
-              TextButton(
-                onPressed: () => setState(() => _filter = _CinemaFilter.lists),
-                child: Text(
-                  'Custom lists (${_customLists.length})',
-                  style: TextStyle(
-                    fontFamily: 'Figtree',
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: tokens.accent,
-                  ),
+              const SizedBox(height: 4),
+              Text(
+                summary,
+                style: TextStyle(
+                  fontFamily: 'Figtree',
+                  fontSize: 13,
+                  color: tokens.text2,
                 ),
               ),
             ],
@@ -2308,7 +2275,10 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
   ) {
     return ListView(
       key: const Key('cinema-mobile-search-view'),
-      padding: const EdgeInsets.only(top: 12, bottom: 56),
+      padding: EdgeInsets.only(
+        top: MediaQuery.paddingOf(context).top + 58,
+        bottom: 56,
+      ),
       children: [
         Padding(
           padding: EdgeInsets.symmetric(horizontal: horizontalPad),
@@ -2383,7 +2353,10 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
   ) {
     return ListView(
       key: const Key('cinema-mobile-library-view'),
-      padding: const EdgeInsets.only(top: 12, bottom: 56),
+      padding: EdgeInsets.only(
+        top: MediaQuery.paddingOf(context).top + 58,
+        bottom: 56,
+      ),
       children: [
         Padding(
           padding: EdgeInsets.symmetric(horizontal: horizontalPad),
