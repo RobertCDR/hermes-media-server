@@ -195,7 +195,10 @@ class _StubVideoPlaybackController implements HermesVideoPlaybackController {
   Future<void> stop() async {}
 
   @override
-  Widget buildVideoSurface(BuildContext context) =>
+  Widget buildVideoSurface(
+    BuildContext context, {
+    BoxFit fit = BoxFit.contain,
+  }) =>
       const ColoredBox(color: Color(0xFF000000));
 
   @override

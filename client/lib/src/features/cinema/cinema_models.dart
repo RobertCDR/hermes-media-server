@@ -12,6 +12,17 @@ enum VideoQualityPreset {
   final String label;
 }
 
+enum VideoAspectMode {
+  fit('Fit', BoxFit.contain),
+  cover('Cover', BoxFit.cover),
+  stretch('Stretch', BoxFit.fill);
+
+  const VideoAspectMode(this.label, this.boxFit);
+
+  final String label;
+  final BoxFit boxFit;
+}
+
 class CastMemberModel {
   const CastMemberModel({
     required this.name,

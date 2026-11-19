@@ -217,7 +217,11 @@ class _Pr27VideoPlaybackController implements HermesVideoPlaybackController {
   Future<void> stop() async => playingController.add(false);
 
   @override
-  Widget buildVideoSurface(BuildContext context) => const SizedBox.expand(
+  Widget buildVideoSurface(
+    BuildContext context, {
+    BoxFit fit = BoxFit.contain,
+  }) =>
+      const SizedBox.expand(
         key: Key('pr27-video-surface'),
       );
 

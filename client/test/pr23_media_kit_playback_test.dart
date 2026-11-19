@@ -344,7 +344,10 @@ class _RecordingVideoPlaybackController
   Future<void> stop() async {}
 
   @override
-  Widget buildVideoSurface(BuildContext context) {
+  Widget buildVideoSurface(
+    BuildContext context, {
+    BoxFit fit = BoxFit.contain,
+  }) {
     return Container(
       key: const Key('fake-video-surface'),
       color: const Color(0xFF0A0A0A),
