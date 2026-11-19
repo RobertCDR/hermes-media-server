@@ -60,6 +60,7 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
     Future<String> Function(String songId)? ticketIssuer,
     Map<String, SongModel>? catalogSongs,
     this.onProgressHeartbeat,
+    this.onExternalMediaCommand,
   }) : _ticketIssuer = ticketIssuer ?? musicService.issueAudioTicket {
     if (catalogSongs != null) {
       _songsById.addAll(catalogSongs);
@@ -84,6 +85,7 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
   AudioQualityPolicy audioQualityPolicy;
   final Future<String> Function(String songId) _ticketIssuer;
   Future<void> Function(int positionMs)? onProgressHeartbeat;
+  final void Function(MediaButtonAction action)? onExternalMediaCommand;
 
   final Map<String, SongModel> _songsById = {};
   final List<String> _upNextSongIds = [];
@@ -907,6 +909,9 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
         await skipNext();
       case MediaButtonAction.previous:
         await skipPrevious();
+    }
+    if (action != MediaButtonAction.stop) {
+      onExternalMediaCommand?.call(action);
     }
   }
 }

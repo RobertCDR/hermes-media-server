@@ -673,6 +673,7 @@ class MusicNavigationController {
   MusicNavigationController({
     this.onRequestRoute,
     this.onHandleBack,
+    this.onHandleForward,
   });
 
   final ValueNotifier<MusicPageRoute> currentRouteNotifier =
@@ -680,6 +681,7 @@ class MusicNavigationController {
 
   void Function(MusicPageRoute route)? onRequestRoute;
   bool Function()? onHandleBack;
+  bool Function()? onHandleForward;
   MusicPageRoute? _pendingRoute;
 
   void navigate(MusicPageRoute route) {
@@ -693,6 +695,8 @@ class MusicNavigationController {
   }
 
   bool handleBack() => onHandleBack?.call() ?? false;
+
+  bool handleForward() => onHandleForward?.call() ?? false;
 
   MusicPageRoute? takePendingRoute() {
     final next = _pendingRoute;

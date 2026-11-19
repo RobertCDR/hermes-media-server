@@ -7,6 +7,7 @@ import '../../core/settings/hermes_preferences.dart';
 import '../../core/storage/search_history_store.dart';
 import '../../core/theme/hermes_theme_tokens.dart';
 import '../../core/widgets/hermes_artwork_image.dart';
+import '../../core/widgets/hermes_horizontal_shelf.dart';
 import '../../core/widgets/hermes_icons.dart';
 import '../../core/widgets/hermes_search_pill.dart';
 import 'cinema_detail_page.dart';
@@ -1012,7 +1013,9 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
         child: LayoutBuilder(
           builder: (context, constraints) {
             final isDesktop = constraints.maxWidth >= 760;
-            final horizontalPad = isDesktop ? 48.0 : 20.0;
+            final horizontalPad = constraints.maxWidth >= 1500
+                ? 56.0
+                : (isDesktop ? 48.0 : 20.0);
             final useExternalMobile = !isDesktop && widget.externalMobileNav;
             _desktopPortalActive = !useExternalMobile && isDesktop;
             if (!_desktopPortalActive &&
@@ -1469,7 +1472,10 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
                 : '')
             : '${show!.seasons.length} ${show.seasons.length == 1 ? 'Season' : 'Seasons'}';
 
-    final heroMinHeight = showHero ? (isDesktop ? 500.0 : 420.0) : 0.0;
+    final viewportWidth = MediaQuery.sizeOf(context).width;
+    final heroMinHeight = showHero
+        ? (viewportWidth >= 1500 ? 540.0 : (isDesktop ? 500.0 : 420.0))
+        : 0.0;
 
     return ConstrainedBox(
       constraints: BoxConstraints(minHeight: heroMinHeight),
@@ -1699,33 +1705,29 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
         if (continueWatching.isNotEmpty) ...[
           _RowHeader(title: 'Continue Watching', horizontalPad: horizontalPad),
           const SizedBox(height: 12),
-          SizedBox(
+          HermesHorizontalShelf(
             height: 224,
-            child: ListView.separated(
-              padding: EdgeInsets.symmetric(horizontal: horizontalPad),
-              scrollDirection: Axis.horizontal,
-              itemCount: continueWatching.length,
-              separatorBuilder: (_, _) => const SizedBox(width: 14),
-              itemBuilder: (_, idx) {
-                final item = continueWatching[idx];
-                return CinemaLandscapeCard(
-                  title: item.title,
-                  subtitle: item.subtitle,
-                  artworkUri: item.artworkUri,
-                  progress: item.progress,
-                  isUpNext: item.isUpNext,
-                  reduceMotion: widget.reduceMotion,
-                  onTap: () => _launchPlayback(
-                    item.source,
-                    widget.defaultQuality,
-                    movie: item.movie,
-                    series: item.series,
-                    episodeEntry: item.episodeEntry,
-                    initialPositionMs: item.initialPositionMs,
-                  ),
-                );
-              },
-            ),
+            horizontalPadding: horizontalPad,
+            itemCount: continueWatching.length,
+            itemBuilder: (_, idx) {
+              final item = continueWatching[idx];
+              return CinemaLandscapeCard(
+                title: item.title,
+                subtitle: item.subtitle,
+                artworkUri: item.artworkUri,
+                progress: item.progress,
+                isUpNext: item.isUpNext,
+                reduceMotion: widget.reduceMotion,
+                onTap: () => _launchPlayback(
+                  item.source,
+                  widget.defaultQuality,
+                  movie: item.movie,
+                  series: item.series,
+                  episodeEntry: item.episodeEntry,
+                  initialPositionMs: item.initialPositionMs,
+                ),
+              );
+            },
           ),
           const SizedBox(height: 36),
         ],
@@ -2600,15 +2602,11 @@ class _PosterStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
+    return HermesHorizontalShelf(
       height: 318,
-      child: ListView.separated(
-        padding: EdgeInsets.symmetric(horizontal: horizontalPad),
-        scrollDirection: Axis.horizontal,
-        itemCount: items.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 14),
-        itemBuilder: (_, idx) => items[idx],
-      ),
+      horizontalPadding: horizontalPad,
+      itemCount: items.length,
+      itemBuilder: (_, idx) => items[idx],
     );
   }
 }

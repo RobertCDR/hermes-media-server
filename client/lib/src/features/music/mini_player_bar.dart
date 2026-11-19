@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../../core/theme/hermes_theme_tokens.dart';
@@ -382,10 +383,21 @@ class _MiniPlayerBarState extends State<MiniPlayerBar> {
                             color: isRemote ? tokens.accent : tokens.text2,
                             onPressed: widget.onOpenDevicePicker,
                           ),
-                          MouseRegion(
-                            onEnter: (_) => setState(() => _volumeHover = true),
-                            onExit: (_) => setState(() => _volumeHover = false),
-                            child: Row(
+                          Listener(
+                            onPointerSignal: (event) {
+                              if (event is PointerScrollEvent &&
+                                  widget.onVolumeChanged != null) {
+                                final delta =
+                                    event.scrollDelta.dy < 0 ? 0.05 : -0.05;
+                                final next =
+                                    (effectiveVolume + delta).clamp(0.0, 1.0);
+                                widget.onVolumeChanged!(next);
+                              }
+                            },
+                            child: MouseRegion(
+                              onEnter: (_) => setState(() => _volumeHover = true),
+                              onExit: (_) => setState(() => _volumeHover = false),
+                              child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 _CompactIconSlot(
@@ -459,6 +471,7 @@ class _MiniPlayerBarState extends State<MiniPlayerBar> {
                                 ),
                               ],
                             ),
+                          ),
                           ),
                         ],
                       ),

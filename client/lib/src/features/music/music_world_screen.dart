@@ -240,6 +240,7 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
     if (controller == null) return;
     controller.onRequestRoute = _navigate;
     controller.onHandleBack = _handleBack;
+    controller.onHandleForward = _handleForward;
   }
 
   void _detachNavigationController(MusicNavigationController? controller) {
@@ -249,6 +250,9 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
     }
     if (controller.onHandleBack == _handleBack) {
       controller.onHandleBack = null;
+    }
+    if (controller.onHandleForward == _handleForward) {
+      controller.onHandleForward = null;
     }
   }
 
@@ -413,20 +417,49 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
     }
   }
 
-  void _goBack() {
-    if (_historyIdx <= 0) return;
-    final targetIdx = _historyIdx - 1;
+  bool get _canGoForward => _historyIdx < _history.length - 1;
+
+  void _restoreHistoryOffset(int targetIdx) {
     final savedOffset = _historyScrollOffsets[targetIdx] ?? 0.0;
-    setState(() {
-      _hoverTint = null;
-      _historyIdx = targetIdx;
-    });
-    _publishCurrentRoute();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scrollController.hasClients) return;
       final maxExtent = _scrollController.position.maxScrollExtent;
       _scrollController.jumpTo(savedOffset.clamp(0.0, maxExtent));
     });
+  }
+
+  void _goBack() {
+    if (_historyIdx <= 0) return;
+    if (_scrollController.hasClients) {
+      _historyScrollOffsets[_historyIdx] = _scrollController.offset;
+    }
+    final targetIdx = _historyIdx - 1;
+    setState(() {
+      _hoverTint = null;
+      _historyIdx = targetIdx;
+    });
+    _publishCurrentRoute();
+    _restoreHistoryOffset(targetIdx);
+  }
+
+  void _goForward() {
+    if (!_canGoForward) return;
+    if (_scrollController.hasClients) {
+      _historyScrollOffsets[_historyIdx] = _scrollController.offset;
+    }
+    final targetIdx = _historyIdx + 1;
+    setState(() {
+      _hoverTint = null;
+      _historyIdx = targetIdx;
+    });
+    _publishCurrentRoute();
+    _restoreHistoryOffset(targetIdx);
+  }
+
+  bool _handleForward() {
+    if (!_canGoForward) return false;
+    _goForward();
+    return true;
   }
 
   Future<void> _ensurePlaylistLoaded(String playlistId) async {
@@ -843,12 +876,14 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
                   if (!useExternalMobile) ...[
                     _MusicTopbar(
                       canGoBack: _historyIdx > 0,
+                      canGoForward: _canGoForward,
                       scrolled: _scrolled,
                       tint: tint,
                       controller: _searchController,
                       focusNode: _searchFocusNode,
                       hasQuery: _searchQuery.isNotEmpty,
                       onBack: _goBack,
+                      onForward: _goForward,
                       onQueryChanged: (val) =>
                           setState(() => _searchQuery = val.trim()),
                       onSubmitted: _submitMusicSearchQuery,
@@ -2717,24 +2752,28 @@ class _LibraryRowButton extends StatelessWidget {
 class _MusicTopbar extends StatelessWidget {
   const _MusicTopbar({
     required this.canGoBack,
+    required this.canGoForward,
     required this.scrolled,
     required this.tint,
     required this.controller,
     required this.focusNode,
     required this.hasQuery,
     required this.onBack,
+    required this.onForward,
     required this.onQueryChanged,
     required this.onSubmitted,
     required this.onClearSearch,
   });
 
   final bool canGoBack;
+  final bool canGoForward;
   final bool scrolled;
   final Color tint;
   final TextEditingController controller;
   final FocusNode focusNode;
   final bool hasQuery;
   final VoidCallback onBack;
+  final VoidCallback onForward;
   final ValueChanged<String> onQueryChanged;
   final ValueChanged<String> onSubmitted;
   final VoidCallback onClearSearch;
@@ -2751,26 +2790,20 @@ class _MusicTopbar extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
       child: Row(
         children: [
-          Opacity(
-            alwaysIncludeSemantics: true,
-            opacity: canGoBack ? 1.0 : 0.45,
-            child: InkWell(
-              onTap: canGoBack ? onBack : null,
-              borderRadius: BorderRadius.circular(16),
-              child: Container(
-                width: 32,
-                height: 32,
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.45),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.chevron_left_rounded,
-                  color: Colors.white,
-                  size: 20,
-                ),
-              ),
-            ),
+          _TopbarNavCircleButton(
+            key: const Key('music-topbar-back'),
+            enabled: canGoBack,
+            icon: Icons.chevron_left_rounded,
+            tooltip: 'Back',
+            onTap: onBack,
+          ),
+          const SizedBox(width: 8),
+          _TopbarNavCircleButton(
+            key: const Key('music-topbar-forward'),
+            enabled: canGoForward,
+            icon: Icons.chevron_right_rounded,
+            tooltip: 'Forward',
+            onTap: onForward,
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -2795,6 +2828,47 @@ class _MusicTopbar extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _TopbarNavCircleButton extends StatelessWidget {
+  const _TopbarNavCircleButton({
+    super.key,
+    required this.enabled,
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  final bool enabled;
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      enabled: enabled,
+      label: tooltip,
+      child: Opacity(
+        alwaysIncludeSemantics: true,
+        opacity: enabled ? 1.0 : 0.38,
+        child: InkWell(
+          onTap: enabled ? onTap : null,
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.45),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, color: Colors.white, size: 20),
+          ),
+        ),
       ),
     );
   }
