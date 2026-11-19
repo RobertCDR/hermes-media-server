@@ -59,6 +59,7 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
   final Map<String, PlaylistDetailModel> _playlistDetails = {};
 
   final List<MusicPageRoute> _history = [const MusicPageRoute.home()];
+  final Map<int, double> _historyScrollOffsets = {};
   int _historyIdx = 0;
 
   _LibraryFilter? _libraryFilter;
@@ -271,17 +272,21 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
       return true;
     }
     if (_currentRoute.kind != MusicPageKind.home) {
+      final homeOffset = _historyScrollOffsets[0] ?? 0.0;
       setState(() {
         _hoverTint = null;
         _history
           ..clear()
           ..add(const MusicPageRoute.home());
         _historyIdx = 0;
+        _historyScrollOffsets.removeWhere((k, _) => k > 0);
       });
       _publishCurrentRoute();
-      if (_scrollController.hasClients) {
-        _scrollController.jumpTo(0);
-      }
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_scrollController.hasClients) return;
+        final maxExtent = _scrollController.position.maxScrollExtent;
+        _scrollController.jumpTo(homeOffset.clamp(0.0, maxExtent));
+      });
       return true;
     }
     return false;
@@ -380,13 +385,18 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
   }
 
   void _navigate(MusicPageRoute route) {
+    if (_scrollController.hasClients) {
+      _historyScrollOffsets[_historyIdx] = _scrollController.offset;
+    }
     setState(() {
       _hoverTint = null;
       _searchQuery = '';
       _searchController.clear();
       if (_currentRoute != route) {
         if (_historyIdx < _history.length - 1) {
-          _history.removeRange(_historyIdx + 1, _history.length);
+          final cutoff = _historyIdx + 1;
+          _history.removeRange(cutoff, _history.length);
+          _historyScrollOffsets.removeWhere((k, _) => k >= cutoff);
         }
         _history.add(route);
         _historyIdx = _history.length - 1;
@@ -405,14 +415,18 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
 
   void _goBack() {
     if (_historyIdx <= 0) return;
+    final targetIdx = _historyIdx - 1;
+    final savedOffset = _historyScrollOffsets[targetIdx] ?? 0.0;
     setState(() {
       _hoverTint = null;
-      _historyIdx--;
+      _historyIdx = targetIdx;
     });
     _publishCurrentRoute();
-    if (_scrollController.hasClients) {
-      _scrollController.jumpTo(0);
-    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      final maxExtent = _scrollController.position.maxScrollExtent;
+      _scrollController.jumpTo(savedOffset.clamp(0.0, maxExtent));
+    });
   }
 
   Future<void> _ensurePlaylistLoaded(String playlistId) async {
@@ -849,13 +863,18 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
                         onSelect: _navigate,
                       ),
                   ] else if (!isMobileMainTab)
-                    _MusicMobileSubpageBar(
-                      title: _routeTitle(_currentRoute),
-                      onBack: () {
-                        if (!_handleBack()) {
-                          _navigate(const MusicPageRoute.home());
-                        }
-                      },
+                    Padding(
+                      padding: EdgeInsets.only(
+                        top: MediaQuery.paddingOf(context).top + 52,
+                      ),
+                      child: _MusicMobileSubpageBar(
+                        title: _routeTitle(_currentRoute),
+                        onBack: () {
+                          if (!_handleBack()) {
+                            _navigate(const MusicPageRoute.home());
+                          }
+                        },
+                      ),
                     ),
                   Expanded(
                     child: RefreshIndicator(
@@ -868,7 +887,9 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
                           SliverPadding(
                             padding: EdgeInsets.fromLTRB(
                               wide ? 24 : 16,
-                              12,
+                              (useExternalMobile && isMobileMainTab)
+                                  ? MediaQuery.paddingOf(context).top + 56
+                                  : 12,
                               wide ? 24 : 16,
                               40,
                             ),
@@ -1646,82 +1667,7 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
           ),
         ),
         for (final item in _musicSearchHistory)
-          InkWell(
-            onTap: () => _openMusicSearchHistoryItem(item),
-            borderRadius: BorderRadius.circular(8),
-            child: Padding(
-              padding: EdgeInsets.symmetric(
-                horizontal: isDropdown ? 12 : 4,
-                vertical: 6,
-              ),
-              child: Row(
-                children: [
-                  if (item.kind == MusicSearchHistoryKind.query)
-                    Container(
-                      width: 44,
-                      height: 44,
-                      decoration: BoxDecoration(
-                        color: tokens.surface3,
-                        shape: BoxShape.circle,
-                      ),
-                      child: Icon(
-                        Icons.history_rounded,
-                        size: 20,
-                        color: tokens.text2,
-                      ),
-                    )
-                  else
-                    MusicArtworkTile(
-                      size: 44,
-                      title: item.title,
-                      uri: widget.musicService.buildArtworkUri(item.artworkHash),
-                      circular: item.kind == MusicSearchHistoryKind.artist,
-                      isPlaylist: item.kind == MusicSearchHistoryKind.playlist,
-                      borderRadius: 4,
-                    ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          item.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                            color: tokens.text,
-                          ),
-                        ),
-                        const SizedBox(height: 1),
-                        Text(
-                          item.subtitle,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: tokens.text2,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: 'Remove from recent searches',
-                    padding: EdgeInsets.zero,
-                    visualDensity: VisualDensity.compact,
-                    onPressed: () => unawaited(_removeMusicSearchItem(item.id)),
-                    icon: Icon(
-                      Icons.close_rounded,
-                      size: 18,
-                      color: tokens.text3,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
+          _buildMusicSearchHistoryRow(tokens, item, isDropdown: isDropdown),
       ],
     );
 
@@ -1753,6 +1699,124 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
         child: SingleChildScrollView(child: list),
       ),
     );
+  }
+
+  Widget _buildMusicSearchHistoryRow(
+    HermesThemeTokens tokens,
+    MusicSearchHistoryItem item, {
+    required bool isDropdown,
+  }) {
+    final matchedSong = item.kind == MusicSearchHistoryKind.song &&
+            item.targetId != null
+        ? _songs.where((s) => s.id == item.targetId).firstOrNull
+        : null;
+    final isCurrentSong = item.kind == MusicSearchHistoryKind.song &&
+        item.targetId != null &&
+        item.targetId == widget.coordinator.currentSong?.id;
+    final isActivelyPlaying = isCurrentSong &&
+        widget.coordinator.session?.state == PlaybackState.playing;
+
+    Widget row = InkWell(
+      onTap: () => _openMusicSearchHistoryItem(item),
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: isDropdown ? 12 : 4,
+          vertical: 6,
+        ),
+        child: Row(
+          children: [
+            if (item.kind == MusicSearchHistoryKind.query)
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: tokens.surface3,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  Icons.history_rounded,
+                  size: 20,
+                  color: tokens.text2,
+                ),
+              )
+            else
+              MusicArtworkTile(
+                size: 44,
+                title: item.title,
+                uri: widget.musicService.buildArtworkUri(item.artworkHash),
+                circular: item.kind == MusicSearchHistoryKind.artist,
+                isPlaylist: item.kind == MusicSearchHistoryKind.playlist,
+                borderRadius: 4,
+              ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    item.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: isCurrentSong ? tokens.accent : tokens.text,
+                    ),
+                  ),
+                  const SizedBox(height: 1),
+                  Text(
+                    item.subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: tokens.text2,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (isCurrentSong) ...[
+              const SizedBox(width: 8),
+              HermesEqBars(
+                color: tokens.accent,
+                height: 12,
+                paused: !isActivelyPlaying,
+              ),
+            ],
+            IconButton(
+              tooltip: 'Remove from recent searches',
+              padding: EdgeInsets.zero,
+              visualDensity: VisualDensity.compact,
+              onPressed: () => unawaited(_removeMusicSearchItem(item.id)),
+              icon: Icon(
+                Icons.close_rounded,
+                size: 18,
+                color: tokens.text3,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (matchedSong != null) {
+      row = SpotifySwipeToQueue(
+        key: ValueKey('search-history-swipe-${item.id}'),
+        accentColor: tokens.accent,
+        textColor: tokens.text,
+        surfaceColor: tokens.surface2,
+        onTriggered: () {
+          widget.coordinator.addToQueue(matchedSong);
+          if (mounted) {
+            showMusicToast(context, 'Added "${matchedSong.title}" to queue');
+          }
+        },
+        child: row,
+      );
+    }
+    return row;
   }
 
   List<Widget> _buildMobileSearchViewSlivers(

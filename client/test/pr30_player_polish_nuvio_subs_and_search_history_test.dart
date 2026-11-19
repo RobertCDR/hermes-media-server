@@ -662,12 +662,12 @@ void main() {
 
   group('PR30 SearchHistoryStore & Music/Cinema Search History UI', () {
     test(
-      'SharedPrefsSearchHistoryStore deduplicates, caps at 12, removes, and clears Music & Cinema history',
+      'SharedPrefsSearchHistoryStore deduplicates, caps at 20, removes, and clears Music & Cinema history',
       () async {
         SharedPreferences.setMockInitialValues({});
         final store = SharedPrefsSearchHistoryStore();
 
-        for (var i = 1; i <= 14; i++) {
+        for (var i = 1; i <= 22; i++) {
           await store.addMusicItem(
             MusicSearchHistoryItem(
               id: 'song:s-$i',
@@ -690,7 +690,7 @@ void main() {
             timestampMs: 99,
           ),
         );
-        expect(music.length, 12);
+        expect(music.length, 20);
         expect(music.first.title, 'Track 3');
 
         final afterRemoveMusic = await store.removeMusicItem('song:s-3');
@@ -698,12 +698,12 @@ void main() {
         await store.clearMusicHistory();
         expect(await store.loadMusicHistory(), isEmpty);
 
-        // Cinema plain-text queries (case-insensitive dedup + 12 limit)
-        for (var i = 1; i <= 14; i++) {
+        // Cinema plain-text queries (case-insensitive dedup + 20 limit)
+        for (var i = 1; i <= 22; i++) {
           await store.addCinemaQuery('Movie $i');
         }
         final cinema = await store.addCinemaQuery('movie 5');
-        expect(cinema.length, 12);
+        expect(cinema.length, 20);
         expect(cinema.first, 'movie 5');
         expect(
           cinema.where((q) => q.toLowerCase() == 'movie 5').length,

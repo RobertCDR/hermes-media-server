@@ -186,7 +186,11 @@ class _HermesAppState extends State<HermesApp> {
 
     if (!kIsWeb) {
       _lifecycleListener = AppLifecycleListener(
+        onDetach: () {
+          unawaited(_shutdownLocalPlayback());
+        },
         onExitRequested: () async {
+          await _shutdownLocalPlayback();
           await _stopSyncClient();
           return AppExitResponse.exit;
         },
@@ -322,6 +326,20 @@ class _HermesAppState extends State<HermesApp> {
       _rawHttpClient.close();
     }
     super.dispose();
+  }
+
+  Future<void> _shutdownLocalPlayback() async {
+    final coordinator = _musicCoordinator;
+    if (coordinator != null) {
+      await coordinator.stopLocalForShutdown();
+      return;
+    }
+    try {
+      await _audioEngine.stop();
+    } catch (_) {}
+    try {
+      await _mediaBridge.clearState();
+    } catch (_) {}
   }
 
   Future<void> _stopSyncClient() {

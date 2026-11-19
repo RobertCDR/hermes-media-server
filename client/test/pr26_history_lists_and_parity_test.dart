@@ -736,10 +736,11 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('All-Time Sci-Fi (0)'), findsOneWidget);
 
-      // Watchlist view exposes live Custom lists (1) chip instead of old placeholder.
+      // Watchlist view opens cleanly without extra custom lists badge header clutter.
       await tester.tap(find.byKey(const Key('cinema-tab-watchlist')));
       await tester.pumpAndSettle();
-      expect(find.text('Custom lists (1)'), findsOneWidget);
+      expect(find.text('Watchlist'), findsAtLeastNWidgets(1));
+      expect(find.text('Custom lists (1)'), findsNothing);
 
       // Open Dune detail page and add it to the custom list.
       await tester.tap(find.byKey(const Key('cinema-tab-all')));

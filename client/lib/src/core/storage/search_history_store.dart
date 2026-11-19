@@ -76,7 +76,7 @@ abstract interface class SearchHistoryStore {
 class SharedPrefsSearchHistoryStore implements SearchHistoryStore {
   static const String _musicKey = 'hermes.search_history.music.v1';
   static const String _cinemaKey = 'hermes.search_history.cinema.v1';
-  static const int maxItems = 12;
+  static const int maxItems = 20;
 
   @override
   Future<List<MusicSearchHistoryItem>> loadMusicHistory() async {
@@ -190,7 +190,7 @@ class InMemorySearchHistoryStore implements SearchHistoryStore {
   })  : _music = List<MusicSearchHistoryItem>.from(initialMusic),
         _cinema = List<String>.from(initialCinema);
 
-  static const int maxItems = 12;
+  static const int maxItems = 20;
 
   List<MusicSearchHistoryItem> _music;
   List<String> _cinema;
