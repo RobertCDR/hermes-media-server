@@ -860,6 +860,36 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
     );
   }
 
+  /// Stops the local audio engine and OS media session immediately during app close/detach.
+  Future<void> stopLocalForShutdown() async {
+    _remoteTickTimer?.cancel();
+    _remoteTickTimer = null;
+    try {
+      await audioEngine.stop();
+    } catch (_) {}
+    try {
+      await mediaBridge.clearState();
+    } catch (_) {}
+    final current = _session;
+    if (current != null && !_disposed && current.state != PlaybackState.stopped) {
+      _session = PlaybackSessionState(
+        sessionId: current.sessionId,
+        version: current.version,
+        activeRendererDeviceId: current.activeRendererDeviceId,
+        activeRendererDeviceName: current.activeRendererDeviceName,
+        state: PlaybackState.stopped,
+        repeatMode: current.repeatMode,
+        shuffle: current.shuffle,
+        volume: current.volume,
+        currentIndex: current.currentIndex,
+        currentSongId: current.currentSongId,
+        positionMs: _livePositionMs,
+        queueSongIds: current.queueSongIds,
+      );
+      notifyListeners();
+    }
+  }
+
   Future<void> _handleMediaButton(MediaButtonAction action) async {
     switch (action) {
       case MediaButtonAction.play:
@@ -867,7 +897,12 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
       case MediaButtonAction.pause:
         await _dispatchTransport(PlaybackState.paused);
       case MediaButtonAction.stop:
-        await _dispatchTransport(PlaybackState.stopped);
+        await stopLocalForShutdown();
+        try {
+          await _dispatchTransport(PlaybackState.stopped);
+        } catch (_) {
+          // Non-fatal if network transport is already closing during task removal.
+        }
       case MediaButtonAction.next:
         await skipNext();
       case MediaButtonAction.previous:

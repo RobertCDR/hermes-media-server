@@ -3,7 +3,7 @@ import 'dart:io';
 
 import 'package:audio_service/audio_service.dart' as audio_svc;
 import 'package:audio_session/audio_session.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
 import 'package:flutter/services.dart';
 
 import 'platform_media_bridge.dart';
@@ -237,6 +237,9 @@ class _AudioServiceHandlerAdapter extends audio_svc.BaseAudioHandler
 
   @override
   Future<void> onTaskRemoved() async {
+    try {
+      await _onButton?.call(MediaButtonAction.stop);
+    } catch (_) {}
     await clearPlayback();
     await super.stop();
   }
@@ -245,6 +248,19 @@ class _AudioServiceHandlerAdapter extends audio_svc.BaseAudioHandler
   Future<void> seek(Duration position) async =>
       _onSeek?.call(position.inMilliseconds);
 }
+
+@visibleForTesting
+Future<void> invokeTaskRemovedOnAudioHandlerForTest(
+  HermesOsAudioHandler handler,
+) async {
+  if (handler case final _AudioServiceHandlerAdapter adapter) {
+    await adapter.onTaskRemoved();
+  }
+}
+
+@visibleForTesting
+HermesOsAudioHandler createDefaultOsAudioHandlerForTest() =>
+    _AudioServiceHandlerAdapter();
 
 /// Mobile/Apple OS media notification, lockscreen, audio-focus, and headset
 /// control bridge powered by `audio_service` and `audio_session`.
