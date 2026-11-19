@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -37,6 +38,10 @@ class DualWorldShell extends StatefulWidget {
     this.activeMobileTabIndex = 0,
     this.onSelectMobileTab,
     this.onHandleBack,
+    this.onHandleForward,
+    this.onToggleFullscreen,
+    this.onOpenShortcuts,
+    this.onMediaKeyAction,
   });
 
   final String username;
@@ -65,6 +70,10 @@ class DualWorldShell extends StatefulWidget {
   final int activeMobileTabIndex;
   final ValueChanged<int>? onSelectMobileTab;
   final bool Function()? onHandleBack;
+  final bool Function()? onHandleForward;
+  final VoidCallback? onToggleFullscreen;
+  final VoidCallback? onOpenShortcuts;
+  final ValueChanged<String>? onMediaKeyAction;
 
   @override
   State<DualWorldShell> createState() => _DualWorldShellState();
@@ -139,10 +148,47 @@ class _DualWorldShellState extends State<DualWorldShell> {
       return KeyEventResult.handled;
     }
 
+    if (key == LogicalKeyboardKey.f11 && widget.onToggleFullscreen != null) {
+      widget.onToggleFullscreen!();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.browserBack && widget.onHandleBack != null) {
+      if (widget.onHandleBack!()) return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.browserForward &&
+        widget.onHandleForward != null) {
+      if (widget.onHandleForward!()) return KeyEventResult.handled;
+    }
+
+    // Hardware media keys work even while a text input is focused.
+    if (key == LogicalKeyboardKey.mediaPlayPause ||
+        key == LogicalKeyboardKey.mediaPlay ||
+        key == LogicalKeyboardKey.mediaPause) {
+      widget.onTogglePlayPause?.call();
+      widget.onMediaKeyAction?.call('playPause');
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.mediaTrackNext) {
+      widget.onNextTrack?.call();
+      widget.onMediaKeyAction?.call('next');
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.mediaTrackPrevious) {
+      widget.onPreviousTrack?.call();
+      widget.onMediaKeyAction?.call('previous');
+      return KeyEventResult.handled;
+    }
+
     if (_isTextInputFocused()) {
       return KeyEventResult.ignored;
     }
 
+    if (key == LogicalKeyboardKey.slash && hw.isShiftPressed) {
+      if (widget.onOpenShortcuts != null) {
+        widget.onOpenShortcuts!();
+        return KeyEventResult.handled;
+      }
+    }
     if (key == LogicalKeyboardKey.slash) {
       widget.onOpenSearch?.call();
       return KeyEventResult.handled;
@@ -155,14 +201,14 @@ class _DualWorldShellState extends State<DualWorldShell> {
       widget.onToggleMute!();
       return KeyEventResult.handled;
     }
-    if ((key == LogicalKeyboardKey.mediaTrackNext ||
-            (hw.isAltPressed && key == LogicalKeyboardKey.arrowRight)) &&
+    if (((hw.isAltPressed || ctrlOrMeta) &&
+            key == LogicalKeyboardKey.arrowRight) &&
         widget.onNextTrack != null) {
       widget.onNextTrack!();
       return KeyEventResult.handled;
     }
-    if ((key == LogicalKeyboardKey.mediaTrackPrevious ||
-            (hw.isAltPressed && key == LogicalKeyboardKey.arrowLeft)) &&
+    if (((hw.isAltPressed || ctrlOrMeta) &&
+            key == LogicalKeyboardKey.arrowLeft) &&
         widget.onPreviousTrack != null) {
       widget.onPreviousTrack!();
       return KeyEventResult.handled;
@@ -280,11 +326,20 @@ class _DualWorldShellState extends State<DualWorldShell> {
         final isDesktop = constraints.maxWidth >= 840;
 
         if (isDesktop) {
-          return Focus(
-            focusNode: _shellFocusNode,
-            autofocus: true,
-            onKeyEvent: _handleGlobalKeyEvent,
-            child: Scaffold(
+          return Listener(
+            behavior: HitTestBehavior.translucent,
+            onPointerDown: (event) {
+              if ((event.buttons & kBackMouseButton) != 0) {
+                widget.onHandleBack?.call();
+              } else if ((event.buttons & kForwardMouseButton) != 0) {
+                widget.onHandleForward?.call();
+              }
+            },
+            child: Focus(
+              focusNode: _shellFocusNode,
+              autofocus: true,
+              onKeyEvent: _handleGlobalKeyEvent,
+              child: Scaffold(
               backgroundColor: tokens.bg,
               body: Stack(
                 children: [
@@ -346,6 +401,7 @@ class _DualWorldShellState extends State<DualWorldShell> {
                   ),
                 ],
               ],
+            ),
             ),
             ),
           );
@@ -899,31 +955,57 @@ class _RailDestinationButtonState extends State<_RailDestinationButton> {
           behavior: HitTestBehavior.opaque,
           onTap: widget.onTap,
           child: SizedBox(
-            width: 64,
-            child: Padding(
-              padding: const EdgeInsets.only(top: 10, bottom: 8),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    widget.selected ? widget.selectedIcon : widget.icon,
-                    size: 22,
-                    color: iconColor,
-                  ),
-                  const SizedBox(height: 5),
-                  Text(
-                    widget.label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontFamily: 'Figtree',
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: textColor,
+            width: 68,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                if (widget.selected)
+                  Positioned(
+                    left: 0,
+                    child: Container(
+                      width: 3,
+                      height: 22,
+                      decoration: BoxDecoration(
+                        color: tokens.accent,
+                        borderRadius: const BorderRadius.horizontal(
+                          right: Radius.circular(3),
+                        ),
+                      ),
                     ),
                   ),
-                ],
-              ),
+                Container(
+                  width: 58,
+                  padding: const EdgeInsets.only(top: 10, bottom: 8),
+                  decoration: BoxDecoration(
+                    color: _hovered && !widget.selected
+                        ? tokens.surface.withValues(alpha: 0.65)
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        widget.selected ? widget.selectedIcon : widget.icon,
+                        size: 22,
+                        color: iconColor,
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        widget.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontFamily: 'Figtree',
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: textColor,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
         ),

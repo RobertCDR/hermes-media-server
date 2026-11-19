@@ -4,6 +4,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform, kIsWeb;
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -12,6 +13,7 @@ import '../../core/settings/hermes_preferences.dart';
 import '../../core/theme/hermes_theme_tokens.dart';
 import '../../core/widgets/hermes_artwork_image.dart';
 import '../../core/widgets/hermes_icons.dart';
+import '../../core/window/hermes_window_bridge.dart';
 import 'cinema_models.dart';
 import 'cinema_service.dart';
 import 'hermes_video_playback_controller.dart';
@@ -128,6 +130,7 @@ class HermesVideoPlayerScreen extends StatefulWidget {
     this.nextEpisodeStillUri,
     this.onPlayNextEpisode,
     this.playbackControllerFactory,
+    this.windowBridge,
   });
 
   final String title;
@@ -148,6 +151,7 @@ class HermesVideoPlayerScreen extends StatefulWidget {
   final Uri? nextEpisodeStillUri;
   final VoidCallback? onPlayNextEpisode;
   final HermesVideoControllerFactory? playbackControllerFactory;
+  final HermesWindowBridge? windowBridge;
 
   @override
   State<HermesVideoPlayerScreen> createState() =>
@@ -185,6 +189,9 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
   bool _upNextDismissed = false;
   bool _completionHandled = false;
   bool _isFullscreen = false;
+  VideoAspectMode _aspectMode = VideoAspectMode.fit;
+  String? _hudLabel;
+  Timer? _hudTimer;
   double _subtitleDelaySeconds = 0.0;
   double _subtitleVerticalOffset = 0.0;
   late SubtitleSizePreset _subtitleSize = widget.accountPreferences.subtitleSize;
@@ -192,6 +199,8 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
       widget.accountPreferences.subtitleBackground;
   late Color _subtitleColor = widget.config.subtitleColor;
   final FocusNode _playerFocusNode = FocusNode();
+  late final HermesWindowBridge _windowBridge =
+      widget.windowBridge ?? HermesWindowBridge.instance;
   List<String> _liveSubtitleLines = const [];
   String? _playbackError;
   Timer? _idleTimer;
@@ -338,6 +347,7 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
   @override
   void dispose() {
     _idleTimer?.cancel();
+    _hudTimer?.cancel();
     unawaited(_posSub?.cancel());
     unawaited(_durSub?.cancel());
     unawaited(_playingSub?.cancel());
@@ -365,6 +375,8 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
       );
       if (_isMobilePlatform) {
         unawaited(SystemChrome.setPreferredOrientations(DeviceOrientation.values));
+      } else {
+        unawaited(_windowBridge.setFullscreen(false));
       }
     }
     _playerFocusNode.dispose();
@@ -544,10 +556,47 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
     unawaited(_seekToPositionMs(_positionMs + deltaSeconds * 1000));
   }
 
+  void _showHud(String message) {
+    _hudTimer?.cancel();
+    if (!mounted) return;
+    setState(() => _hudLabel = message);
+    _hudTimer = Timer(const Duration(milliseconds: 1100), () {
+      if (mounted) {
+        setState(() => _hudLabel = null);
+      }
+    });
+  }
+
+  void _setAspectMode(VideoAspectMode mode) {
+    if (_aspectMode == mode) return;
+    setState(() => _aspectMode = mode);
+    _showHud('Display: ${mode.label}');
+    _wakeControls();
+  }
+
+  void _cycleAspectMode() {
+    const modes = VideoAspectMode.values;
+    final next = modes[(_aspectMode.index + 1) % modes.length];
+    _setAspectMode(next);
+  }
+
+  void _nudgeVolume(double delta) {
+    final current = _muted ? 0.0 : _volume;
+    final next = (current + delta).clamp(0.0, 100.0);
+    setState(() {
+      _volume = next;
+      _muted = next <= 0.0;
+    });
+    unawaited(_playback.setVolume(_muted ? 0.0 : _volume));
+    _showHud(_muted ? 'Muted' : 'Volume ${_volume.round()}%');
+    _wakeControls();
+  }
+
   void _toggleMute() {
     final nextMuted = !_muted;
     setState(() => _muted = nextMuted);
     unawaited(_playback.setVolume(nextMuted ? 0 : _volume));
+    _showHud(nextMuted ? 'Muted' : 'Volume ${_volume.round()}%');
     _wakeControls();
   }
 
@@ -571,6 +620,8 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
               : DeviceOrientation.values,
         ),
       );
+    } else {
+      unawaited(_windowBridge.setFullscreen(next));
     }
     _wakeControls();
   }
@@ -593,11 +644,23 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
       _skipSeconds(10);
       return KeyEventResult.handled;
     }
+    if (key == LogicalKeyboardKey.arrowUp) {
+      _nudgeVolume(5);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowDown) {
+      _nudgeVolume(-5);
+      return KeyEventResult.handled;
+    }
     if (key == LogicalKeyboardKey.keyM) {
       _toggleMute();
       return KeyEventResult.handled;
     }
-    if (key == LogicalKeyboardKey.keyF) {
+    if (key == LogicalKeyboardKey.keyA) {
+      _cycleAspectMode();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.keyF || key == LogicalKeyboardKey.f11) {
       _toggleFullscreenMode();
       return KeyEventResult.handled;
     }
@@ -683,15 +746,23 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
         cursor:
             _controlsHidden ? SystemMouseCursors.none : SystemMouseCursors.basic,
         onHover: (_) => _wakeControls(),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: _wakeControls,
+        child: Listener(
+          behavior: HitTestBehavior.translucent,
+          onPointerDown: (_) => _wakeControls(),
+          onPointerSignal: (event) {
+            if (!_panelOpen && event is PointerScrollEvent) {
+              _nudgeVolume(event.scrollDelta.dy < 0 ? 5 : -5);
+            }
+          },
           child: Stack(
             fit: StackFit.expand,
             children: [
               if (_playback.hasVideoOutput)
                 Positioned.fill(
-                  child: _playback.buildVideoSurface(context),
+                  child: _playback.buildVideoSurface(
+                    context,
+                    fit: _aspectMode.boxFit,
+                  ),
                 ),
               // Frame placeholder / backdrop before video frames start rendering
               if ((!_playback.hasVideoOutput || !_hasVideoFrame) &&
@@ -708,6 +779,14 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
                     ),
                   ),
                 ),
+              Positioned.fill(
+                child: GestureDetector(
+                  key: const Key('vp-canvas-gestures'),
+                  behavior: HitTestBehavior.translucent,
+                  onTap: _wakeControls,
+                  onDoubleTap: _isMobilePlatform ? null : _toggleFullscreenMode,
+                ),
+              ),
               // Center stream metadata (visible on stub backend without native surface)
               if (!_playback.hasVideoOutput)
                 Center(
@@ -1202,6 +1281,19 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
                                     ),
                                   ),
                                   IconButton(
+                                    key: const Key('vp-aspect-btn'),
+                                    tooltip:
+                                        'Display: ${_aspectMode.label} (A)',
+                                    onPressed: _cycleAspectMode,
+                                    icon: Icon(
+                                      Icons.aspect_ratio_rounded,
+                                      size: 21,
+                                      color: _aspectMode != VideoAspectMode.fit
+                                          ? tokens.accent
+                                          : Colors.white,
+                                    ),
+                                  ),
+                                  IconButton(
                                     key: const Key('vp-tracks-btn'),
                                     tooltip: 'Audio, subtitles & quality',
                                     onPressed: () {
@@ -1258,6 +1350,7 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
                                 selectedAudioIndex: _selectedAudioIndex,
                                 selectedSubtitleIndex: _selectedSubtitleIndex,
                                 selectedQuality: _quality,
+                                selectedAspectMode: _aspectMode,
                                 qualityOrder: _qualityOrder,
                                 subtitleDelaySeconds: _subtitleDelaySeconds,
                                 subtitleVerticalOffset: _subtitleVerticalOffset,
@@ -1285,6 +1378,7 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
                                     ),
                                   );
                                 },
+                                onSelectAspectMode: _setAspectMode,
                                 onSubtitleDelayChanged: _setSubtitleDelay,
                                 onSubtitleOffsetChanged: (offset) {
                                   _wakeControls();
@@ -1314,11 +1408,44 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
                   ),
                 ),
               ),
+              if (_hudLabel != null)
+                Positioned(
+                  top: 72,
+                  left: 0,
+                  right: 0,
+                  child: IgnorePointer(
+                    child: Center(
+                      child: Container(
+                        key: const Key('vp-hud-pill'),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 7,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.78),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.16),
+                          ),
+                        ),
+                        child: Text(
+                          _hudLabel!,
+                          style: const TextStyle(
+                            fontFamily: 'Figtree',
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
+        ),
       ),
-    ),
     );
   }
 }
@@ -1407,6 +1534,7 @@ class _TracksAndQualityPanel extends StatefulWidget {
     required this.selectedAudioIndex,
     required this.selectedSubtitleIndex,
     required this.selectedQuality,
+    required this.selectedAspectMode,
     required this.qualityOrder,
     required this.subtitleDelaySeconds,
     required this.subtitleVerticalOffset,
@@ -1417,6 +1545,7 @@ class _TracksAndQualityPanel extends StatefulWidget {
     required this.onSelectAudio,
     required this.onSelectSubtitle,
     required this.onSelectQuality,
+    required this.onSelectAspectMode,
     required this.onSubtitleDelayChanged,
     required this.onSubtitleOffsetChanged,
     required this.onSubtitleSizeChanged,
@@ -1433,6 +1562,7 @@ class _TracksAndQualityPanel extends StatefulWidget {
   final int selectedAudioIndex;
   final int? selectedSubtitleIndex;
   final VideoQualityPreset selectedQuality;
+  final VideoAspectMode selectedAspectMode;
   final List<VideoQualityPreset> qualityOrder;
   final double subtitleDelaySeconds;
   final double subtitleVerticalOffset;
@@ -1443,6 +1573,7 @@ class _TracksAndQualityPanel extends StatefulWidget {
   final ValueChanged<int> onSelectAudio;
   final ValueChanged<int?> onSelectSubtitle;
   final ValueChanged<VideoQualityPreset> onSelectQuality;
+  final ValueChanged<VideoAspectMode> onSelectAspectMode;
   final ValueChanged<double> onSubtitleDelayChanged;
   final ValueChanged<double> onSubtitleOffsetChanged;
   final ValueChanged<SubtitleSizePreset> onSubtitleSizeChanged;
@@ -1510,6 +1641,34 @@ class _TracksAndQualityPanelState extends State<_TracksAndQualityPanel> {
           ),
         )
         .toList(growable: false);
+  }
+
+  Widget _buildAspectRow(HermesThemeTokens tokens) {
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        Text(
+          'Display',
+          style: TextStyle(
+            fontFamily: 'Figtree',
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            color: Colors.white.withValues(alpha: 0.72),
+          ),
+        ),
+        const SizedBox(width: 4),
+        for (final mode in VideoAspectMode.values)
+          _HeaderPillChip(
+            key: Key('vp-aspect-${mode.name}'),
+            label: mode.label,
+            selected: widget.selectedAspectMode == mode,
+            tokens: tokens,
+            onTap: () => widget.onSelectAspectMode(mode),
+          ),
+      ],
+    );
   }
 
   Widget _buildStyleEditor() {
@@ -1639,22 +1798,41 @@ class _TracksAndQualityPanelState extends State<_TracksAndQualityPanel> {
               Flexible(
                 child: _activeTab == _TrackPanelTab.style
                     ? _buildStyleEditor()
-                    : _PanelColumn(
-                        title: switch (_activeTab) {
-                          _TrackPanelTab.subtitles => 'Subtitles',
-                          _TrackPanelTab.style => 'Style',
-                          _TrackPanelTab.audio => 'Audio',
-                          _TrackPanelTab.quality => 'Quality',
-                        },
-                        tokens: tokens,
-                        items: switch (_activeTab) {
-                          _TrackPanelTab.subtitles => _subtitleItems(),
-                          _TrackPanelTab.style => const [],
-                          _TrackPanelTab.audio => _audioItems(),
-                          _TrackPanelTab.quality => _qualityItems(),
-                        },
-                        fillWidth: true,
-                      ),
+                    : _activeTab == _TrackPanelTab.quality
+                        ? SingleChildScrollView(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                _PanelColumn(
+                                  title: 'Quality',
+                                  tokens: tokens,
+                                  items: _qualityItems(),
+                                  fillWidth: true,
+                                ),
+                                const SizedBox(height: 10),
+                                Divider(height: 1, color: tokens.lineSoft),
+                                const SizedBox(height: 10),
+                                _buildAspectRow(tokens),
+                              ],
+                            ),
+                          )
+                        : _PanelColumn(
+                            title: switch (_activeTab) {
+                              _TrackPanelTab.subtitles => 'Subtitles',
+                              _TrackPanelTab.style => 'Style',
+                              _TrackPanelTab.audio => 'Audio',
+                              _TrackPanelTab.quality => 'Quality',
+                            },
+                            tokens: tokens,
+                            items: switch (_activeTab) {
+                              _TrackPanelTab.subtitles => _subtitleItems(),
+                              _TrackPanelTab.style => const [],
+                              _TrackPanelTab.audio => _audioItems(),
+                              _TrackPanelTab.quality => _qualityItems(),
+                            },
+                            fillWidth: true,
+                          ),
               ),
             ],
           ),
@@ -1751,6 +1929,12 @@ class _TracksAndQualityPanelState extends State<_TracksAndQualityPanel> {
                       ),
                     ),
             ),
+            if (!_desktopShowStyle) ...[
+              const SizedBox(height: 10),
+              Divider(height: 1, color: tokens.lineSoft),
+              const SizedBox(height: 10),
+              _buildAspectRow(tokens),
+            ],
           ],
         ),
       ),
@@ -1760,6 +1944,7 @@ class _TracksAndQualityPanelState extends State<_TracksAndQualityPanel> {
 
 class _HeaderPillChip extends StatelessWidget {
   const _HeaderPillChip({
+    super.key,
     required this.label,
     required this.selected,
     required this.tokens,

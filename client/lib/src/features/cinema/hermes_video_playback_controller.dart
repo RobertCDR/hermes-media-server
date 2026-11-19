@@ -49,7 +49,10 @@ abstract interface class HermesVideoPlaybackController {
   Future<void> setVolume(double volume0to100);
   Future<void> stop();
 
-  Widget buildVideoSurface(BuildContext context);
+  Widget buildVideoSurface(
+    BuildContext context, {
+    BoxFit fit = BoxFit.contain,
+  });
 
   Future<void> dispose();
 }
@@ -372,12 +375,15 @@ class MediaKitVideoPlaybackController implements HermesVideoPlaybackController {
   }
 
   @override
-  Widget buildVideoSurface(BuildContext context) {
+  Widget buildVideoSurface(
+    BuildContext context, {
+    BoxFit fit = BoxFit.contain,
+  }) {
     return Video(
       controller: _videoController,
       controls: NoVideoControls,
       fill: Colors.black,
-      fit: BoxFit.contain,
+      fit: fit,
       // Subtitles are rendered by Hermes HDR-safe caption overlay so
       // None / Shadow / Box and text-size preferences apply consistently.
       subtitleViewConfiguration: const SubtitleViewConfiguration(
@@ -483,7 +489,11 @@ class StubVideoPlaybackController implements HermesVideoPlaybackController {
   Future<void> stop() async {}
 
   @override
-  Widget buildVideoSurface(BuildContext context) => const SizedBox.shrink();
+  Widget buildVideoSurface(
+    BuildContext context, {
+    BoxFit fit = BoxFit.contain,
+  }) =>
+      const SizedBox.shrink();
 
   @override
   Future<void> dispose() async {}

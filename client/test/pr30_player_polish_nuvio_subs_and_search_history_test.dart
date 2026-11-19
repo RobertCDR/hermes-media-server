@@ -197,7 +197,10 @@ class _Pr30VideoPlaybackController implements HermesVideoPlaybackController {
   Future<void> stop() async => playingController.add(false);
 
   @override
-  Widget buildVideoSurface(BuildContext context) =>
+  Widget buildVideoSurface(
+    BuildContext context, {
+    BoxFit fit = BoxFit.contain,
+  }) =>
       const ColoredBox(color: Colors.black);
 
   @override

@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "hermes_desktop_window.h"
 #include "hermes_smtc_bridge.h"
 #include "win32_window.h"
 
@@ -32,6 +33,9 @@ class FlutterWindow : public Win32Window {
 
   // Native Windows SystemMediaTransportControls bridge.
   std::unique_ptr<HermesSmtcBridge> smtc_bridge_;
+
+  // Native Windows frameless chrome, fullscreen, tray & media flyout controller.
+  std::unique_ptr<HermesDesktopWindow> desktop_window_;
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_

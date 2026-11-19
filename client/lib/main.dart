@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:ui' show AppExitResponse;
+import 'dart:typed_data';
+import 'dart:ui' show AppExitResponse, PointerDeviceKind;
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform, kIsWeb, visibleForTesting;
 import 'package:http/http.dart' as http;
 import 'package:material_ui/material_ui.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'src/core/auth/auth_service.dart';
 import 'src/core/auth/authenticated_http_client.dart';
 import 'src/core/auth/session_store.dart';
@@ -18,6 +20,8 @@ import 'src/core/theme/hermes_theme_tokens.dart';
 import 'src/core/widgets/hermes_artwork_image.dart';
 import 'src/core/widgets/hermes_icons.dart';
 import 'src/core/widgets/hermes_search_pill.dart';
+import 'src/core/window/hermes_desktop_titlebar.dart';
+import 'src/core/window/hermes_window_bridge.dart';
 import 'src/features/admin/admin_dashboard_screen.dart';
 import 'src/features/admin/admin_service.dart';
 import 'src/features/auth/setup_and_login_screen.dart';
@@ -53,6 +57,16 @@ typedef HermesSyncClientFactory = HermesSyncClient Function({
   required String platform,
 });
 
+class _HermesScrollBehavior extends MaterialScrollBehavior {
+  const _HermesScrollBehavior();
+
+  @override
+  Set<PointerDeviceKind> get dragDevices => {
+        ...super.dragDevices,
+        PointerDeviceKind.mouse,
+      };
+}
+
 class HermesApp extends StatefulWidget {
   const HermesApp({
     super.key,
@@ -63,6 +77,8 @@ class HermesApp extends StatefulWidget {
     this.audioEngine,
     this.mediaBridge,
     @visibleForTesting this.isMobilePlatformOverride,
+    @visibleForTesting this.windowBridge,
+    @visibleForTesting this.showDesktopTitleBarOverride,
   });
 
   final SessionStore? sessionStore;
@@ -72,6 +88,8 @@ class HermesApp extends StatefulWidget {
   final AudioEngineAdapter? audioEngine;
   final PlatformMediaBridge? mediaBridge;
   final bool? isMobilePlatformOverride;
+  final HermesWindowBridge? windowBridge;
+  final bool? showDesktopTitleBarOverride;
 
   @override
   State<HermesApp> createState() => _HermesAppState();
@@ -128,6 +146,18 @@ class _HermesAppState extends State<HermesApp> {
   AppLifecycleListener? _lifecycleListener;
   final StreamController<WatchProgressUpdatedEvent> _watchProgressController =
       StreamController<WatchProgressUpdatedEvent>.broadcast();
+  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
+  late final HermesWindowBridge _windowBridge =
+      widget.windowBridge ?? HermesWindowBridge.instance;
+  final Map<String, ({Uint8List bgra, int width, int height})>
+      _flyoutArtCache = {};
+
+  bool get _isWindowsDesktop =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
+
+  bool get _showDesktopTitleBar =>
+      widget.showDesktopTitleBarOverride ??
+      (!(widget.isMobilePlatformOverride ?? false) && _isWindowsDesktop);
 
   String get _deviceName => kIsWeb ? 'Web Browser' : Platform.localHostname;
 
@@ -190,11 +220,18 @@ class _HermesAppState extends State<HermesApp> {
           unawaited(_shutdownLocalPlayback());
         },
         onExitRequested: () async {
+          await _saveWindowBoundsSafely();
           await _shutdownLocalPlayback();
           await _stopSyncClient();
           return AppExitResponse.exit;
         },
       );
+    }
+
+    if (_isWindowsDesktop || widget.windowBridge != null) {
+      _windowBridge.onTrayAction = _handleDesktopTrayAction;
+      _windowBridge.onFlyoutAction = _handleDesktopFlyoutAction;
+      _windowBridge.onAppCommand = _handleDesktopAppCommand;
     }
 
     _applyDevicePreferencesState(_devicePrefs, persist: false);
@@ -234,6 +271,12 @@ class _HermesAppState extends State<HermesApp> {
 
   Future<void> _bootstrapApp() async {
     try {
+      if (_isWindowsDesktop) {
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          await _windowBridge.restoreSavedBounds(prefs);
+        } catch (_) {}
+      }
       final osTag = kIsWeb ? 'web' : Platform.operatingSystem;
       final loadedDeviceId =
           await _preferencesStore.getOrCreateDeviceId(osTag);
@@ -297,14 +340,180 @@ class _HermesAppState extends State<HermesApp> {
       _defaultVideoQuality = next.defaultVideoQuality;
     });
     _musicCoordinator?.updateQualityPolicy(next.toAudioQualityPolicy());
+    if (_isWindowsDesktop || widget.windowBridge != null) {
+      unawaited(_windowBridge.setCloseToTray(next.closeToTray));
+    }
     if (persist) {
       unawaited(_preferencesStore.save(next));
     }
   }
 
+  Future<void> _saveWindowBoundsSafely() async {
+    if (!_isWindowsDesktop) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await _windowBridge.saveCurrentBounds(prefs);
+    } catch (_) {}
+  }
+
+  void _handleDesktopTrayAction(String action) {
+    final coordinator = _musicCoordinator;
+    switch (action) {
+      case 'playPause':
+        if (coordinator != null) {
+          unawaited(coordinator.togglePlayPause());
+          unawaited(_triggerMediaFlyout());
+        }
+      case 'next':
+        if (coordinator != null) {
+          unawaited(coordinator.skipNext());
+          unawaited(_triggerMediaFlyout());
+        }
+      case 'previous':
+        if (coordinator != null) {
+          unawaited(coordinator.skipPrevious());
+          unawaited(_triggerMediaFlyout());
+        }
+      case 'quit':
+        unawaited(_quitFromTray());
+    }
+  }
+
+  void _handleDesktopFlyoutAction(String action) {
+    final coordinator = _musicCoordinator;
+    if (coordinator == null) return;
+    switch (action) {
+      case 'playPause':
+        unawaited(coordinator.togglePlayPause());
+      case 'next':
+        unawaited(coordinator.skipNext());
+      case 'previous':
+        unawaited(coordinator.skipPrevious());
+    }
+    unawaited(_triggerMediaFlyout());
+  }
+
+  void _handleDesktopAppCommand(String direction) {
+    final activeContentWorld =
+        (_worldNotifier.value == HermesWorld.music ||
+                _worldNotifier.value == HermesWorld.cinema)
+            ? _worldNotifier.value
+            : _lastContentWorld;
+    if (direction == 'back') {
+      if (activeContentWorld == HermesWorld.music) {
+        _musicNav.handleBack();
+      } else {
+        _cinemaNav.handleBack();
+      }
+    } else if (direction == 'forward' &&
+        activeContentWorld == HermesWorld.music) {
+      _musicNav.handleForward();
+    }
+  }
+
+  Future<void> _quitFromTray() async {
+    await _saveWindowBoundsSafely();
+    await _shutdownLocalPlayback();
+    await _stopSyncClient();
+    await _windowBridge.quitApp();
+  }
+
+  void _syncWindowTrackChrome() {
+    if (!_isWindowsDesktop && widget.windowBridge == null) return;
+    final coordinator = _musicCoordinator;
+    final song = coordinator?.currentSong;
+    final isPlaying = coordinator?.session?.state == PlaybackState.playing;
+    if (song == null) {
+      unawaited(_windowBridge.setTitle('Hermes'));
+      unawaited(
+        _windowBridge.updateTrayState(
+          title: '',
+          artist: '',
+          isPlaying: false,
+        ),
+      );
+      return;
+    }
+    final windowTitle =
+        isPlaying ? '${song.title} · ${song.artistName} — Hermes' : 'Hermes';
+    unawaited(_windowBridge.setTitle(windowTitle));
+    unawaited(
+      _windowBridge.updateTrayState(
+        title: song.title,
+        artist: song.artistName,
+        isPlaying: isPlaying,
+      ),
+    );
+  }
+
+  Future<void> _triggerMediaFlyout() async {
+    if ((!_isWindowsDesktop && widget.windowBridge == null) ||
+        !_devicePrefs.showMediaFlyout) {
+      return;
+    }
+    final coordinator = _musicCoordinator;
+    final song = coordinator?.currentSong;
+    if (song == null) return;
+    final isPlaying = coordinator?.session?.state == PlaybackState.playing;
+    final artHash = song.artworkHash;
+    final cached = artHash != null ? _flyoutArtCache[artHash] : null;
+
+    await _windowBridge.showMediaFlyout(
+      HermesMediaFlyoutData(
+        title: song.title,
+        artist: song.artistName,
+        isPlaying: isPlaying,
+        artBgra: cached?.bgra,
+        artWidth: cached?.width ?? 0,
+        artHeight: cached?.height ?? 0,
+      ),
+    );
+
+    if (cached != null || artHash == null || artHash.isEmpty) {
+      return;
+    }
+    final musicService = _musicService;
+    if (musicService == null) return;
+    final artUri = musicService.buildArtworkUri(artHash, variant: 'thumb_400');
+    if (artUri == null) return;
+    try {
+      final resp = await _apiHttpClient.get(artUri);
+      if (resp.statusCode != 200 || resp.bodyBytes.isEmpty) return;
+      final decoded = await HermesWindowBridge.decodeArtworkBgra(
+        resp.bodyBytes,
+      );
+      if (decoded == null || !mounted) return;
+      if (_flyoutArtCache.length >= 24) {
+        _flyoutArtCache.remove(_flyoutArtCache.keys.first);
+      }
+      _flyoutArtCache[artHash] = decoded;
+      if (_musicCoordinator?.currentSong?.artworkHash == artHash) {
+        await _windowBridge.showMediaFlyout(
+          HermesMediaFlyoutData(
+            title: song.title,
+            artist: song.artistName,
+            isPlaying: _musicCoordinator?.session?.state == PlaybackState.playing,
+            artBgra: decoded.bgra,
+            artWidth: decoded.width,
+            artHeight: decoded.height,
+          ),
+        );
+      }
+    } catch (_) {}
+  }
+
   @override
   void dispose() {
     _lifecycleListener?.dispose();
+    if (_windowBridge.onTrayAction == _handleDesktopTrayAction) {
+      _windowBridge.onTrayAction = null;
+    }
+    if (_windowBridge.onFlyoutAction == _handleDesktopFlyoutAction) {
+      _windowBridge.onFlyoutAction = null;
+    }
+    if (_windowBridge.onAppCommand == _handleDesktopAppCommand) {
+      _windowBridge.onAppCommand = null;
+    }
     _worldNotifier.removeListener(_onShellNavChanged);
     _musicNav.currentRouteNotifier.removeListener(_onShellNavChanged);
     _cinemaNav.mobileTabNotifier.removeListener(_onShellNavChanged);
@@ -313,6 +522,7 @@ class _HermesAppState extends State<HermesApp> {
     _worldNotifier.dispose();
     _musicNav.dispose();
     _cinemaNav.dispose();
+    _musicCoordinator?.removeListener(_syncWindowTrackChrome);
     _musicCoordinator?.dispose();
     final audioEngine = _audioEngine;
     if (_ownsAudioEngine && audioEngine is MediaKitAudioEngineAdapter) {
@@ -490,6 +700,7 @@ class _HermesAppState extends State<HermesApp> {
       mediaBridge: _mediaBridge,
       transport: connectTransport,
       onProgressHeartbeat: (posMs) => syncClient.reportProgress(posMs),
+      onExternalMediaCommand: (_) => unawaited(_triggerMediaFlyout()),
     );
 
     coordinator.updateQualityPolicy(_devicePrefs.toAudioQualityPolicy());
@@ -513,6 +724,7 @@ class _HermesAppState extends State<HermesApp> {
     });
 
     setState(() {
+      _musicCoordinator?.removeListener(_syncWindowTrackChrome);
       _musicCoordinator?.dispose();
       _bootstrapping = false;
       _session = nextSession;
@@ -524,7 +736,9 @@ class _HermesAppState extends State<HermesApp> {
       _connectDevices = const [];
       _musicService = musicService;
       _musicCoordinator = coordinator;
+      _musicCoordinator?.addListener(_syncWindowTrackChrome);
     });
+    _syncWindowTrackChrome();
 
     syncClient.start();
     unawaited(_loadAccountPreferences(nextSession, nextEndpoint));
@@ -591,6 +805,7 @@ class _HermesAppState extends State<HermesApp> {
     await _authService.signOut();
     unawaited(_audioEngine.stop());
     unawaited(_mediaBridge.clearState());
+    _musicCoordinator?.removeListener(_syncWindowTrackChrome);
     _musicCoordinator?.dispose();
     if (!mounted) return;
     setState(() {
@@ -603,6 +818,7 @@ class _HermesAppState extends State<HermesApp> {
       _musicService = null;
       _accountPrefs = const HermesAccountPreferences();
     });
+    _syncWindowTrackChrome();
   }
 
   Future<void> _openLibrarySearchDialog(
@@ -631,8 +847,10 @@ class _HermesAppState extends State<HermesApp> {
     final musicCoordinator = _musicCoordinator;
 
     return MaterialApp(
-      title: 'Hermes Media Server',
+      navigatorKey: _navigatorKey,
+      title: 'Hermes',
       debugShowCheckedModeBanner: false,
+      scrollBehavior: const _HermesScrollBehavior(),
       theme: _tokens.toThemeData(),
       builder: (context, child) {
         final media = MediaQuery.of(context);
@@ -640,15 +858,42 @@ class _HermesAppState extends State<HermesApp> {
             !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
         // Disable Material Tooltip OverlayPortal mounting on Windows desktop to
         // prevent Flutter #182444 AXTree desync across scrolling/hovering UIs.
+        Widget appBody = TooltipVisibility(
+          visible: !suppressDesktopTooltips,
+          child: child ?? const SizedBox.shrink(),
+        );
+        if (_showDesktopTitleBar) {
+          appBody = ValueListenableBuilder<bool>(
+            valueListenable: _windowBridge.isFullscreen,
+            builder: (context, isFullscreen, body) {
+              final bodyChild = body ?? const SizedBox.shrink();
+              if (isFullscreen) {
+                return bodyChild;
+              }
+              return Column(
+                children: [
+                  HermesDesktopTitleBar(
+                    bridge: _windowBridge,
+                    onOpenShortcuts: () {
+                      final navCtx = _navigatorKey.currentContext;
+                      if (navCtx != null) {
+                        unawaited(showHermesKeyboardShortcutsDialog(navCtx));
+                      }
+                    },
+                  ),
+                  Expanded(child: bodyChild),
+                ],
+              );
+            },
+            child: appBody,
+          );
+        }
         return MediaQuery(
           data: media.copyWith(
             textScaler: TextScaler.linear(_devicePrefs.textSize.scaleFactor),
             disableAnimations: _devicePrefs.reduceMotion,
           ),
-          child: TooltipVisibility(
-            visible: !suppressDesktopTooltips,
-            child: child ?? const SizedBox.shrink(),
-          ),
+          child: appBody,
         );
       },
       home: _bootstrapping
@@ -749,6 +994,22 @@ class _HermesAppState extends State<HermesApp> {
                         }
                         return _cinemaNav.handleBack();
                       },
+                      onHandleForward: () {
+                        if (activeContentWorld == HermesWorld.music) {
+                          return _musicNav.handleForward();
+                        }
+                        return false;
+                      },
+                      onToggleFullscreen: () => unawaited(
+                        _windowBridge.setFullscreen(
+                          !_windowBridge.isFullscreen.value,
+                        ),
+                      ),
+                      onOpenShortcuts: () => unawaited(
+                        showHermesKeyboardShortcutsDialog(navContext),
+                      ),
+                      onMediaKeyAction: (_) =>
+                          unawaited(_triggerMediaFlyout()),
                       username: session.username,
                       isAdmin: session.isAdmin,
                       serverName: _serverNameOverride ?? endpoint.info.serverName,
