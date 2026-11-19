@@ -1204,7 +1204,7 @@ class _TrackTableRowState extends State<_TrackTableRow> {
       return rowContent;
     }
 
-    return _SpotifySwipeToQueue(
+    return SpotifySwipeToQueue(
       key: ValueKey('swipe-queue-${song.id}-${widget.displayIndex}-${widget.positionInList}'),
       accentColor: tokens.accent,
       textColor: tokens.text,
@@ -1215,8 +1215,9 @@ class _TrackTableRowState extends State<_TrackTableRow> {
   }
 }
 
-class _SpotifySwipeToQueue extends StatefulWidget {
-  const _SpotifySwipeToQueue({
+/// Spotify-style right-swipe row wrapper that arms an "Add to Queue" badge and springs back.
+class SpotifySwipeToQueue extends StatefulWidget {
+  const SpotifySwipeToQueue({
     super.key,
     required this.accentColor,
     required this.textColor,
@@ -1232,10 +1233,10 @@ class _SpotifySwipeToQueue extends StatefulWidget {
   final Widget child;
 
   @override
-  State<_SpotifySwipeToQueue> createState() => _SpotifySwipeToQueueState();
+  State<SpotifySwipeToQueue> createState() => _SpotifySwipeToQueueState();
 }
 
-class _SpotifySwipeToQueueState extends State<_SpotifySwipeToQueue>
+class _SpotifySwipeToQueueState extends State<SpotifySwipeToQueue>
     with SingleTickerProviderStateMixin {
   static const double _armThreshold = 56.0;
   static const double _maxOffset = 84.0;

@@ -1667,82 +1667,7 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
           ),
         ),
         for (final item in _musicSearchHistory)
-          InkWell(
-            onTap: () => _openMusicSearchHistoryItem(item),
-            borderRadius: BorderRadius.circular(8),
-            child: Padding(
-              padding: EdgeInsets.symmetric(
-                horizontal: isDropdown ? 12 : 4,
-                vertical: 6,
-              ),
-              child: Row(
-                children: [
-                  if (item.kind == MusicSearchHistoryKind.query)
-                    Container(
-                      width: 44,
-                      height: 44,
-                      decoration: BoxDecoration(
-                        color: tokens.surface3,
-                        shape: BoxShape.circle,
-                      ),
-                      child: Icon(
-                        Icons.history_rounded,
-                        size: 20,
-                        color: tokens.text2,
-                      ),
-                    )
-                  else
-                    MusicArtworkTile(
-                      size: 44,
-                      title: item.title,
-                      uri: widget.musicService.buildArtworkUri(item.artworkHash),
-                      circular: item.kind == MusicSearchHistoryKind.artist,
-                      isPlaylist: item.kind == MusicSearchHistoryKind.playlist,
-                      borderRadius: 4,
-                    ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          item.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                            color: tokens.text,
-                          ),
-                        ),
-                        const SizedBox(height: 1),
-                        Text(
-                          item.subtitle,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: tokens.text2,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: 'Remove from recent searches',
-                    padding: EdgeInsets.zero,
-                    visualDensity: VisualDensity.compact,
-                    onPressed: () => unawaited(_removeMusicSearchItem(item.id)),
-                    icon: Icon(
-                      Icons.close_rounded,
-                      size: 18,
-                      color: tokens.text3,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
+          _buildMusicSearchHistoryRow(tokens, item, isDropdown: isDropdown),
       ],
     );
 
@@ -1774,6 +1699,124 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
         child: SingleChildScrollView(child: list),
       ),
     );
+  }
+
+  Widget _buildMusicSearchHistoryRow(
+    HermesThemeTokens tokens,
+    MusicSearchHistoryItem item, {
+    required bool isDropdown,
+  }) {
+    final matchedSong = item.kind == MusicSearchHistoryKind.song &&
+            item.targetId != null
+        ? _songs.where((s) => s.id == item.targetId).firstOrNull
+        : null;
+    final isCurrentSong = item.kind == MusicSearchHistoryKind.song &&
+        item.targetId != null &&
+        item.targetId == widget.coordinator.currentSong?.id;
+    final isActivelyPlaying = isCurrentSong &&
+        widget.coordinator.session?.state == PlaybackState.playing;
+
+    Widget row = InkWell(
+      onTap: () => _openMusicSearchHistoryItem(item),
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: isDropdown ? 12 : 4,
+          vertical: 6,
+        ),
+        child: Row(
+          children: [
+            if (item.kind == MusicSearchHistoryKind.query)
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: tokens.surface3,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  Icons.history_rounded,
+                  size: 20,
+                  color: tokens.text2,
+                ),
+              )
+            else
+              MusicArtworkTile(
+                size: 44,
+                title: item.title,
+                uri: widget.musicService.buildArtworkUri(item.artworkHash),
+                circular: item.kind == MusicSearchHistoryKind.artist,
+                isPlaylist: item.kind == MusicSearchHistoryKind.playlist,
+                borderRadius: 4,
+              ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    item.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: isCurrentSong ? tokens.accent : tokens.text,
+                    ),
+                  ),
+                  const SizedBox(height: 1),
+                  Text(
+                    item.subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: tokens.text2,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (isCurrentSong) ...[
+              const SizedBox(width: 8),
+              HermesEqBars(
+                color: tokens.accent,
+                height: 12,
+                paused: !isActivelyPlaying,
+              ),
+            ],
+            IconButton(
+              tooltip: 'Remove from recent searches',
+              padding: EdgeInsets.zero,
+              visualDensity: VisualDensity.compact,
+              onPressed: () => unawaited(_removeMusicSearchItem(item.id)),
+              icon: Icon(
+                Icons.close_rounded,
+                size: 18,
+                color: tokens.text3,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (matchedSong != null) {
+      row = SpotifySwipeToQueue(
+        key: ValueKey('search-history-swipe-${item.id}'),
+        accentColor: tokens.accent,
+        textColor: tokens.text,
+        surfaceColor: tokens.surface2,
+        onTriggered: () {
+          widget.coordinator.addToQueue(matchedSong);
+          if (mounted) {
+            showMusicToast(context, 'Added "${matchedSong.title}" to queue');
+          }
+        },
+        child: row,
+      );
+    }
+    return row;
   }
 
   List<Widget> _buildMobileSearchViewSlivers(
