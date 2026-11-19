@@ -27,6 +27,8 @@ bool FlutterWindow::OnCreate() {
   RegisterPlugins(flutter_controller_->engine());
   smtc_bridge_ = std::make_unique<HermesSmtcBridge>(
       GetHandle(), flutter_controller_->engine()->messenger());
+  desktop_window_ = std::make_unique<HermesDesktopWindow>(
+      GetHandle(), flutter_controller_->engine()->messenger());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
@@ -42,6 +44,10 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  if (desktop_window_) {
+    desktop_window_->Shutdown();
+    desktop_window_.reset();
+  }
   if (smtc_bridge_) {
     smtc_bridge_->Shutdown();
     smtc_bridge_.reset();
@@ -57,6 +63,15 @@ LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
+  if (desktop_window_) {
+    bool handled = false;
+    LRESULT desktop_result = desktop_window_->HandleWindowMessage(
+        hwnd, message, wparam, lparam, &handled);
+    if (handled) {
+      return desktop_result;
+    }
+  }
+
   // Give Flutter, including plugins, an opportunity to handle window messages.
   if (flutter_controller_) {
     std::optional<LRESULT> result =
