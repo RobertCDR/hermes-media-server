@@ -139,7 +139,9 @@ class AuthService {
       );
 
       if (response.statusCode != 200) {
-        await sessionStore.clear();
+        if (response.statusCode == 401 || response.statusCode == 403) {
+          await sessionStore.clear();
+        }
         throw AuthException('Session refresh failed (${response.statusCode})', statusCode: response.statusCode);
       }
 
@@ -161,9 +163,11 @@ class AuthService {
     required String accessToken,
     required String currentPassword,
     required String newPassword,
+    http.Client? client,
   }) async {
     final uri = Uri.parse(baseUrl).resolve('/api/v1/auth/change-password');
-    final response = await httpClient.post(
+    final activeClient = client ?? httpClient;
+    final response = await activeClient.post(
       uri,
       headers: {
         'Authorization': 'Bearer $accessToken',

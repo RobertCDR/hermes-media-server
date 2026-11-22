@@ -119,10 +119,13 @@ class _HermesAppState extends State<HermesApp> {
   VideoRendererBackend _rendererBackend = VideoRendererBackend.openGl;
   VideoQualityPreset _defaultVideoQuality = VideoQualityPreset.directPlay;
   bool _switchingServer = false;
+  bool _signingOut = false;
   SettingsTabKind _settingsInitialTab = SettingsTabKind.device;
   HermesSession? _session;
   ResolvedEndpoint? _endpoint;
   String? _serverNameOverride;
+  CinemaService? _cinemaService;
+  AdminService? _adminService;
   MusicPlaybackCoordinator? _musicCoordinator;
   MusicService? _musicService;
   bool get _isMobileStartup =>
@@ -139,6 +142,8 @@ class _HermesAppState extends State<HermesApp> {
   final HermesCacheManager _cacheManager = HermesCacheManager();
   bool _connectPopoverOpen = false;
   List<OnlineDeviceModel> _connectDevices = const [];
+  final ValueNotifier<List<OnlineDeviceModel>> _connectDevicesNotifier =
+      ValueNotifier<List<OnlineDeviceModel>>(const []);
   HermesSyncClient? _syncClient;
   StreamSubscription<PlaybackSessionState>? _syncSessionSub;
   StreamSubscription<List<OnlineDeviceModel>>? _syncDevicesSub;
@@ -264,8 +269,11 @@ class _HermesAppState extends State<HermesApp> {
         });
       }
       return refreshed.accessToken;
-    } catch (_) {
-      return null;
+    } on AuthException catch (e) {
+      if (e.statusCode == null || e.statusCode == 401 || e.statusCode == 403) {
+        return null;
+      }
+      rethrow;
     }
   }
 
@@ -527,6 +535,7 @@ class _HermesAppState extends State<HermesApp> {
     _worldNotifier.dispose();
     _musicNav.dispose();
     _cinemaNav.dispose();
+    _connectDevicesNotifier.dispose();
     _musicCoordinator?.removeListener(_syncWindowTrackChrome);
     _musicCoordinator?.dispose();
     final audioEngine = _audioEngine;
@@ -604,39 +613,75 @@ class _HermesAppState extends State<HermesApp> {
     MusicPlaybackCoordinator coordinator,
     HermesSession session,
   ) async {
-    List<OnlineDeviceModel> devices = _connectDevices;
-    try {
-      devices = await (coordinator.transport?.getOnlineDevices() ??
-          musicService.getOnlineDevices());
-    } catch (_) {
-      devices = _connectDevices;
-    }
-    if (!ctx.mounted) return;
-
     final isDesktop = MediaQuery.sizeOf(ctx).width >= 840;
+    void refreshDevicesInBackground() {
+      unawaited(() async {
+        try {
+          final devices = await (coordinator.transport?.getOnlineDevices() ??
+              musicService.getOnlineDevices());
+          if (!mounted) return;
+          setState(() {
+            _connectDevices = devices;
+          });
+          _connectDevicesNotifier.value = devices;
+        } catch (_) {
+          // Keep cached devices on transient network errors.
+        }
+      }());
+    }
+
     if (isDesktop) {
+      final opening = !_connectPopoverOpen;
       setState(() {
-        _connectDevices = devices;
-        _connectPopoverOpen = !_connectPopoverOpen;
+        _connectPopoverOpen = opening;
       });
+      if (opening) {
+        refreshDevicesInBackground();
+      }
       return;
     }
 
+    refreshDevicesInBackground();
     await showModalBottomSheet<void>(
       context: ctx,
       backgroundColor: Colors.transparent,
       builder: (sheetCtx) => SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-          child: DevicePickerSheet(
-            devices: devices,
-            activeRendererDeviceId:
-                coordinator.session?.activeRendererDeviceId,
-            localDeviceId: session.deviceId,
-            onSelectDevice: (id) {
-              Navigator.of(sheetCtx).pop();
-              unawaited(coordinator.transferOutputTo(id));
-            },
+          child: ValueListenableBuilder<List<OnlineDeviceModel>>(
+            valueListenable: _connectDevicesNotifier,
+            builder: (context, devices, _) => AnimatedBuilder(
+              animation: coordinator,
+              builder: (context, _) {
+                final activeId = coordinator.session?.activeRendererDeviceId;
+                final activeName = devices
+                    .where((d) => d.deviceId == activeId)
+                    .firstOrNull
+                    ?.deviceName;
+                return DevicePickerSheet(
+                  devices: devices,
+                  activeRendererDeviceId: activeId,
+                  localDeviceId: session.deviceId,
+                  volume: coordinator.effectiveVolume,
+                  volumeTargetLabel: coordinator.isControllingRemoteDevice
+                      ? (activeName != null
+                          ? 'Volume · $activeName'
+                          : 'Remote device volume')
+                      : 'Volume · This device',
+                  onVolumeChanged: (v) => unawaited(
+                    coordinator.setVolume(v, immediate: false),
+                  ),
+                  onVolumeChangeEnd: (v) => unawaited(
+                    coordinator.setVolume(v, immediate: true),
+                  ),
+                  onToggleMute: () => unawaited(coordinator.toggleMute()),
+                  onSelectDevice: (id) {
+                    Navigator.of(sheetCtx).pop();
+                    unawaited(coordinator.transferOutputTo(id));
+                  },
+                );
+              },
+            ),
           ),
         ),
       ),
@@ -718,6 +763,7 @@ class _HermesAppState extends State<HermesApp> {
     });
     _syncDevicesSub = syncClient.devicesStream.listen((devices) {
       if (!mounted || _syncClient != syncClient) return;
+      _connectDevicesNotifier.value = devices;
       setState(() {
         _connectDevices = devices;
       });
@@ -727,6 +773,10 @@ class _HermesAppState extends State<HermesApp> {
         _watchProgressController.add(event);
       }
     });
+
+    _cinemaService = null;
+    _adminService = null;
+    _connectDevicesNotifier.value = const [];
 
     setState(() {
       _musicCoordinator?.removeListener(_syncWindowTrackChrome);
@@ -747,6 +797,20 @@ class _HermesAppState extends State<HermesApp> {
 
     syncClient.start();
     unawaited(_loadAccountPreferences(nextSession, nextEndpoint));
+    unawaited(_preloadMusicCatalog(musicService, coordinator));
+  }
+
+  Future<void> _preloadMusicCatalog(
+    MusicService musicService,
+    MusicPlaybackCoordinator coordinator,
+  ) async {
+    try {
+      final songs = await musicService.listSongs();
+      if (!mounted || _musicCoordinator != coordinator) return;
+      coordinator.indexSongs(songs, notify: false);
+    } catch (_) {
+      // Lazy fallback in MusicPlaybackCoordinator loads on demand if needed.
+    }
   }
 
   Future<void> _loadAccountPreferences(
@@ -802,28 +866,38 @@ class _HermesAppState extends State<HermesApp> {
       accessToken: session.accessToken,
       currentPassword: currentPassword,
       newPassword: newPassword,
+      client: _apiHttpClient,
     );
   }
 
   Future<void> _signOut() async {
-    await _stopSyncClient();
-    await _authService.signOut();
-    unawaited(_audioEngine.stop());
-    unawaited(_mediaBridge.clearState());
-    _musicCoordinator?.removeListener(_syncWindowTrackChrome);
-    _musicCoordinator?.dispose();
-    if (!mounted) return;
-    setState(() {
-      _session = null;
-      _serverNameOverride = null;
-      _switchingServer = false;
-      _connectPopoverOpen = false;
-      _connectDevices = const [];
-      _musicCoordinator = null;
-      _musicService = null;
-      _accountPrefs = const HermesAccountPreferences();
-    });
-    _syncWindowTrackChrome();
+    if (_signingOut) return;
+    _signingOut = true;
+    try {
+      await _stopSyncClient();
+      await _authService.signOut();
+      unawaited(_audioEngine.stop());
+      unawaited(_mediaBridge.clearState());
+      _musicCoordinator?.removeListener(_syncWindowTrackChrome);
+      _musicCoordinator?.dispose();
+      _cinemaService = null;
+      _adminService = null;
+      _connectDevicesNotifier.value = const [];
+      if (!mounted) return;
+      setState(() {
+        _session = null;
+        _serverNameOverride = null;
+        _switchingServer = false;
+        _connectPopoverOpen = false;
+        _connectDevices = const [];
+        _musicCoordinator = null;
+        _musicService = null;
+        _accountPrefs = const HermesAccountPreferences();
+      });
+      _syncWindowTrackChrome();
+    } finally {
+      _signingOut = false;
+    }
   }
 
   Future<void> _openLibrarySearchDialog(
@@ -945,12 +1019,12 @@ class _HermesAppState extends State<HermesApp> {
                 )
               : Builder(
                   builder: (navContext) {
-                    final cinemaService = CinemaService(
+                    final cinemaService = _cinemaService ??= CinemaService(
                       baseUri: endpoint.baseUri,
                       accessToken: session.accessToken,
                       httpClient: _apiHttpClient,
                     );
-                    final adminService = AdminService(
+                    final adminService = _adminService ??= AdminService(
                       baseUri: endpoint.baseUri,
                       accessToken: session.accessToken,
                       httpClient: _apiHttpClient,
@@ -1092,6 +1166,8 @@ class _HermesAppState extends State<HermesApp> {
                     navigationController: _cinemaNav,
                     searchHistoryStore: _searchHistoryStore,
                     externalMobileNav: true,
+                    onBeforeStartVideo: () =>
+                        unawaited(musicCoordinator.pauseIfPlaying()),
                   ),
                   musicBuilder: (_) => MusicWorldScreen(
                     musicService: musicService,
@@ -1103,26 +1179,27 @@ class _HermesAppState extends State<HermesApp> {
                   ),
                   sidePanelBuilder: (_) => AnimatedBuilder(
                     animation: musicCoordinator,
-                    builder: (context, _) {
+                    child: NowPlayingPanel(
+                      coordinator: musicCoordinator,
+                      musicService: musicService,
+                      localDeviceId: session.deviceId,
+                      onClose: () => musicCoordinator.toggleNowPlaying(false),
+                      onOpenDevices: () => unawaited(
+                        _openDevicePicker(
+                          navContext,
+                          musicService,
+                          musicCoordinator,
+                          session,
+                        ),
+                      ),
+                      onNavigate: _openMusicRoute,
+                    ),
+                    builder: (context, child) {
                       if (!musicCoordinator.nowPlayingOpen ||
                           musicCoordinator.currentSong == null) {
                         return const SizedBox.shrink();
                       }
-                      return NowPlayingPanel(
-                        coordinator: musicCoordinator,
-                        musicService: musicService,
-                        localDeviceId: session.deviceId,
-                        onClose: () => musicCoordinator.toggleNowPlaying(false),
-                        onOpenDevices: () => unawaited(
-                          _openDevicePicker(
-                            navContext,
-                            musicService,
-                            musicCoordinator,
-                            session,
-                          ),
-                        ),
-                        onNavigate: _openMusicRoute,
-                      );
+                      return child!;
                     },
                   ),
                   floatingOverlayBuilder: (_) {
@@ -1143,16 +1220,46 @@ class _HermesAppState extends State<HermesApp> {
                           bottom: 92,
                           child: AnimatedBuilder(
                             animation: musicCoordinator,
-                            builder: (context, _) => DevicePickerSheet(
-                              devices: _connectDevices,
-                              activeRendererDeviceId: musicCoordinator
-                                  .session?.activeRendererDeviceId,
-                              localDeviceId: session.deviceId,
-                              onSelectDevice: (id) {
-                                setState(() => _connectPopoverOpen = false);
-                                unawaited(musicCoordinator.transferOutputTo(id));
-                              },
-                            ),
+                            builder: (context, _) {
+                              final activeId = musicCoordinator
+                                  .session?.activeRendererDeviceId;
+                              final activeName = _connectDevices
+                                  .where((d) => d.deviceId == activeId)
+                                  .firstOrNull
+                                  ?.deviceName;
+                              return DevicePickerSheet(
+                                devices: _connectDevices,
+                                activeRendererDeviceId: activeId,
+                                localDeviceId: session.deviceId,
+                                volume: musicCoordinator.effectiveVolume,
+                                volumeTargetLabel:
+                                    musicCoordinator.isControllingRemoteDevice
+                                        ? (activeName != null
+                                            ? 'Volume · $activeName'
+                                            : 'Remote device volume')
+                                        : 'Volume · This device',
+                                onVolumeChanged: (v) => unawaited(
+                                  musicCoordinator.setVolume(
+                                    v,
+                                    immediate: false,
+                                  ),
+                                ),
+                                onVolumeChangeEnd: (v) => unawaited(
+                                  musicCoordinator.setVolume(
+                                    v,
+                                    immediate: true,
+                                  ),
+                                ),
+                                onToggleMute: () =>
+                                    unawaited(musicCoordinator.toggleMute()),
+                                onSelectDevice: (id) {
+                                  setState(() => _connectPopoverOpen = false);
+                                  unawaited(
+                                    musicCoordinator.transferOutputTo(id),
+                                  );
+                                },
+                              );
+                            },
                           ),
                         ),
                       ],
@@ -1160,9 +1267,20 @@ class _HermesAppState extends State<HermesApp> {
                   },
                   miniPlayerBuilder: (ctx) => AnimatedBuilder(
                     animation: musicCoordinator,
-                    builder: (context, _) => MiniPlayerBar(
-                      session: musicCoordinator.session,
-                      currentSong: musicCoordinator.currentSong,
+                    builder: (context, _) {
+                      final activeId =
+                          musicCoordinator.session?.activeRendererDeviceId;
+                      final remoteDeviceName =
+                          musicCoordinator.isControllingRemoteDevice
+                              ? (_connectDevices
+                                      .where((d) => d.deviceId == activeId)
+                                      .firstOrNull
+                                      ?.deviceName ??
+                                  'Remote device')
+                              : null;
+                      return MiniPlayerBar(
+                        session: musicCoordinator.session,
+                        currentSong: musicCoordinator.currentSong,
                       localDeviceId: session.deviceId,
                       artworkUri: musicService.buildArtworkUri(
                         musicCoordinator.currentSong?.artworkHash,
@@ -1181,8 +1299,14 @@ class _HermesAppState extends State<HermesApp> {
                           unawaited(musicCoordinator.cycleRepeatMode()),
                       onSeekMs: (ms) =>
                           unawaited(musicCoordinator.seekTo(ms)),
-                      onVolumeChanged: (v) =>
-                          unawaited(musicCoordinator.setVolume(v)),
+                      volumeOverride: musicCoordinator.effectiveVolume,
+                      remoteDeviceName: remoteDeviceName,
+                      onVolumeChanged: (v) => unawaited(
+                        musicCoordinator.setVolume(v, immediate: false),
+                      ),
+                      onVolumeChangeEnd: (v) => unawaited(
+                        musicCoordinator.setVolume(v, immediate: true),
+                      ),
                       onToggleMute: () =>
                           unawaited(musicCoordinator.toggleMute()),
                       onToggleLike: () {
@@ -1225,8 +1349,9 @@ class _HermesAppState extends State<HermesApp> {
                           session,
                         ),
                       ),
-                    ),
-                  ),
+                    );
+                  },
+                ),
                 );
               },
             ),

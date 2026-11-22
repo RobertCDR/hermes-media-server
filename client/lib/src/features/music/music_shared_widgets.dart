@@ -686,7 +686,6 @@ Widget _buildMusicTrackRowWidget({
     },
     onGoToAlbum: () => onNavigate(MusicPageRoute.album(song.albumId)),
     onGoToArtist: () => onNavigate(MusicPageRoute.artist(song.artistId)),
-    onGoToArtistId: (artistId) => onNavigate(MusicPageRoute.artist(artistId)),
     onAddToPlaylist: onAddToPlaylist,
     onRemoveFromPlaylist: onRemoveFromPlaylist,
   );
@@ -940,7 +939,6 @@ class _TrackTableRow extends StatefulWidget {
     required this.onPlayNext,
     required this.onGoToAlbum,
     required this.onGoToArtist,
-    this.onGoToArtistId,
     this.playlistIdForRemoval,
     this.onAddToPlaylist,
     this.onRemoveFromPlaylist,
@@ -962,7 +960,6 @@ class _TrackTableRow extends StatefulWidget {
   final VoidCallback onPlayNext;
   final VoidCallback onGoToAlbum;
   final VoidCallback onGoToArtist;
-  final ValueChanged<String>? onGoToArtistId;
   final String? playlistIdForRemoval;
   final Future<void> Function(String playlistId, SongModel song)? onAddToPlaylist;
   final Future<void> Function(String playlistId, int position)? onRemoveFromPlaylist;
@@ -1014,9 +1011,8 @@ class _TrackTableRowState extends State<_TrackTableRow> {
       globalPosition,
       _menuItems(includePlayNow: true),
     );
-    if (chosen != null) {
-      await _handleMenuSelection(chosen);
-    }
+    if (!mounted || chosen == null) return;
+    await _handleMenuSelection(chosen);
   }
 
   @override
@@ -1099,8 +1095,6 @@ class _TrackTableRowState extends State<_TrackTableRow> {
                           ArtistCreditLine(
                             song: song,
                             style: TextStyle(fontSize: 12, color: tokens.text2),
-                            onTapArtist: widget.onGoToArtistId ??
-                                (_) => widget.onGoToArtist(),
                           ),
                         ],
                       ),

@@ -50,19 +50,24 @@ class AuthenticatedHttpClient extends http.BaseClient {
     await initialResponse.stream.drain<void>();
 
     String? refreshedToken;
+    var transientRefreshFailure = false;
     try {
       refreshedToken = await refreshAccessToken();
     } catch (_) {
       refreshedToken = null;
+      transientRefreshFailure = true;
     }
 
     if (refreshedToken == null || refreshedToken.isEmpty) {
-      await onSessionExpired?.call();
+      if (!transientRefreshFailure) {
+        await onSessionExpired?.call();
+      }
       return http.StreamedResponse(
         const Stream<List<int>>.empty(),
-        401,
+        transientRefreshFailure ? 503 : 401,
         request: request,
-        reasonPhrase: 'Unauthorized',
+        reasonPhrase:
+            transientRefreshFailure ? 'Service Unavailable' : 'Unauthorized',
       );
     }
 

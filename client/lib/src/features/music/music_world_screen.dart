@@ -72,6 +72,7 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
   String? _lastActiveSongId;
   bool _lastIsPlaying = false;
   bool _lastShuffle = false;
+  int _lastCatalogVersion = 0;
 
   SearchHistoryStore get _searchHistoryStore =>
       widget.searchHistoryStore ?? SharedPrefsSearchHistoryStore();
@@ -87,6 +88,7 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
     _lastIsPlaying =
         widget.coordinator.session?.state == PlaybackState.playing;
     _lastShuffle = widget.coordinator.session?.shuffle ?? false;
+    _lastCatalogVersion = widget.coordinator.catalogVersion;
     if (widget.musicService.hasCachedCatalog) {
       _songs = List<SongModel>.from(widget.musicService.cachedSongs!);
       _albums =
@@ -99,7 +101,7 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
       _historyEntries = List<ListeningHistoryItemModel>.from(
         widget.musicService.cachedHistory ?? const [],
       );
-      widget.coordinator.indexSongs(_songs);
+      widget.coordinator.indexSongs(_songs, notify: false);
       _loading = false;
     }
     widget.coordinator.addListener(_onCoordinatorChanged);
@@ -108,6 +110,11 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
     if (pending != null && pending != _currentRoute) {
       _history.add(pending);
       _historyIdx = _history.length - 1;
+      if (pending.kind == MusicPageKind.playlist &&
+          pending.targetId != null &&
+          pending.targetId!.isNotEmpty) {
+        unawaited(_ensurePlaylistLoaded(pending.targetId!));
+      }
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
@@ -302,16 +309,20 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
     final isPlaying =
         widget.coordinator.session?.state == PlaybackState.playing;
     final shuffle = widget.coordinator.session?.shuffle ?? false;
+    final catalogVersion = widget.coordinator.catalogVersion;
     var songsChanged = activeId != _lastActiveSongId ||
         isPlaying != _lastIsPlaying ||
         shuffle != _lastShuffle;
 
-    for (var i = 0; i < _songs.length; i++) {
-      final updated = widget.coordinator.songById(_songs[i].id);
-      if (updated != null && updated.isLiked != _songs[i].isLiked) {
-        _songs[i] = updated;
-        songsChanged = true;
+    if (catalogVersion != _lastCatalogVersion) {
+      for (var i = 0; i < _songs.length; i++) {
+        final updated = widget.coordinator.songById(_songs[i].id);
+        if (updated != null && updated.isLiked != _songs[i].isLiked) {
+          _songs[i] = updated;
+          songsChanged = true;
+        }
       }
+      _lastCatalogVersion = catalogVersion;
     }
 
     _lastActiveSongId = activeId;

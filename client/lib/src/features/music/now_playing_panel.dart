@@ -828,6 +828,7 @@ class _MobileNowPlayingPageState extends State<MobileNowPlayingPage> {
   final List<_MobilePlayerView> _viewStack = [_MobilePlayerView.player];
   _MobilePlayerView get _view => _viewStack.last;
   int? _dragPositionMs;
+  double? _volumeDrag;
   String? _loadedSongId;
   SongLyricsModel? _lyrics;
   bool _loadingLyrics = false;
@@ -1065,6 +1066,13 @@ class _MobileNowPlayingPageState extends State<MobileNowPlayingPage> {
                           ),
                       },
               ),
+              if (song != null && widget.coordinator.isControllingRemoteDevice)
+                _buildMobileRemoteVolumeBar(
+                  context,
+                  accentColor: tokens.accent,
+                  textColor: tokens.text,
+                  mutedColor: tokens.text2,
+                ),
               if (song != null) _buildMobileUtilityBar(context, tokens, session),
             ],
           ),
@@ -1490,18 +1498,14 @@ class _MobileNowPlayingPageState extends State<MobileNowPlayingPage> {
                                 ),
                               ),
                               const SizedBox(height: 3),
-                              InkWell(
-                                onTap: song.artistId.isNotEmpty
-                                    ? () => widget.onNavigate(
-                                          MusicPageRoute.artist(song.artistId),
-                                        )
-                                    : null,
-                                child: HermesMarqueeText(
-                                  song.artistName,
-                                  style: TextStyle(
-                                    fontSize: 15,
-                                    color: tokens.text2,
-                                  ),
+                              ArtistCreditLine(
+                                song: song,
+                                style: TextStyle(
+                                  fontSize: 15,
+                                  color: tokens.text2,
+                                ),
+                                onTapArtist: (artistId) => widget.onNavigate(
+                                  MusicPageRoute.artist(artistId),
                                 ),
                               ),
                             ],
@@ -1873,6 +1877,102 @@ class _MobileNowPlayingPageState extends State<MobileNowPlayingPage> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildMobileRemoteVolumeBar(
+    BuildContext context, {
+    required Color accentColor,
+    required Color textColor,
+    required Color mutedColor,
+  }) {
+    final effective =
+        (_volumeDrag ?? widget.coordinator.effectiveVolume).clamp(0.0, 1.0);
+    return Padding(
+      key: const Key('mobile-player-remote-volume-bar'),
+      padding: const EdgeInsets.fromLTRB(16, 2, 16, 4),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(
+          color: accentColor.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: accentColor.withValues(alpha: 0.28),
+          ),
+        ),
+        child: Row(
+          children: [
+            IconButton(
+              tooltip: effective == 0
+                  ? 'Unmute remote device'
+                  : 'Mute remote device',
+              visualDensity: VisualDensity.compact,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              padding: EdgeInsets.zero,
+              onPressed: () => unawaited(widget.coordinator.toggleMute()),
+              icon: Icon(
+                effective == 0
+                    ? Icons.volume_off_rounded
+                    : effective < 0.5
+                        ? Icons.volume_down_rounded
+                        : Icons.volume_up_rounded,
+                size: 19,
+                color: accentColor,
+              ),
+            ),
+            const SizedBox(width: 4),
+            Text(
+              'Remote',
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+                color: accentColor,
+              ),
+            ),
+            Expanded(
+              child: SliderTheme(
+                data: SliderTheme.of(context).copyWith(
+                  trackHeight: 3.5,
+                  activeTrackColor: accentColor,
+                  inactiveTrackColor: textColor.withValues(alpha: 0.18),
+                  thumbColor: accentColor,
+                  thumbShape: const RoundSliderThumbShape(
+                    enabledThumbRadius: 6,
+                  ),
+                  overlayShape: const RoundSliderOverlayShape(
+                    overlayRadius: 11,
+                  ),
+                ),
+                child: Slider(
+                  value: effective,
+                  min: 0.0,
+                  max: 1.0,
+                  onChanged: (v) {
+                    setState(() => _volumeDrag = v);
+                    unawaited(
+                      widget.coordinator.setVolume(v, immediate: false),
+                    );
+                  },
+                  onChangeEnd: (v) {
+                    setState(() => _volumeDrag = null);
+                    unawaited(
+                      widget.coordinator.setVolume(v, immediate: true),
+                    );
+                  },
+                ),
+              ),
+            ),
+            Text(
+              '${(effective * 100).round()}%',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: mutedColor,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

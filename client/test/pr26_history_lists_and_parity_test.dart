@@ -16,6 +16,7 @@ import 'package:hermes_client/src/features/music/music_models.dart';
 import 'package:hermes_client/src/features/music/music_playback_coordinator.dart';
 import 'package:hermes_client/src/features/music/music_service.dart';
 import 'package:hermes_client/src/features/music/music_world_screen.dart';
+import 'package:hermes_client/src/features/music/now_playing_panel.dart';
 import 'package:hermes_client/src/features/music/platform_media_bridge.dart';
 import 'package:hermes_client/src/features/settings/player_and_theme_settings_screen.dart';
 import 'package:hermes_client/src/features/shell/dual_world_shell.dart';
@@ -589,13 +590,40 @@ void main() {
       expect(find.text('Listening history'), findsOneWidget);
       expect(find.text('Get Lucky'), findsOneWidget);
 
-      // Click collaborator credit "Pharrell Williams" -> navigates to Pharrell's Artist page.
+      // Tapping artist text inside a song row plays the song and does NOT leave History.
       await tester.tap(find.text('Pharrell Williams').first);
       await tester.pumpAndSettle();
 
-      expect(find.byType(MusicArtistPage), findsOneWidget);
-      expect(find.text('Pharrell Williams'), findsWidgets);
-      expect(find.text('Get Lucky'), findsOneWidget);
+      expect(find.byType(MusicArtistPage), findsNothing);
+      expect(find.text('Listening history'), findsOneWidget);
+      expect(coordinator.currentSong?.id, 's-collab');
+
+      // Collaborator credits inside the player remain clickable for artist navigation.
+      MusicPageRoute? navigatedRoute;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: HermesThemeTokens.resolve().toThemeData(),
+          home: Scaffold(
+            body: SizedBox(
+              width: 520,
+              height: 760,
+              child: NowPlayingPanel(
+                coordinator: coordinator,
+                musicService: service,
+                localDeviceId: 'dev-win',
+                onClose: () {},
+                onOpenDevices: () {},
+                onNavigate: (route) => navigatedRoute = route,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Pharrell Williams').first);
+      await tester.pump();
+      expect(navigatedRoute, const MusicPageRoute.artist('art-pharrell'));
       expect(tester.takeException(), isNull);
     });
   });

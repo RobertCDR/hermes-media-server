@@ -40,6 +40,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   int _maxAudioTranscodes = 4;
   int? _maxRemoteBitrateBps;
   bool _savingSettings = false;
+  bool _settingsDirty = false;
+  bool _refreshInFlight = false;
   final Set<String> _localScanningLibs = {};
   Timer? _scanPollTimer;
   bool _loading = true;
@@ -67,6 +69,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   }
 
   Future<void> _refresh({bool showSpinner = true}) async {
+    if (!showSpinner && _refreshInFlight) return;
+    _refreshInFlight = true;
     if (showSpinner) {
       setState(() {
         _loading = true;
@@ -74,21 +78,37 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       });
     }
     try {
-      final libraries = await widget.adminService.listLibraries();
-      final invites = await widget.adminService.listInvites();
-      final users = await widget.adminService.listUsers();
-      final sessions = await _safeOptional(
+      final librariesFuture = widget.adminService.listLibraries();
+      final invitesFuture = widget.adminService.listInvites();
+      final usersFuture = widget.adminService.listUsers();
+      final sessionsFuture = _safeOptional(
         widget.adminService.listActiveSessions,
         const <ActiveStreamSessionModel>[],
       );
-      final unmatched = await _safeOptional(
+      final unmatchedFuture = _safeOptional(
         widget.adminService.listUnmatchedMedia,
         const <UnmatchedMediaModel>[],
       );
-      final settings = await _safeOptional<ServerSettingsModel?>(
+      final settingsFuture = _safeOptional<ServerSettingsModel?>(
         widget.adminService.getServerSettings,
         null,
       );
+
+      await Future.wait<void>([
+        librariesFuture,
+        invitesFuture,
+        usersFuture,
+        sessionsFuture,
+        unmatchedFuture,
+        settingsFuture,
+      ]);
+
+      final libraries = await librariesFuture;
+      final invites = await invitesFuture;
+      final users = await usersFuture;
+      final sessions = await sessionsFuture;
+      final unmatched = await unmatchedFuture;
+      final settings = await settingsFuture;
 
       if (!mounted) return;
       setState(() {
@@ -97,7 +117,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         _users = users;
         _sessions = sessions;
         _unmatched = unmatched;
-        if (settings != null) {
+        if (settings != null && (showSpinner || !_settingsDirty)) {
           _serverSettings = settings;
           _serverNameController.text = settings.serverName;
           _transcodingEnabled = settings.transcodingEnabled;
@@ -105,6 +125,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           _maxVideoTranscodes = settings.maxConcurrentVideoTranscodes;
           _maxAudioTranscodes = settings.maxConcurrentAudioTranscodes;
           _maxRemoteBitrateBps = settings.maxRemoteVideoBitrateBps;
+          _settingsDirty = false;
         }
         _loading = false;
         _loadError = null;
@@ -117,6 +138,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         _loadError = e.toString();
         _loading = false;
       });
+    } finally {
+      _refreshInFlight = false;
     }
   }
 
@@ -279,6 +302,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         _maxAudioTranscodes = updated.maxConcurrentAudioTranscodes;
         _maxRemoteBitrateBps = updated.maxRemoteVideoBitrateBps;
         _savingSettings = false;
+        _settingsDirty = false;
       });
       widget.onServerNameChanged?.call(updated.serverName);
       _showToast('Saved server settings.');
@@ -1275,7 +1299,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                         ),
                         Switch(
                           value: _transcodingEnabled,
-                          onChanged: (v) => setState(() => _transcodingEnabled = v),
+                          onChanged: (v) => setState(() {
+                            _transcodingEnabled = v;
+                            _settingsDirty = true;
+                          }),
                         ),
                       ],
                     ),
@@ -1285,7 +1312,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                       value: _maxVideoTranscodes,
                       min: 0,
                       max: 16,
-                      onChanged: (v) => setState(() => _maxVideoTranscodes = v),
+                      onChanged: (v) => setState(() {
+                        _maxVideoTranscodes = v;
+                        _settingsDirty = true;
+                      }),
                     ),
                     const SizedBox(height: 8),
                     _SlotStepperRow(
@@ -1293,7 +1323,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                       value: _maxAudioTranscodes,
                       min: 0,
                       max: 16,
-                      onChanged: (v) => setState(() => _maxAudioTranscodes = v),
+                      onChanged: (v) => setState(() {
+                        _maxAudioTranscodes = v;
+                        _settingsDirty = true;
+                      }),
                     ),
                   ],
                 ),
@@ -1333,6 +1366,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         const SizedBox(height: 6),
         TextField(
           controller: _serverNameController,
+          onChanged: (_) => _settingsDirty = true,
           style: TextStyle(fontSize: 14, color: tokens.text),
           decoration: InputDecoration(
             hintText: 'Hermes Media Server',
@@ -1366,6 +1400,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         ),
         const SizedBox(height: 6),
         DropdownButtonFormField<HardwareAccelerationMode>(
+          key: ValueKey(_hwAccelMode),
           initialValue: _hwAccelMode,
           isExpanded: true,
           dropdownColor: tokens.surface3,
@@ -1391,7 +1426,12 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               ),
           ],
           onChanged: (v) {
-            if (v != null) setState(() => _hwAccelMode = v);
+            if (v != null) {
+              setState(() {
+                _hwAccelMode = v;
+                _settingsDirty = true;
+              });
+            }
           },
         ),
       ],
@@ -1417,6 +1457,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         ),
         const SizedBox(height: 6),
         DropdownButtonFormField<int?>(
+          key: ValueKey(_maxRemoteBitrateBps),
           initialValue: currentBitrate,
           isExpanded: true,
           dropdownColor: tokens.surface3,
@@ -1441,7 +1482,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 ),
               ),
           ],
-          onChanged: (v) => setState(() => _maxRemoteBitrateBps = v),
+          onChanged: (v) => setState(() {
+            _maxRemoteBitrateBps = v;
+            _settingsDirty = true;
+          }),
         ),
       ],
     );

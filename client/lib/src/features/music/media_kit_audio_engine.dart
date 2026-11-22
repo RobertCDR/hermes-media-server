@@ -11,7 +11,8 @@ import 'music_playback_coordinator.dart';
 /// Configures headless audio output (`vo: 'null'`) and lazily instantiates
 /// [Player] only when native audio playback begins so headless tests and
 /// remote-control mode allocate zero decoder threads until needed.
-class MediaKitAudioEngineAdapter implements ControllableAudioEngine {
+class MediaKitAudioEngineAdapter
+    implements ControllableAudioEngine, PrewarmableAudioEngine {
   MediaKitAudioEngineAdapter({
     Player Function()? playerFactory,
   }) : _playerFactory = playerFactory ??
@@ -40,7 +41,7 @@ class MediaKitAudioEngineAdapter implements ControllableAudioEngine {
 
   double _volume01 = 1.0;
   bool _normalizeVolume = false;
-  bool _suppressCompletion = false;
+  int _suppressCompletionDepth = 0;
   bool _lastCompletedState = false;
   bool _disposed = false;
 
@@ -51,6 +52,18 @@ class MediaKitAudioEngineAdapter implements ControllableAudioEngine {
   Stream<void> get trackCompletedStream => _completedController.stream;
 
   Stream<String> get errorStream => _errorController.stream;
+
+  /// Pre-initializes the underlying mpv audio player before a Connect transfer
+  /// so handoff starts playing without cold-start player allocation latency.
+  @override
+  Future<void> warmUp() async {
+    if (_disposed || _player != null) return;
+    try {
+      await _ensurePlayer();
+    } catch (_) {
+      // Non-fatal pre-warm failure falls back to lazy creation on play.
+    }
+  }
 
   Future<Player> _ensurePlayer() async {
     final existing = _player;
@@ -72,7 +85,7 @@ class MediaKitAudioEngineAdapter implements ControllableAudioEngine {
       final roseToCompleted = completed && !_lastCompletedState;
       _lastCompletedState = completed;
       if (roseToCompleted &&
-          !_suppressCompletion &&
+          _suppressCompletionDepth == 0 &&
           !_completedController.isClosed) {
         _completedController.add(null);
       }
@@ -86,9 +99,31 @@ class MediaKitAudioEngineAdapter implements ControllableAudioEngine {
       }
     });
 
+    await _configureLowLatencyAudioProperties(player);
+    if (_disposed) return player;
     await player.setVolume((_volume01 * 100.0).clamp(0.0, 100.0));
+    if (_disposed) return player;
     await _applyNormalizationFilter(player, _normalizeVolume);
     return player;
+  }
+
+  Future<void> _configureLowLatencyAudioProperties(Player player) async {
+    if (player.platform case final NativePlayer nativePlatform) {
+      const props = <String, String>{
+        'demuxer-max-bytes': '8MiB',
+        'demuxer-max-back-bytes': '2MiB',
+        'cache-secs': '10',
+        'audio-wait-open': '0',
+        'network-timeout': '15',
+      };
+      for (final entry in props.entries) {
+        try {
+          await nativePlatform.setProperty(entry.key, entry.value);
+        } catch (_) {
+          // Ignore on headless/stub implementations without mpv backend support.
+        }
+      }
+    }
   }
 
   Future<void> _applyNormalizationFilter(Player player, bool enabled) async {
@@ -111,10 +146,13 @@ class MediaKitAudioEngineAdapter implements ControllableAudioEngine {
     int startPositionMs,
   ) async {
     if (_disposed) return;
-    _suppressCompletion = true;
+    _suppressCompletionDepth++;
     _lastCompletedState = false;
     try {
       final player = await _ensurePlayer();
+      if (_disposed) return;
+      await player.setVolume((_volume01 * 100.0).clamp(0.0, 100.0));
+      if (_disposed) return;
       await player.open(
         Media(
           streamUri.toString(),
@@ -124,9 +162,12 @@ class MediaKitAudioEngineAdapter implements ControllableAudioEngine {
         ),
         play: true,
       );
+      if (_disposed) return;
       await player.setVolume((_volume01 * 100.0).clamp(0.0, 100.0));
     } finally {
-      _suppressCompletion = false;
+      if (_suppressCompletionDepth > 0) {
+        _suppressCompletionDepth--;
+      }
     }
   }
 
@@ -147,11 +188,13 @@ class MediaKitAudioEngineAdapter implements ControllableAudioEngine {
     if (_disposed) return;
     final player = _player;
     if (player == null) return;
-    _suppressCompletion = true;
+    _suppressCompletionDepth++;
     try {
       await player.stop();
     } finally {
-      _suppressCompletion = false;
+      if (_suppressCompletionDepth > 0) {
+        _suppressCompletionDepth--;
+      }
     }
   }
 
