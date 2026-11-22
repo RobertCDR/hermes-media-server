@@ -210,8 +210,17 @@ public sealed class LibraryWatcherService : BackgroundService
             _pendingDebounces[libraryRootId] = next;
         }
 
-        previous?.Cancel();
-        previous?.Dispose();
+        if (previous is not null)
+        {
+            try
+            {
+                previous.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // Debounce task already exited and disposed this token source.
+            }
+        }
 
         _ = DebounceAndEnqueueAsync(libraryRootId, next);
     }
@@ -264,6 +273,10 @@ public sealed class LibraryWatcherService : BackgroundService
         {
             // Superseded by newer event or shutting down.
         }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to enqueue debounced library scan for {LibraryRootId}.", libraryRootId);
+        }
         finally
         {
             lock (_gate)
@@ -299,9 +312,8 @@ public sealed class LibraryWatcherService : BackgroundService
             }
             catch
             {
-                // Best-effort cancellation during shutdown.
+                // Best-effort cancellation during shutdown; DebounceAndEnqueueAsync owns disposal.
             }
-            cts.Dispose();
         }
 
         foreach (var watcher in watchers)

@@ -1,7 +1,11 @@
+using Hermes.Api.Features.Music;
+using Hermes.Api.Hubs;
 using Hermes.Domain.Entities;
 using Hermes.Domain.Enums;
+using Hermes.Domain.Ports;
 using Hermes.Infrastructure.Media;
 using Hermes.Infrastructure.Persistence;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 
 namespace Hermes.Api.Features.Admin;
@@ -114,130 +118,175 @@ public static class LibraryAdminEndpoints
     private static async Task<IResult> DeleteLibraryRootAsync(
         Guid id,
         HermesDbContext db,
+        LibraryScanProgressTracker scanProgress,
         LibraryWatcherService watcherService,
+        ITranscodeSessionManager transcodeManager,
+        PlaybackSessionLockProvider lockProvider,
+        IHubContext<PlaybackSyncHub> hubContext,
         TimeProvider timeProvider,
         CancellationToken cancellationToken)
     {
+        using var scanLock = await scanProgress.AcquireScanLockAsync(id, cancellationToken);
+
         var root = await db.MediaLibraryRoots.SingleOrDefaultAsync(r => r.Id == id, cancellationToken);
         if (root is null)
         {
             return Results.NotFound(new { error = "library_root_not_found" });
         }
 
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        var mediaSourcesToStop = new List<Guid>();
+        var updatedSessionDtos = new List<PlaybackSessionDto>();
+        var acquiredUserLocks = new List<SemaphoreSlim>();
 
-        switch (root.MediaType)
+        try
         {
-            case LibraryMediaType.Movies:
-            {
-                var movieIds = await db.Movies
-                    .Where(m => m.LibraryRootId == id)
-                    .Select(m => m.Id)
-                    .ToListAsync(cancellationToken);
+            await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
 
-                if (movieIds.Count > 0)
+            switch (root.MediaType)
+            {
+                case LibraryMediaType.Movies:
                 {
-                    await db.WatchProgresses
-                        .Where(w => w.MovieId != null && movieIds.Contains(w.MovieId.Value))
-                        .ExecuteDeleteAsync(cancellationToken);
-                    await db.WatchlistItems
-                        .Where(w => w.MovieId != null && movieIds.Contains(w.MovieId.Value))
-                        .ExecuteDeleteAsync(cancellationToken);
-                    await db.Movies
+                    var movieIds = await db.Movies
                         .Where(m => m.LibraryRootId == id)
-                        .ExecuteDeleteAsync(cancellationToken);
-                }
-                break;
-            }
-            case LibraryMediaType.Series:
-            {
-                var seriesIds = await db.TvSeries
-                    .Where(s => s.LibraryRootId == id)
-                    .Select(s => s.Id)
-                    .ToListAsync(cancellationToken);
-
-                if (seriesIds.Count > 0)
-                {
-                    var episodeIds = await db.Episodes
-                        .Where(e => seriesIds.Contains(e.TvSeason.TvSeriesId))
-                        .Select(e => e.Id)
+                        .Select(m => m.Id)
                         .ToListAsync(cancellationToken);
 
-                    if (episodeIds.Count > 0)
+                    if (movieIds.Count > 0)
                     {
+                        mediaSourcesToStop.AddRange(await db.MediaSources
+                            .Where(s => s.MovieId != null && movieIds.Contains(s.MovieId.Value))
+                            .Select(s => s.Id)
+                            .ToListAsync(cancellationToken));
+
                         await db.WatchProgresses
-                            .Where(w => w.EpisodeId != null && episodeIds.Contains(w.EpisodeId.Value))
+                            .Where(w => w.MovieId != null && movieIds.Contains(w.MovieId.Value))
+                            .ExecuteDeleteAsync(cancellationToken);
+                        await db.WatchlistItems
+                            .Where(w => w.MovieId != null && movieIds.Contains(w.MovieId.Value))
+                            .ExecuteDeleteAsync(cancellationToken);
+                        await db.Movies
+                            .Where(m => m.LibraryRootId == id)
                             .ExecuteDeleteAsync(cancellationToken);
                     }
-
-                    await db.WatchlistItems
-                        .Where(w => w.TvSeriesId != null && seriesIds.Contains(w.TvSeriesId.Value))
-                        .ExecuteDeleteAsync(cancellationToken);
-                    await db.TvSeries
-                        .Where(s => s.LibraryRootId == id)
-                        .ExecuteDeleteAsync(cancellationToken);
+                    break;
                 }
-                break;
-            }
-            case LibraryMediaType.Music:
-            {
-                var songIds = await db.Songs
-                    .Where(s => s.LibraryRootId == id)
-                    .Select(s => s.Id)
-                    .ToListAsync(cancellationToken);
-
-                if (songIds.Count > 0)
+                case LibraryMediaType.Series:
                 {
-                    var removedSongSet = songIds.ToHashSet();
-                    var activeSessions = await db.PlaybackSessions.ToListAsync(cancellationToken);
-                    var utcNow = timeProvider.GetUtcNow();
-                    foreach (var session in activeSessions)
+                    var seriesIds = await db.TvSeries
+                        .Where(s => s.LibraryRootId == id)
+                        .Select(s => s.Id)
+                        .ToListAsync(cancellationToken);
+
+                    if (seriesIds.Count > 0)
                     {
-                        if (!session.QueueSongIds.Any(removedSongSet.Contains))
+                        var episodeIds = await db.Episodes
+                            .Where(e => seriesIds.Contains(e.TvSeason.TvSeriesId))
+                            .Select(e => e.Id)
+                            .ToListAsync(cancellationToken);
+
+                        if (episodeIds.Count > 0)
                         {
-                            continue;
+                            mediaSourcesToStop.AddRange(await db.MediaSources
+                                .Where(s => s.EpisodeId != null && episodeIds.Contains(s.EpisodeId.Value))
+                                .Select(s => s.Id)
+                                .ToListAsync(cancellationToken));
+
+                            await db.WatchProgresses
+                                .Where(w => w.EpisodeId != null && episodeIds.Contains(w.EpisodeId.Value))
+                                .ExecuteDeleteAsync(cancellationToken);
                         }
 
-                        var remainingQueue = session.QueueSongIds
-                            .Where(q => !removedSongSet.Contains(q))
-                            .ToArray();
-                        session.StartPlayback(
-                            session.ActiveRendererDeviceId ?? "server",
-                            session.ActiveRendererDeviceName ?? "Server",
-                            remainingQueue,
-                            0,
-                            utcNow);
+                        await db.WatchlistItems
+                            .Where(w => w.TvSeriesId != null && seriesIds.Contains(w.TvSeriesId.Value))
+                            .ExecuteDeleteAsync(cancellationToken);
+                        await db.TvSeries
+                            .Where(s => s.LibraryRootId == id)
+                            .ExecuteDeleteAsync(cancellationToken);
                     }
-
-                    await db.SaveChangesAsync(cancellationToken);
-
-                    await db.LikedSongs
-                        .Where(l => songIds.Contains(l.SongId))
-                        .ExecuteDeleteAsync(cancellationToken);
-                    await db.PlaylistTracks
-                        .Where(t => songIds.Contains(t.SongId))
-                        .ExecuteDeleteAsync(cancellationToken);
-                    await db.Songs
-                        .Where(s => s.LibraryRootId == id)
-                        .ExecuteDeleteAsync(cancellationToken);
-                    await db.Albums
-                        .Where(a => !db.Songs.Any(s => s.AlbumId == a.Id))
-                        .ExecuteDeleteAsync(cancellationToken);
-                    await db.Artists
-                        .Where(a => !db.Songs.Any(s => s.ArtistId == a.Id) &&
-                                    !db.Albums.Any(al => al.ArtistId == a.Id) &&
-                                    !db.SongArtists.Any(sa => sa.ArtistId == a.Id))
-                        .ExecuteDeleteAsync(cancellationToken);
+                    break;
                 }
-                break;
+                case LibraryMediaType.Music:
+                {
+                    var songIds = await db.Songs
+                        .Where(s => s.LibraryRootId == id)
+                        .Select(s => s.Id)
+                        .ToListAsync(cancellationToken);
+
+                    if (songIds.Count > 0)
+                    {
+                        var removedSongSet = songIds.ToHashSet();
+                        var sessionUserIds = await db.PlaybackSessions
+                            .AsNoTracking()
+                            .OrderBy(p => p.UserId)
+                            .Select(p => p.UserId)
+                            .ToListAsync(cancellationToken);
+
+                        foreach (var userId in sessionUserIds)
+                        {
+                            var gate = lockProvider.GetLock(userId);
+                            await gate.WaitAsync(cancellationToken);
+                            acquiredUserLocks.Add(gate);
+                        }
+
+                        var activeSessions = await db.PlaybackSessions.ToListAsync(cancellationToken);
+                        var utcNow = timeProvider.GetUtcNow();
+                        foreach (var session in activeSessions)
+                        {
+                            if (session.RemoveSongsFromQueue(removedSongSet, utcNow))
+                            {
+                                updatedSessionDtos.Add(PlaybackConnectService.MapSession(session));
+                            }
+                        }
+
+                        await db.SaveChangesAsync(cancellationToken);
+
+                        await db.LikedSongs
+                            .Where(l => songIds.Contains(l.SongId))
+                            .ExecuteDeleteAsync(cancellationToken);
+                        await db.PlaylistTracks
+                            .Where(t => songIds.Contains(t.SongId))
+                            .ExecuteDeleteAsync(cancellationToken);
+                        await db.Songs
+                            .Where(s => s.LibraryRootId == id)
+                            .ExecuteDeleteAsync(cancellationToken);
+                        await db.Albums
+                            .Where(a => !db.Songs.Any(s => s.AlbumId == a.Id))
+                            .ExecuteDeleteAsync(cancellationToken);
+                        await db.Artists
+                            .Where(a => !db.Songs.Any(s => s.ArtistId == a.Id) &&
+                                        !db.Albums.Any(al => al.ArtistId == a.Id) &&
+                                        !db.SongArtists.Any(sa => sa.ArtistId == a.Id))
+                            .ExecuteDeleteAsync(cancellationToken);
+                    }
+                    break;
+                }
+            }
+
+            await db.MediaLibraryRoots
+                .Where(r => r.Id == id)
+                .ExecuteDeleteAsync(cancellationToken);
+
+            await transaction.CommitAsync(cancellationToken);
+        }
+        finally
+        {
+            for (var i = acquiredUserLocks.Count - 1; i >= 0; i--)
+            {
+                acquiredUserLocks[i].Release();
             }
         }
 
-        await db.MediaLibraryRoots
-            .Where(r => r.Id == id)
-            .ExecuteDeleteAsync(cancellationToken);
+        if (mediaSourcesToStop.Count > 0)
+        {
+            await transcodeManager.StopSessionsForMediaSourcesAsync(mediaSourcesToStop, cancellationToken);
+        }
 
-        await transaction.CommitAsync(cancellationToken);
+        foreach (var sessionDto in updatedSessionDtos)
+        {
+            await hubContext.Clients
+                .Group(PlaybackSyncHub.UserGroupName(sessionDto.UserId))
+                .SendAsync("SessionStateUpdated", sessionDto, cancellationToken);
+        }
 
         await watcherService.RefreshWatchersAsync(cancellationToken);
         return Results.NoContent();

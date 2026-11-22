@@ -166,7 +166,7 @@ public static class CustomListEndpoints
 
             if (!list.Items.Any(i => i.MovieId == movieId))
             {
-                var nextPos = list.Items.Count;
+                var nextPos = list.Items.Count == 0 ? 0 : list.Items.Max(i => i.Position) + 1;
                 var item = CustomListItem.ForMovie(list.Id, movieId, nextPos, utcNow);
                 db.CustomListItems.Add(item);
                 list.Touch(utcNow);
@@ -182,7 +182,7 @@ public static class CustomListEndpoints
 
             if (!list.Items.Any(i => i.TvSeriesId == seriesId))
             {
-                var nextPos = list.Items.Count;
+                var nextPos = list.Items.Count == 0 ? 0 : list.Items.Max(i => i.Position) + 1;
                 var item = CustomListItem.ForSeries(list.Id, seriesId, nextPos, utcNow);
                 db.CustomListItems.Add(item);
                 list.Touch(utcNow);

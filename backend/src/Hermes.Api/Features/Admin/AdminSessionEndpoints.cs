@@ -1,6 +1,9 @@
+using Hermes.Api.Features.Music;
+using Hermes.Api.Hubs;
 using Hermes.Domain.Enums;
 using Hermes.Domain.Ports;
 using Hermes.Infrastructure.Persistence;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 
 namespace Hermes.Api.Features.Admin;
@@ -133,6 +136,8 @@ public static class AdminSessionEndpoints
         string id,
         HermesDbContext db,
         ITranscodeSessionManager transcodeManager,
+        PlaybackSessionLockProvider lockProvider,
+        IHubContext<PlaybackSyncHub> hubContext,
         TimeProvider timeProvider,
         CancellationToken cancellationToken)
     {
@@ -146,18 +151,40 @@ public static class AdminSessionEndpoints
         if (id.StartsWith("music:", StringComparison.OrdinalIgnoreCase) &&
             Guid.TryParse(id.AsSpan("music:".Length), out var sessionId))
         {
-            var session = await db.PlaybackSessions.SingleOrDefaultAsync(p => p.Id == sessionId, cancellationToken);
-            if (session is null)
+            var ownerUserId = await db.PlaybackSessions
+                .AsNoTracking()
+                .Where(p => p.Id == sessionId)
+                .Select(p => (Guid?)p.UserId)
+                .SingleOrDefaultAsync(cancellationToken);
+            if (ownerUserId is null)
             {
                 return Results.NotFound(new { error = "session_not_found" });
             }
 
-            session.ApplyRemoteTransport(
-                PlaybackState.Stopped,
-                session.CurrentIndex,
-                0,
-                timeProvider.GetUtcNow());
-            await db.SaveChangesAsync(cancellationToken);
+            PlaybackSessionDto dto;
+            var gate = lockProvider.GetLock(ownerUserId.Value);
+            await gate.WaitAsync(cancellationToken);
+            try
+            {
+                var session = await db.PlaybackSessions.SingleOrDefaultAsync(p => p.Id == sessionId, cancellationToken);
+                if (session is null)
+                {
+                    return Results.NotFound(new { error = "session_not_found" });
+                }
+
+                session.ForceStop(timeProvider.GetUtcNow());
+                await db.SaveChangesAsync(cancellationToken);
+                dto = PlaybackConnectService.MapSession(session);
+            }
+            finally
+            {
+                gate.Release();
+            }
+
+            await hubContext.Clients
+                .Group(PlaybackSyncHub.UserGroupName(dto.UserId))
+                .SendAsync("SessionStateUpdated", dto, cancellationToken);
+
             return Results.NoContent();
         }
 

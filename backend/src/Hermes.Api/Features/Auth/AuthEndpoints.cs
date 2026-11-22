@@ -1,4 +1,7 @@
+using System.Data.Common;
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 using Hermes.Api.Features.System;
 using Hermes.Domain.Entities;
 using Hermes.Domain.Enums;
@@ -10,6 +13,7 @@ namespace Hermes.Api.Features.Auth;
 
 public static class AuthEndpoints
 {
+    internal const int MaxPasswordLength = 256;
     private static readonly TimeSpan RefreshTokenTtl = TimeSpan.FromDays(30);
     private static readonly TimeSpan StreamTicketTtl = TimeSpan.FromHours(6);
 
@@ -47,6 +51,11 @@ public static class AuthEndpoints
             return Results.BadRequest(new { error = "password_too_short" });
         }
 
+        if (request.Password.Length > MaxPasswordLength)
+        {
+            return Results.BadRequest(new { error = "password_too_long" });
+        }
+
         if (string.IsNullOrWhiteSpace(request.InviteCode))
         {
             return Results.BadRequest(new { error = "invalid_invite_code" });
@@ -54,23 +63,45 @@ public static class AuthEndpoints
 
         var normalizedUsername = request.Username.Trim();
         var lowerUsername = normalizedUsername.ToLowerInvariant();
+        if (normalizedUsername.Length > 64)
+        {
+            return Results.BadRequest(new { error = "invalid_username" });
+        }
+
+        var normalizedCode = request.InviteCode.Trim();
+        var utcNow = timeProvider.GetUtcNow();
+
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+
         if (await db.Users.AnyAsync(u => u.Username.ToLower() == lowerUsername, cancellationToken))
         {
             return Results.Conflict(new { error = "username_already_exists" });
         }
 
-        var normalizedCode = request.InviteCode.Trim();
-        var invite = await db.InviteCodes.SingleOrDefaultAsync(i => i.Code == normalizedCode, cancellationToken);
-        var utcNow = timeProvider.GetUtcNow();
-        if (invite is null || !invite.TryRedeem(utcNow))
+        var redeemedInvites = await db.InviteCodes
+            .Where(i => i.Code == normalizedCode && !i.IsRevoked && i.ExpiresAtUtc > utcNow && i.UsedCount < i.MaxUses)
+            .ExecuteUpdateAsync(
+                setters => setters.SetProperty(i => i.UsedCount, i => i.UsedCount + 1),
+                cancellationToken);
+        if (redeemedInvites == 0)
         {
             return Results.BadRequest(new { error = "invalid_or_expired_invite" });
         }
 
         var user = User.Create(normalizedUsername, passwordHasher.HashPassword(request.Password), UserRole.Member, utcNow);
         db.Users.Add(user);
-        await db.SaveChangesAsync(cancellationToken);
 
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException ex) when ((ex.InnerException as DbException)?.SqlState == "23505")
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return Results.Conflict(new { error = "username_already_exists" });
+        }
+
+        await transaction.CommitAsync(cancellationToken);
         return Results.Created($"/api/v1/admin/users/{user.Id}", new RegisterResponse(user.Id, user.Username));
     }
 
@@ -90,6 +121,11 @@ public static class AuthEndpoints
             return Results.BadRequest(new { error = "invalid_login_request" });
         }
 
+        if (request.Password.Length > MaxPasswordLength)
+        {
+            return Results.Unauthorized();
+        }
+
         var lowerUsername = request.Username.Trim().ToLowerInvariant();
         var user = await db.Users.SingleOrDefaultAsync(u => u.Username.ToLower() == lowerUsername, cancellationToken);
         if (user is null || !user.IsActive || !passwordHasher.VerifyPassword(request.Password, user.PasswordHash))
@@ -99,6 +135,7 @@ public static class AuthEndpoints
 
         var utcNow = timeProvider.GetUtcNow();
         var normalizedDeviceId = request.DeviceId.Trim();
+        var normalizedDeviceName = request.DeviceName.Trim();
 
         var existingDeviceTokens = await db.RefreshTokens
             .Where(t => t.UserId == user.Id && t.DeviceId == normalizedDeviceId && t.RevokedAtUtc == null)
@@ -114,7 +151,7 @@ public static class AuthEndpoints
             tokenService,
             user,
             normalizedDeviceId,
-            request.DeviceName,
+            normalizedDeviceName,
             utcNow,
             cancellationToken);
 
@@ -135,6 +172,7 @@ public static class AuthEndpoints
 
         var tokenHash = tokenService.HashToken(request.RefreshToken);
         var existing = await db.RefreshTokens
+            .AsNoTracking()
             .Include(t => t.User)
             .SingleOrDefaultAsync(t => t.TokenHash == tokenHash, cancellationToken);
 
@@ -148,7 +186,17 @@ public static class AuthEndpoints
             return Results.Unauthorized();
         }
 
-        existing.Revoke(utcNow);
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+
+        var revokedCount = await db.RefreshTokens
+            .Where(t => t.Id == existing.Id && t.RevokedAtUtc == null && t.ExpiresAtUtc > utcNow)
+            .ExecuteUpdateAsync(
+                setters => setters.SetProperty(t => t.RevokedAtUtc, utcNow),
+                cancellationToken);
+        if (revokedCount == 0)
+        {
+            return Results.Unauthorized();
+        }
 
         var response = await IssueDeviceSessionAsync(
             db,
@@ -159,6 +207,7 @@ public static class AuthEndpoints
             utcNow,
             cancellationToken);
 
+        await transaction.CommitAsync(cancellationToken);
         return Results.Ok(response);
     }
 
@@ -178,6 +227,11 @@ public static class AuthEndpoints
         if (string.IsNullOrWhiteSpace(request.NewPassword) || request.NewPassword.Length < 8)
         {
             return Results.BadRequest(new { error = "password_too_short" });
+        }
+
+        if (request.NewPassword.Length > MaxPasswordLength || request.CurrentPassword.Length > MaxPasswordLength)
+        {
+            return Results.BadRequest(new { error = "password_too_long" });
         }
 
         var user = await db.Users
@@ -212,7 +266,8 @@ public static class AuthEndpoints
         if (string.IsNullOrWhiteSpace(request.Username) ||
             string.IsNullOrWhiteSpace(request.ResetCode) ||
             string.IsNullOrWhiteSpace(request.NewPassword) ||
-            request.NewPassword.Length < 8)
+            request.NewPassword.Length < 8 ||
+            request.NewPassword.Length > MaxPasswordLength)
         {
             return Results.BadRequest(new { error = "invalid_reset_request" });
         }
@@ -232,8 +287,10 @@ public static class AuthEndpoints
             return Results.BadRequest(new { error = "invalid_or_expired_reset_code" });
         }
 
-        var providedHash = tokenService.HashToken(request.ResetCode.Trim());
-        if (!string.Equals(providedHash, user.OneTimeResetCodeHash, StringComparison.Ordinal))
+        var providedBytes = Encoding.UTF8.GetBytes(tokenService.HashToken(request.ResetCode.Trim()));
+        var expectedBytes = Encoding.UTF8.GetBytes(user.OneTimeResetCodeHash);
+        if (providedBytes.Length != expectedBytes.Length ||
+            !CryptographicOperations.FixedTimeEquals(providedBytes, expectedBytes))
         {
             return Results.BadRequest(new { error = "invalid_or_expired_reset_code" });
         }
@@ -244,13 +301,23 @@ public static class AuthEndpoints
         return Results.Ok(new { reset = true });
     }
 
-    private static IResult CreateStreamTicketAsync(
+    private static async Task<IResult> CreateStreamTicketAsync(
         CreateStreamTicketRequest request,
         ClaimsPrincipal principal,
+        HermesDbContext db,
         IStreamTicketService streamTicketService,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        CancellationToken cancellationToken)
     {
         if (!principal.TryGetUserId(out var userId))
+        {
+            return Results.Unauthorized();
+        }
+
+        var isActive = await db.Users
+            .AsNoTracking()
+            .AnyAsync(u => u.Id == userId && u.IsActive, cancellationToken);
+        if (!isActive)
         {
             return Results.Unauthorized();
         }

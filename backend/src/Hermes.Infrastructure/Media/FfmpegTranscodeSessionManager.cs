@@ -1,5 +1,7 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
+using System.Security.Cryptography;
 using System.Text;
 using Hermes.Domain.Enums;
 using Hermes.Domain.Ports;
@@ -8,6 +10,10 @@ namespace Hermes.Infrastructure.Media;
 
 public sealed class FfmpegTranscodeSessionManager : ITranscodeSessionManager, IAsyncDisposable, IDisposable
 {
+    private static readonly TimeSpan IdleSessionTimeout = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan AudioTranscodeTimeout = TimeSpan.FromMinutes(2);
+    private const long MaxAudioCacheBytes = 512L * 1024 * 1024;
+
     internal delegate Process? HlsProcessLauncher(
         string sourceFilePath,
         VideoQualityPreset quality,
@@ -18,9 +24,12 @@ public sealed class FfmpegTranscodeSessionManager : ITranscodeSessionManager, IA
         HardwareAccelerationMode hardwareAcceleration);
 
     private readonly string _transcodeRoot;
+    private readonly string _audioCacheDirectory;
     private readonly HlsProcessLauncher _launchHlsProcess;
+    private readonly bool _usesCustomLauncher;
     private readonly Lock _gate = new();
     private readonly Dictionary<Guid, ActiveSession> _sessions = [];
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _audioCacheLocks = new(StringComparer.Ordinal);
     private int _activeAudioTranscodes;
 
     public FfmpegTranscodeSessionManager(string transcodeRootDirectory)
@@ -34,6 +43,8 @@ public sealed class FfmpegTranscodeSessionManager : ITranscodeSessionManager, IA
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(transcodeRootDirectory);
         _transcodeRoot = Path.GetFullPath(transcodeRootDirectory);
+        _audioCacheDirectory = Path.Combine(_transcodeRoot, "audio-cache");
+        _usesCustomLauncher = launchHlsProcess is not null;
         _launchHlsProcess = launchHlsProcess ?? TryLaunchHlsFfmpeg;
     }
 
@@ -92,7 +103,8 @@ public sealed class FfmpegTranscodeSessionManager : ITranscodeSessionManager, IA
                                       string.Equals(existing.ClientSession, normalizedClientSession, StringComparison.Ordinal);
                 var staleExited = (existing.Process is null || HasExitedSafe(existing.Process)) &&
                                   (now - existing.LastAccessedUtc) > TimeSpan.FromMinutes(2);
-                if (sameClientPrior || staleExited)
+                var staleIdle = (now - existing.LastAccessedUtc) > IdleSessionTimeout;
+                if (sameClientPrior || staleExited || staleIdle)
                 {
                     evictedSessions.Add(existing);
                 }
@@ -105,12 +117,7 @@ public sealed class FfmpegTranscodeSessionManager : ITranscodeSessionManager, IA
 
             if (_sessions.Count >= maxConcurrentSlots)
             {
-                foreach (var evicted in evictedSessions)
-                {
-                    CleanupSessionResources(evicted);
-                }
-
-                return null;
+                goto SlotsExhausted;
             }
 
             _sessions[sessionId] = new ActiveSession(
@@ -128,22 +135,37 @@ public sealed class FfmpegTranscodeSessionManager : ITranscodeSessionManager, IA
                 null);
         }
 
-        foreach (var evicted in evictedSessions)
-        {
-            CleanupSessionResources(evicted);
-        }
+        CleanupSessions(evictedSessions);
+        goto LaunchSession;
+
+        SlotsExhausted:
+        CleanupSessions(evictedSessions);
+        return null;
+
+        LaunchSession:
 
         try
         {
             Directory.CreateDirectory(segmentDir);
             var process = _launchHlsProcess(sourceFilePath, quality, audioStreamIndex, startSeconds, segmentDir, playlistPath, hardwareAcceleration);
 
+            var stoppedConcurrently = false;
             lock (_gate)
             {
                 if (_sessions.TryGetValue(sessionId, out var current))
                 {
                     _sessions[sessionId] = current with { Process = process };
                 }
+                else
+                {
+                    stoppedConcurrently = true;
+                }
+            }
+
+            if (stoppedConcurrently)
+            {
+                KillAndDisposeProcess(process);
+                return null;
             }
 
             for (var i = 0; i < 80; i++)
@@ -165,7 +187,7 @@ public sealed class FfmpegTranscodeSessionManager : ITranscodeSessionManager, IA
                 !File.Exists(playlistPath) &&
                 hardwareAcceleration != HardwareAccelerationMode.None)
             {
-                process?.Dispose();
+                KillAndDisposeProcess(process);
                 process = _launchHlsProcess(
                     sourceFilePath,
                     quality,
@@ -175,12 +197,23 @@ public sealed class FfmpegTranscodeSessionManager : ITranscodeSessionManager, IA
                     playlistPath,
                     HardwareAccelerationMode.None);
 
+                stoppedConcurrently = false;
                 lock (_gate)
                 {
                     if (_sessions.TryGetValue(sessionId, out var current))
                     {
                         _sessions[sessionId] = current with { Process = process };
                     }
+                    else
+                    {
+                        stoppedConcurrently = true;
+                    }
+                }
+
+                if (stoppedConcurrently)
+                {
+                    KillAndDisposeProcess(process);
+                    return null;
                 }
 
                 for (var i = 0; i < 80; i++)
@@ -233,6 +266,54 @@ public sealed class FfmpegTranscodeSessionManager : ITranscodeSessionManager, IA
         return Task.CompletedTask;
     }
 
+    public Task<bool> TryStopUserSessionAsync(
+        Guid sessionId,
+        Guid userId,
+        Guid mediaSourceId,
+        CancellationToken cancellationToken)
+    {
+        ActiveSession? removed = null;
+        lock (_gate)
+        {
+            if (_sessions.TryGetValue(sessionId, out var existing) &&
+                existing.UserId == userId &&
+                existing.MediaSourceId == mediaSourceId)
+            {
+                _sessions.Remove(sessionId, out removed);
+            }
+        }
+
+        if (removed is null)
+        {
+            return Task.FromResult(false);
+        }
+
+        CleanupSessionResources(removed);
+        return Task.FromResult(true);
+    }
+
+    public Task StopSessionsForMediaSourcesAsync(IReadOnlyCollection<Guid> mediaSourceIds, CancellationToken cancellationToken)
+    {
+        if (mediaSourceIds.Count == 0)
+        {
+            return Task.CompletedTask;
+        }
+
+        var idSet = mediaSourceIds.ToHashSet();
+        List<ActiveSession> toStop;
+        lock (_gate)
+        {
+            toStop = _sessions.Values.Where(s => idSet.Contains(s.MediaSourceId)).ToList();
+            foreach (var session in toStop)
+            {
+                _sessions.Remove(session.SessionId);
+            }
+        }
+
+        CleanupSessions(toStop);
+        return Task.CompletedTask;
+    }
+
     public Task StopClientSessionsAsync(Guid userId, string clientSession, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(clientSession))
@@ -253,15 +334,22 @@ public sealed class FfmpegTranscodeSessionManager : ITranscodeSessionManager, IA
             }
         }
 
-        foreach (var session in toStop)
-        {
-            CleanupSessionResources(session);
-        }
+        CleanupSessions(toStop);
 
         return Task.CompletedTask;
     }
 
-    public string? ResolveHlsAssetPath(Guid sessionId, string fileName)
+    public string? ResolveHlsAssetPath(Guid sessionId, string fileName) =>
+        ResolveHlsAssetPathInternal(sessionId, fileName, expectedUserId: null, expectedMediaSourceId: null);
+
+    public string? ResolveHlsAssetPath(Guid sessionId, string fileName, Guid expectedUserId, Guid expectedMediaSourceId) =>
+        ResolveHlsAssetPathInternal(sessionId, fileName, expectedUserId, expectedMediaSourceId);
+
+    private string? ResolveHlsAssetPathInternal(
+        Guid sessionId,
+        string fileName,
+        Guid? expectedUserId,
+        Guid? expectedMediaSourceId)
     {
         if (string.IsNullOrWhiteSpace(fileName) || Path.GetFileName(fileName) != fileName)
         {
@@ -280,6 +368,16 @@ public sealed class FfmpegTranscodeSessionManager : ITranscodeSessionManager, IA
         {
             if (_sessions.TryGetValue(sessionId, out var session))
             {
+                if (expectedUserId is Guid uId && session.UserId != uId)
+                {
+                    return null;
+                }
+
+                if (expectedMediaSourceId is Guid msId && session.MediaSourceId != msId)
+                {
+                    return null;
+                }
+
                 _sessions[sessionId] = session with { LastAccessedUtc = DateTimeOffset.UtcNow };
                 segmentDir = session.SegmentDirectory;
             }
@@ -292,6 +390,153 @@ public sealed class FfmpegTranscodeSessionManager : ITranscodeSessionManager, IA
 
         var path = Path.Combine(segmentDir, fileName);
         return File.Exists(path) ? path : null;
+    }
+
+    public async Task<string?> TryTranscodeAudioToMp3FileAsync(
+        string sourceFilePath,
+        long targetBitrateBps,
+        CancellationToken cancellationToken,
+        int maxConcurrentAudioSlots = 4)
+    {
+        if (!File.Exists(sourceFilePath))
+        {
+            return null;
+        }
+
+        var kbps = Math.Clamp((int)Math.Round(targetBitrateBps / 1000.0), 32, 320);
+        var fileInfo = new FileInfo(sourceFilePath);
+        var keyInput = $"{Path.GetFullPath(sourceFilePath)}|{fileInfo.LastWriteTimeUtc.Ticks}|{fileInfo.Length}|{kbps}";
+        var cacheKey = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(keyInput)));
+        var cachePath = Path.Combine(_audioCacheDirectory, $"{cacheKey}.mp3");
+
+        if (File.Exists(cachePath))
+        {
+            TryTouchFileUtc(cachePath);
+            return cachePath;
+        }
+
+        if (maxConcurrentAudioSlots <= 0)
+        {
+            return null;
+        }
+
+        var keyLock = _audioCacheLocks.GetOrAdd(cacheKey, _ => new SemaphoreSlim(1, 1));
+        await keyLock.WaitAsync(cancellationToken);
+        try
+        {
+            if (File.Exists(cachePath))
+            {
+                TryTouchFileUtc(cachePath);
+                return cachePath;
+            }
+
+            lock (_gate)
+            {
+                if (_activeAudioTranscodes >= maxConcurrentAudioSlots)
+                {
+                    return null;
+                }
+
+                _activeAudioTranscodes++;
+            }
+
+            try
+            {
+                Directory.CreateDirectory(_audioCacheDirectory);
+                var tempPath = Path.Combine(_audioCacheDirectory, $"{cacheKey}.{Guid.NewGuid():N}.tmp");
+
+                try
+                {
+                    using var process = new Process
+                    {
+                        StartInfo = new ProcessStartInfo
+                        {
+                            FileName = "ffmpeg",
+                            RedirectStandardOutput = true,
+                            RedirectStandardError = true,
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        }
+                    };
+
+                    process.StartInfo.ArgumentList.Add("-v");
+                    process.StartInfo.ArgumentList.Add("error");
+                    process.StartInfo.ArgumentList.Add("-i");
+                    process.StartInfo.ArgumentList.Add(sourceFilePath);
+                    process.StartInfo.ArgumentList.Add("-vn");
+                    process.StartInfo.ArgumentList.Add("-c:a");
+                    process.StartInfo.ArgumentList.Add("libmp3lame");
+                    process.StartInfo.ArgumentList.Add("-b:a");
+                    process.StartInfo.ArgumentList.Add($"{kbps}k");
+                    process.StartInfo.ArgumentList.Add("-f");
+                    process.StartInfo.ArgumentList.Add("mp3");
+                    process.StartInfo.ArgumentList.Add("-y");
+                    process.StartInfo.ArgumentList.Add(tempPath);
+
+                    if (!process.Start())
+                    {
+                        return null;
+                    }
+
+                    using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    timeoutCts.CancelAfter(AudioTranscodeTimeout);
+
+                    try
+                    {
+                        var stdoutDrain = process.StandardOutput.BaseStream.CopyToAsync(Stream.Null, timeoutCts.Token);
+                        var stderrDrain = process.StandardError.BaseStream.CopyToAsync(Stream.Null, timeoutCts.Token);
+
+                        await process.WaitForExitAsync(timeoutCts.Token);
+                        await Task.WhenAll(stdoutDrain, stderrDrain);
+
+                        if (process.ExitCode == 0 && File.Exists(tempPath) && new FileInfo(tempPath).Length > 0)
+                        {
+                            File.Move(tempPath, cachePath, overwrite: true);
+                            PruneAudioCacheIfNeeded();
+                            return cachePath;
+                        }
+
+                        TryDeleteFile(tempPath);
+                        return null;
+                    }
+                    finally
+                    {
+                        if (!HasExitedSafe(process))
+                        {
+                            try
+                            {
+                                process.Kill(entireProcessTree: true);
+                            }
+                            catch
+                            {
+                                // Process exited concurrently.
+                            }
+                        }
+                    }
+                }
+                catch (Exception) when (!cancellationToken.IsCancellationRequested)
+                {
+                    TryDeleteFile(tempPath);
+                    return null;
+                }
+                catch
+                {
+                    TryDeleteFile(tempPath);
+                    throw;
+                }
+            }
+            finally
+            {
+                lock (_gate)
+                {
+                    _activeAudioTranscodes = Math.Max(0, _activeAudioTranscodes - 1);
+                }
+            }
+        }
+        finally
+        {
+            keyLock.Release();
+        }
     }
 
     public async Task<byte[]?> TryTranscodeAudioToMp3Async(
@@ -349,15 +594,34 @@ public sealed class FfmpegTranscodeSessionManager : ITranscodeSessionManager, IA
                 return null;
             }
 
-            await using var memoryStream = new MemoryStream();
-            var copyTask = process.StandardOutput.BaseStream.CopyToAsync(memoryStream, cancellationToken);
-            var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(AudioTranscodeTimeout);
 
-            await process.WaitForExitAsync(cancellationToken);
-            await copyTask;
-            _ = await stderrTask;
+            try
+            {
+                await using var memoryStream = new MemoryStream();
+                var copyTask = process.StandardOutput.BaseStream.CopyToAsync(memoryStream, timeoutCts.Token);
+                var stderrTask = process.StandardError.BaseStream.CopyToAsync(Stream.Null, timeoutCts.Token);
 
-            return process.ExitCode == 0 && memoryStream.Length > 0 ? memoryStream.ToArray() : null;
+                await process.WaitForExitAsync(timeoutCts.Token);
+                await Task.WhenAll(copyTask, stderrTask);
+
+                return process.ExitCode == 0 && memoryStream.Length > 0 ? memoryStream.ToArray() : null;
+            }
+            finally
+            {
+                if (!HasExitedSafe(process))
+                {
+                    try
+                    {
+                        process.Kill(entireProcessTree: true);
+                    }
+                    catch
+                    {
+                        // Process exited concurrently.
+                    }
+                }
+            }
         }
         catch (Exception) when (!cancellationToken.IsCancellationRequested)
         {
@@ -567,7 +831,7 @@ public sealed class FfmpegTranscodeSessionManager : ITranscodeSessionManager, IA
             {
                 try
                 {
-                    await process.StandardError.ReadToEndAsync();
+                    await process.StandardError.BaseStream.CopyToAsync(Stream.Null);
                 }
                 catch
                 {
@@ -579,7 +843,7 @@ public sealed class FfmpegTranscodeSessionManager : ITranscodeSessionManager, IA
             {
                 try
                 {
-                    await process.StandardOutput.ReadToEndAsync();
+                    await process.StandardOutput.BaseStream.CopyToAsync(Stream.Null);
                 }
                 catch
                 {
@@ -595,26 +859,41 @@ public sealed class FfmpegTranscodeSessionManager : ITranscodeSessionManager, IA
         }
     }
 
-    private static void CleanupSessionResources(ActiveSession session)
+    private static void CleanupSessions(IEnumerable<ActiveSession> sessions)
     {
-        if (session.Process is not null)
+        foreach (var session in sessions)
         {
-            try
+            CleanupSessionResources(session);
+        }
+    }
+
+    private static void KillAndDisposeProcess(Process? process)
+    {
+        if (process is null)
+        {
+            return;
+        }
+
+        try
+        {
+            if (!HasExitedSafe(process))
             {
-                if (!session.Process.HasExited)
-                {
-                    session.Process.Kill(entireProcessTree: true);
-                }
-            }
-            catch
-            {
-                // Process may have exited concurrently.
-            }
-            finally
-            {
-                session.Process.Dispose();
+                process.Kill(entireProcessTree: true);
             }
         }
+        catch
+        {
+            // Process may have exited concurrently.
+        }
+        finally
+        {
+            process.Dispose();
+        }
+    }
+
+    private static void CleanupSessionResources(ActiveSession session)
+    {
+        KillAndDisposeProcess(session.Process);
 
         if (Directory.Exists(session.SegmentDirectory))
         {
@@ -631,9 +910,21 @@ public sealed class FfmpegTranscodeSessionManager : ITranscodeSessionManager, IA
 
     public IReadOnlyList<ActiveTranscodeSessionInfo> GetActiveSessions()
     {
+        var now = DateTimeOffset.UtcNow;
+        List<ActiveSession> expired;
+        List<ActiveTranscodeSessionInfo> result;
+
         lock (_gate)
         {
-            return _sessions.Values
+            expired = _sessions.Values
+                .Where(s => (now - s.LastAccessedUtc) > IdleSessionTimeout)
+                .ToList();
+            foreach (var session in expired)
+            {
+                _sessions.Remove(session.SessionId);
+            }
+
+            result = _sessions.Values
                 .Select(s => new ActiveTranscodeSessionInfo(
                     s.SessionId,
                     s.UserId,
@@ -642,6 +933,9 @@ public sealed class FfmpegTranscodeSessionManager : ITranscodeSessionManager, IA
                     s.StartedAtUtc))
                 .ToList();
         }
+
+        CleanupSessions(expired);
+        return result;
     }
 
     private static bool HasExitedSafe(Process process)
@@ -656,8 +950,13 @@ public sealed class FfmpegTranscodeSessionManager : ITranscodeSessionManager, IA
         }
     }
 
-    private static bool IsReusableSession(ActiveSession session, DateTimeOffset now)
+    private bool IsReusableSession(ActiveSession session, DateTimeOffset now)
     {
+        if (!_usesCustomLauncher && session.Process is null)
+        {
+            return false;
+        }
+
         if (session.Process is not null && !HasExitedSafe(session.Process))
         {
             return true;
@@ -679,6 +978,73 @@ public sealed class FfmpegTranscodeSessionManager : ITranscodeSessionManager, IA
         }
 
         return (now - session.StartedAtUtc) < TimeSpan.FromSeconds(15);
+    }
+
+    private void PruneAudioCacheIfNeeded()
+    {
+        try
+        {
+            if (!Directory.Exists(_audioCacheDirectory))
+            {
+                return;
+            }
+
+            var files = new DirectoryInfo(_audioCacheDirectory)
+                .GetFiles("*.mp3")
+                .OrderBy(f => f.LastWriteTimeUtc)
+                .ToList();
+
+            var totalBytes = files.Sum(f => f.Length);
+            foreach (var file in files)
+            {
+                if (totalBytes <= MaxAudioCacheBytes)
+                {
+                    break;
+                }
+
+                try
+                {
+                    var len = file.Length;
+                    file.Delete();
+                    totalBytes -= len;
+                }
+                catch
+                {
+                    // File might currently be streamed by an active HTTP response.
+                }
+            }
+        }
+        catch
+        {
+            // Best-effort cache pruning.
+        }
+    }
+
+    private static void TryTouchFileUtc(string path)
+    {
+        try
+        {
+            File.SetLastWriteTimeUtc(path, DateTime.UtcNow);
+        }
+        catch
+        {
+            // Best-effort LRU timestamp refresh.
+        }
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch
+        {
+            // Best-effort cleanup of incomplete temp audio file.
+        }
     }
 
     private sealed record ActiveSession(

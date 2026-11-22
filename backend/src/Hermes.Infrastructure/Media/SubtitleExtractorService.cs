@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -10,7 +11,19 @@ public sealed partial class SubtitleExtractorService
 
     private static readonly string[] SidecarExtensions = [".vtt", ".srt", ".ass", ".ssa"];
     private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
-    private static readonly char[] LanguageSeparators = ['.', '-'];
+    private static readonly char[] LanguageSeparators = ['.', '-', '_'];
+    private static readonly TimeSpan DirectoryCacheTtl = TimeSpan.FromSeconds(30);
+    private static readonly HashSet<string> SidecarModifierTokens =
+        new(["forced", "sdh", "cc", "hi", "commentary", "default", "full"], StringComparer.OrdinalIgnoreCase);
+
+    private static readonly ConcurrentDictionary<string, CachedDirectorySubtitles> DirectorySubtitleCache =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    private static readonly ConcurrentDictionary<string, CachedLanguageEntry> SampleLanguageCache =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    private sealed record CachedDirectorySubtitles(DateTime DirLastWriteUtc, DateTime CachedAtUtc, string[] Files);
+    private sealed record CachedLanguageEntry(DateTime FileLastWriteUtc, string Language);
 
     private static readonly char[] Windows1250HighBytes =
     [
@@ -47,10 +60,12 @@ public sealed partial class SubtitleExtractorService
         }
 
         var sidecars = DiscoverSidecarSubtitles(mediaFilePath);
-        if (streamIndex >= SidecarStreamIndexOffset && sidecars.Count > 0)
+        if (streamIndex >= SidecarStreamIndexOffset)
         {
-            var matched = sidecars.FirstOrDefault(s => s.StreamIndex == streamIndex) ?? sidecars[0];
-            return await ReadAndConvertSidecarAsync(matched.FilePath, cancellationToken);
+            var matched = sidecars.FirstOrDefault(s => s.StreamIndex == streamIndex);
+            return matched is not null
+                ? await ReadAndConvertSidecarAsync(matched.FilePath, cancellationToken)
+                : null;
         }
 
         var embedded = await TryExtractEmbeddedWithFfmpegAsync(mediaFilePath, streamIndex, cancellationToken);
@@ -70,7 +85,13 @@ public sealed partial class SubtitleExtractorService
     public static IReadOnlyList<DiscoveredSidecarSubtitle> DiscoverSidecarSubtitles(string mediaFilePath)
     {
         var dir = Path.GetDirectoryName(mediaFilePath);
-        if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir))
+        if (string.IsNullOrEmpty(dir))
+        {
+            return [];
+        }
+
+        var allSubtitleFiles = GetDirectorySubtitleFiles(dir);
+        if (allSubtitleFiles.Length == 0)
         {
             return [];
         }
@@ -78,15 +99,8 @@ public sealed partial class SubtitleExtractorService
         var baseName = Path.GetFileNameWithoutExtension(mediaFilePath);
         var candidateFiles = new List<string>();
 
-        foreach (var path in Directory.EnumerateFiles(dir, "*.*", SearchOption.TopDirectoryOnly)
-                     .OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
+        foreach (var path in allSubtitleFiles)
         {
-            var ext = Path.GetExtension(path);
-            if (!SidecarExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
             var subBase = Path.GetFileNameWithoutExtension(path);
             if (IsMatchingSidecarBaseName(baseName, subBase))
             {
@@ -110,6 +124,43 @@ public sealed partial class SubtitleExtractorService
         }
 
         return results;
+    }
+
+    private static string[] GetDirectorySubtitleFiles(string dir)
+    {
+        try
+        {
+            if (!Directory.Exists(dir))
+            {
+                return [];
+            }
+
+            var lastWriteUtc = Directory.GetLastWriteTimeUtc(dir);
+            var now = DateTime.UtcNow;
+            if (DirectorySubtitleCache.TryGetValue(dir, out var cached) &&
+                cached.DirLastWriteUtc == lastWriteUtc &&
+                (now - cached.CachedAtUtc) < DirectoryCacheTtl)
+            {
+                return cached.Files;
+            }
+
+            var files = Directory.EnumerateFiles(dir, "*.*", SearchOption.TopDirectoryOnly)
+                .Where(p => SidecarExtensions.Contains(Path.GetExtension(p), StringComparer.OrdinalIgnoreCase))
+                .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            if (DirectorySubtitleCache.Count > 1024)
+            {
+                DirectorySubtitleCache.Clear();
+            }
+
+            DirectorySubtitleCache[dir] = new CachedDirectorySubtitles(lastWriteUtc, now, files);
+            return files;
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or DirectoryNotFoundException)
+        {
+            return [];
+        }
     }
 
     public static string DecodeSubtitleBytes(ReadOnlySpan<byte> bytes)
@@ -181,37 +232,75 @@ public sealed partial class SubtitleExtractorService
 
     private static bool IsMatchingSidecarBaseName(string mediaBaseName, string subBaseName)
     {
-        if (subBaseName.Equals(mediaBaseName, StringComparison.OrdinalIgnoreCase) ||
-            subBaseName.StartsWith(mediaBaseName + ".", StringComparison.OrdinalIgnoreCase) ||
-            subBaseName.StartsWith(mediaBaseName + "-", StringComparison.OrdinalIgnoreCase))
+        if (subBaseName.Equals(mediaBaseName, StringComparison.OrdinalIgnoreCase))
         {
             return true;
         }
 
-        var stem = TrimLanguageSuffix(subBaseName);
-        return stem.Length >= 8 &&
-               mediaBaseName.StartsWith(stem, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static string TrimLanguageSuffix(string name)
-    {
-        foreach (var sep in LanguageSeparators)
+        var strippedSub = StripSubtitleTags(subBaseName);
+        if (strippedSub.Equals(mediaBaseName, StringComparison.OrdinalIgnoreCase))
         {
-            var idx = name.LastIndexOf(sep);
-            if (idx > 0 && name.Length - idx - 1 is >= 2 and <= 3)
-            {
-                return name[..idx];
-            }
+            return true;
         }
 
-        return name;
+        return strippedSub.Length >= 8 &&
+               mediaBaseName.StartsWith(strippedSub, StringComparison.OrdinalIgnoreCase) &&
+               mediaBaseName.Length > strippedSub.Length &&
+               IsWordBoundarySeparator(mediaBaseName[strippedSub.Length]);
     }
+
+    private static bool IsWordBoundarySeparator(char c) =>
+        c is '.' or '-' or '_' or ' ' or '(' or '[';
+
+    private static string StripSubtitleTags(string name)
+    {
+        var current = name;
+        while (true)
+        {
+            var sepIdx = current.LastIndexOfAny(LanguageSeparators);
+            if (sepIdx <= 0)
+            {
+                break;
+            }
+
+            var suffix = current[(sepIdx + 1)..].Trim();
+            if (IsKnownSubtitleTag(suffix))
+            {
+                current = current[..sepIdx];
+                continue;
+            }
+
+            break;
+        }
+
+        return current;
+    }
+
+    private static bool IsKnownSubtitleTag(string suffix) =>
+        suffix.Length is >= 2 and <= 3 ||
+        SidecarModifierTokens.Contains(suffix) ||
+        MapLanguageToken(suffix) is not null ||
+        (suffix.Length <= 2 && suffix.All(char.IsDigit));
+
+    private static string? MapLanguageToken(string? tag) =>
+        tag?.ToLowerInvariant() switch
+        {
+            "en" or "eng" or "english" => "eng",
+            "ro" or "rum" or "ron" or "rom" or "romanian" => "rum",
+            "fr" or "fre" or "fra" or "french" => "fre",
+            "es" or "spa" or "spanish" => "spa",
+            "de" or "ger" or "deu" or "german" => "ger",
+            "it" or "ita" or "italian" => "ita",
+            "hu" or "hun" or "hungarian" => "hun",
+            _ => null
+        };
 
     private static string InferSubtitleLanguage(string path, string mediaBaseName)
     {
         var subBase = Path.GetFileNameWithoutExtension(path);
         string? tag = null;
-        if (subBase.Length > mediaBaseName.Length &&
+        if (subBase.StartsWith(mediaBaseName, StringComparison.OrdinalIgnoreCase) &&
+            subBase.Length > mediaBaseName.Length &&
             (subBase[mediaBaseName.Length] == '.' || subBase[mediaBaseName.Length] == '-'))
         {
             tag = subBase[(mediaBaseName.Length + 1)..].Trim().ToLowerInvariant();
@@ -225,33 +314,41 @@ public sealed partial class SubtitleExtractorService
             }
         }
 
-        var fromTag = tag switch
+        if (tag is not null)
         {
-            "en" or "eng" or "english" => "eng",
-            "ro" or "rum" or "ron" or "rom" or "romanian" => "rum",
-            "fr" or "fre" or "fra" => "fre",
-            "es" or "spa" => "spa",
-            "de" or "ger" or "deu" => "ger",
-            "it" or "ita" => "ita",
-            "hu" or "hun" => "hun",
-            _ => null
-        };
-        if (fromTag is not null)
-        {
-            return fromTag;
+            foreach (var part in tag.Split(['.', '-'], StringSplitOptions.RemoveEmptyEntries))
+            {
+                var mapped = MapLanguageToken(part);
+                if (mapped is not null)
+                {
+                    return mapped;
+                }
+            }
         }
 
         try
         {
+            var lastWriteUtc = File.GetLastWriteTimeUtc(path);
+            if (SampleLanguageCache.TryGetValue(path, out var cached) &&
+                cached.FileLastWriteUtc == lastWriteUtc)
+            {
+                return cached.Language;
+            }
+
             using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             var sampleLen = (int)Math.Min(2048, fs.Length);
             var buf = new byte[sampleLen];
             var read = fs.Read(buf, 0, sampleLen);
             var sample = DecodeSubtitleBytes(buf.AsSpan(0, read));
-            if (sample.IndexOfAny(['ă', 'Ă', 'î', 'Î', 'ș', 'Ș', 'ț', 'Ț']) >= 0)
+            var inferred = sample.IndexOfAny(['ă', 'Ă', 'î', 'Î', 'ș', 'Ș', 'ț', 'Ț']) >= 0 ? "rum" : "und";
+
+            if (SampleLanguageCache.Count > 4096)
             {
-                return "rum";
+                SampleLanguageCache.Clear();
             }
+
+            SampleLanguageCache[path] = new CachedLanguageEntry(lastWriteUtc, inferred);
+            return inferred;
         }
         catch
         {
@@ -417,13 +514,36 @@ public sealed partial class SubtitleExtractorService
                 return null;
             }
 
-            var vtt = await process.StandardOutput.ReadToEndAsync(cancellationToken);
-            _ = await process.StandardError.ReadToEndAsync(cancellationToken);
-            await process.WaitForExitAsync(cancellationToken);
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
 
-            return process.ExitCode == 0 && !string.IsNullOrWhiteSpace(vtt)
-                ? EnsureWebVttHeader(NormalizeRomanianDiacritics(vtt))
-                : null;
+            try
+            {
+                var stdoutTask = process.StandardOutput.ReadToEndAsync(timeoutCts.Token);
+                var stderrTask = process.StandardError.ReadToEndAsync(timeoutCts.Token);
+
+                await process.WaitForExitAsync(timeoutCts.Token);
+                var vtt = await stdoutTask;
+                _ = await stderrTask;
+
+                return process.ExitCode == 0 && !string.IsNullOrWhiteSpace(vtt)
+                    ? EnsureWebVttHeader(NormalizeRomanianDiacritics(vtt))
+                    : null;
+            }
+            finally
+            {
+                if (!process.HasExited)
+                {
+                    try
+                    {
+                        process.Kill(entireProcessTree: true);
+                    }
+                    catch
+                    {
+                        // Best-effort cleanup if ffmpeg exited concurrently.
+                    }
+                }
+            }
         }
         catch (Exception) when (!cancellationToken.IsCancellationRequested)
         {

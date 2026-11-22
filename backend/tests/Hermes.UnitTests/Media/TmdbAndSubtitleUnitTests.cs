@@ -63,9 +63,14 @@ public class TmdbAndSubtitleUnitTests
                 return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent([1, 2, 3, 4]) };
             }
 
-            if (url == "https://cdn.example.com/custom.webp")
+            if (url == "https://image.tmdb.org/t/p/original/custom.jpg")
             {
                 return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent([5, 6]) };
+            }
+
+            if (url == "https://cdn.example.com/custom.webp" || url == "http://image.tmdb.org/t/p/original/poster.jpg")
+            {
+                throw new InvalidOperationException("Rejected host/scheme should never be requested.");
             }
 
             return new HttpResponseMessage(HttpStatusCode.NotFound);
@@ -112,7 +117,10 @@ public class TmdbAndSubtitleUnitTests
         tvRich.Seasons.Should().ContainSingle(s => s.SeasonNumber == 1 && s.EpisodeCount == 9);
 
         (await client.DownloadImageBytesAsync("/poster.jpg", CancellationToken.None)).Should().Equal([1, 2, 3, 4]);
-        (await client.DownloadImageBytesAsync("https://cdn.example.com/custom.webp", CancellationToken.None)).Should().Equal([5, 6]);
+        (await client.DownloadImageBytesAsync("https://image.tmdb.org/t/p/original/custom.jpg", CancellationToken.None)).Should().Equal([5, 6]);
+        (await client.DownloadImageBytesAsync("https://cdn.example.com/custom.webp", CancellationToken.None)).Should().BeNull();
+        (await client.DownloadImageBytesAsync("http://image.tmdb.org/t/p/original/poster.jpg", CancellationToken.None)).Should().BeNull();
+        (await client.DownloadImageBytesAsync("http://127.0.0.1/secret.png", CancellationToken.None)).Should().BeNull();
         (await client.DownloadImageBytesAsync("/missing.jpg", CancellationToken.None)).Should().BeNull();
         requestedUrls.Should().Contain(u => u.Contains("first_air_date_year=2022", StringComparison.Ordinal));
     }
@@ -458,6 +466,70 @@ public class TmdbAndSubtitleUnitTests
             vtt.Should().NotBeNull();
             vtt!.Should().StartWith("WEBVTT");
             vtt.Should().Contain("două înainte când Ș"+"i țară");
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SubtitleExtractorService_OutOfRangeSidecarIndexReturnsNull_AndDoesNotMatchSequelSubtitles()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"hermes-sub-bounds-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var moviePath = Path.Combine(tempDir, "The.Matrix.mkv");
+            var ownSrtPath = Path.Combine(tempDir, "The.Matrix.en.srt");
+            var sequelSrtPath = Path.Combine(tempDir, "The.Matrix.Reloaded.en.srt");
+
+            await File.WriteAllBytesAsync(moviePath, [0x01, 0x02]);
+            await File.WriteAllTextAsync(ownSrtPath, "1\n00:00:01,000 --> 00:00:02,000\nWake up.\n");
+            await File.WriteAllTextAsync(sequelSrtPath, "1\n00:00:01,000 --> 00:00:02,000\nReloaded.\n");
+
+            var discovered = SubtitleExtractorService.DiscoverSidecarSubtitles(moviePath);
+            discovered.Should().ContainSingle(s => s.FilePath == ownSrtPath && s.Language == "eng");
+
+            var extractor = new SubtitleExtractorService();
+            var outOfRange = await extractor.ExtractWebVttAsync(
+                moviePath,
+                SubtitleExtractorService.SidecarStreamIndexOffset + 5,
+                CancellationToken.None);
+            outOfRange.Should().BeNull();
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SkiaArtworkStore_ConcurrentWrites_ProduceValidWebpWithoutIOException()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"hermes-art-race-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var store = new SkiaArtworkStore(tempDir);
+            var pngBytes = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==");
+
+            var tasks = Enumerable.Range(0, 8)
+                .Select(_ => Task.Run(() => store.SaveArtworkVariantsAsync(pngBytes, CancellationToken.None)));
+            var hashes = await Task.WhenAll(tasks);
+
+            hashes.Should().AllSatisfy(h => h.Should().NotBeNullOrWhiteSpace());
+            hashes.Distinct().Should().ContainSingle();
+
+            var variantPath = store.ResolveVariantFilePath(hashes[0]!, "poster_800.webp");
+            variantPath.Should().NotBeNull();
+            new FileInfo(variantPath!).Length.Should().BeGreaterThan(0);
         }
         finally
         {

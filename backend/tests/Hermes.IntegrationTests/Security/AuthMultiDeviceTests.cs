@@ -177,6 +177,121 @@ public class AuthMultiDeviceTests
         badResponse.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
+    [Fact]
+    public async Task Register_ConcurrentSingleUseInvite_AndCaseInsensitiveUsername_EnforceAtomicity()
+    {
+        await using var factory = new PostgresWebApplicationFactory();
+        await factory.InitializeAsync();
+
+        using var client = factory.CreateClient();
+        await client.PostAsJsonAsync("/api/v1/setup", new SetupRequest("admin", "AdminPass!123", "Hermes Home"));
+        var adminLogin = await LoginAsync(client, "admin", "AdminPass!123", "admin-pc", "Admin Workstation");
+
+        using var adminClient = factory.CreateClient();
+        adminClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", adminLogin.AccessToken);
+
+        var singleInvite = (await (await adminClient.PostAsJsonAsync("/api/v1/admin/invites", new CreateInviteRequest(MaxUses: 1, ExpiresInHours: 24)))
+            .Content.ReadFromJsonAsync<InviteResponse>())!;
+
+        // 6 concurrent registrations against a MaxUses=1 invite: only 1 may succeed.
+        var barrier = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var registerTasks = Enumerable.Range(0, 6).Select(async idx =>
+        {
+            await barrier.Task;
+            using var raceClient = factory.CreateClient();
+            return await raceClient.PostAsJsonAsync(
+                "/api/v1/auth/register",
+                new RegisterRequest($"racer_{idx}", "RacerPass!123", singleInvite.Code));
+        }).ToArray();
+
+        barrier.SetResult();
+        var responses = await Task.WhenAll(registerTasks);
+        responses.Count(r => r.StatusCode == HttpStatusCode.Created).Should().Be(1);
+        responses.Count(r => r.StatusCode == HttpStatusCode.BadRequest).Should().Be(5);
+
+        // Case-insensitive duplicate username ("ADMIN") must be rejected with 409 Conflict.
+        var extraInvite = (await (await adminClient.PostAsJsonAsync("/api/v1/admin/invites", new CreateInviteRequest(MaxUses: 2, ExpiresInHours: 24)))
+            .Content.ReadFromJsonAsync<InviteResponse>())!;
+        var duplicateCase = await client.PostAsJsonAsync(
+            "/api/v1/auth/register",
+            new RegisterRequest("ADMIN", "OtherPass!123", extraInvite.Code));
+        duplicateCase.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+
+    [Fact]
+    public async Task Refresh_ConcurrentReplay_AllowsOnlySingleRotation()
+    {
+        await using var factory = new PostgresWebApplicationFactory();
+        await factory.InitializeAsync();
+
+        using var client = factory.CreateClient();
+        await client.PostAsJsonAsync("/api/v1/setup", new SetupRequest("admin", "AdminPass!123", "Hermes Home"));
+        var login = await LoginAsync(client, "admin", "AdminPass!123", "admin-pc", "Admin Workstation");
+
+        var barrier = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var refreshTasks = Enumerable.Range(0, 6).Select(async _ =>
+        {
+            await barrier.Task;
+            using var raceClient = factory.CreateClient();
+            return await raceClient.PostAsJsonAsync(
+                "/api/v1/auth/refresh",
+                new RefreshTokenRequest("admin-pc", login.RefreshToken));
+        }).ToArray();
+
+        barrier.SetResult();
+        var responses = await Task.WhenAll(refreshTasks);
+        responses.Count(r => r.StatusCode == HttpStatusCode.OK).Should().Be(1);
+        responses.Count(r => r.StatusCode == HttpStatusCode.Unauthorized).Should().Be(5);
+    }
+
+    [Fact]
+    public async Task JwtValidation_RejectsTokensIssuedBeforePasswordChange_AndDeactivatedUsers()
+    {
+        await using var factory = new PostgresWebApplicationFactory();
+        await factory.InitializeAsync();
+
+        using var client = factory.CreateClient();
+        await client.PostAsJsonAsync("/api/v1/setup", new SetupRequest("admin", "AdminPass!123", "Hermes Home"));
+        var adminLogin = await LoginAsync(client, "admin", "AdminPass!123", "admin-pc", "Admin Workstation");
+
+        using var adminClient = factory.CreateClient();
+        adminClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", adminLogin.AccessToken);
+
+        var invite = (await (await adminClient.PostAsJsonAsync("/api/v1/admin/invites", new CreateInviteRequest(1, 24)))
+            .Content.ReadFromJsonAsync<InviteResponse>())!;
+        (await client.PostAsJsonAsync("/api/v1/auth/register", new RegisterRequest("charlie", "CharliePass!123", invite.Code)))
+            .StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var charlieSession1 = await LoginAsync(client, "charlie", "CharliePass!123", "dev-1", "Phone");
+        using var oldTokenClient = factory.CreateClient();
+        oldTokenClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", charlieSession1.AccessToken);
+        (await oldTokenClient.GetAsync("/api/v1/auth/me/preferences")).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // Advance past iat_ms tick before password change.
+        await Task.Delay(25);
+        (await oldTokenClient.PostAsJsonAsync(
+            "/api/v1/auth/change-password",
+            new ChangePasswordRequest("CharliePass!123", "CharlieNew!456"))).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // Pre-change JWT must immediately fail for both endpoints and stream tickets.
+        (await oldTokenClient.GetAsync("/api/v1/auth/me/preferences")).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        (await oldTokenClient.PostAsJsonAsync("/api/v1/auth/stream-tickets", new CreateStreamTicketRequest(Guid.NewGuid())))
+            .StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+
+        // Fresh login after password change works immediately.
+        var charlieSession2 = await LoginAsync(client, "charlie", "CharlieNew!456", "dev-1", "Phone");
+        using var freshTokenClient = factory.CreateClient();
+        freshTokenClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", charlieSession2.AccessToken);
+        (await freshTokenClient.GetAsync("/api/v1/auth/me/preferences")).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // Admin deactivates Charlie -> fresh JWT must be rejected immediately.
+        (await adminClient.DeleteAsync($"/api/v1/admin/users/{charlieSession2.UserId}"))
+            .StatusCode.Should().Be(HttpStatusCode.NoContent);
+        (await freshTokenClient.GetAsync("/api/v1/auth/me/preferences")).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        (await freshTokenClient.PostAsJsonAsync("/api/v1/auth/stream-tickets", new CreateStreamTicketRequest(Guid.NewGuid())))
+            .StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
     private static async Task<AuthTokenResponse> LoginAsync(
         HttpClient client,
         string username,

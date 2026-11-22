@@ -544,6 +544,7 @@ namespace Hermes.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<long>("Version")
+                        .IsConcurrencyToken()
                         .HasColumnType("bigint");
 
                     b.Property<double>("Volume")
@@ -759,6 +760,8 @@ namespace Hermes.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("FilePath")
                         .IsUnique();
+
+                    b.HasIndex("LibraryRootId");
 
                     b.HasIndex("Title")
                         .HasDatabaseName("IX_Songs_Title_Trgm");

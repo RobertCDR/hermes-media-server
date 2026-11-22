@@ -1,3 +1,4 @@
+using System.Text.Json;
 using FluentAssertions;
 using Hermes.Domain.Common;
 using Hermes.Domain.Entities;
@@ -115,5 +116,77 @@ public class ParityDomainTests
         session.ActiveRendererDeviceId.Should().Be("dev-phone");
         session.ActiveRendererDeviceName.Should().Be("Honor Phone");
         session.State.Should().Be(PlaybackState.Playing);
+    }
+
+    [Fact]
+    public void PlaybackSession_ApplyRemoteTransport_IgnoresNonFiniteVolume_AndValidatesEnums()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var session = PlaybackSession.CreateForUser(Guid.NewGuid());
+        session.StartPlayback("dev-pc", "Windows PC", [Guid.NewGuid()], 0, now);
+
+        session.ApplyRemoteTransport(
+            PlaybackState.Playing,
+            currentIndex: 0,
+            positionMs: 1_000,
+            now.AddSeconds(1),
+            volume: 0.65);
+
+        session.ApplyRemoteTransport(
+            PlaybackState.Playing,
+            currentIndex: 0,
+            positionMs: 2_000,
+            now.AddSeconds(2),
+            volume: double.NaN);
+
+        session.ApplyRemoteTransport(
+            PlaybackState.Playing,
+            currentIndex: 0,
+            positionMs: 3_000,
+            now.AddSeconds(3),
+            volume: double.PositiveInfinity);
+
+        session.Volume.Should().Be(0.65);
+        var serialize = () => JsonSerializer.Serialize(session);
+        serialize.Should().NotThrow();
+
+        var badState = () => session.ApplyRemoteTransport((PlaybackState)99, 0, 0, now.AddSeconds(4));
+        badState.Should().Throw<ArgumentOutOfRangeException>();
+
+        var badRepeat = () => session.ApplyRemoteTransport(PlaybackState.Playing, 0, 0, now.AddSeconds(4), repeatMode: (RepeatMode)99);
+        badRepeat.Should().Throw<ArgumentOutOfRangeException>();
+    }
+
+    [Fact]
+    public void PlaybackSession_RemoveSongsFromQueue_PreservesPausedState_AndStopsWhenEmptied()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var s1 = Guid.NewGuid();
+        var s2 = Guid.NewGuid();
+        var s3 = Guid.NewGuid();
+        var session = PlaybackSession.CreateForUser(Guid.NewGuid());
+        session.StartPlayback("dev-pc", "Windows PC", [s1, s2, s3], 1, now);
+        session.ApplyRemoteTransport(PlaybackState.Paused, 1, 15_000, now.AddSeconds(2));
+
+        // Remove first song while paused: keeps s2 active & preserves Paused state + PositionMs.
+        session.RemoveSongsFromQueue(new HashSet<Guid> { s1 }, now.AddSeconds(3)).Should().BeTrue();
+        session.State.Should().Be(PlaybackState.Paused);
+        session.QueueSongIds.Should().Equal(s2, s3);
+        session.CurrentIndex.Should().Be(0);
+        session.CurrentSongId.Should().Be(s2);
+        session.PositionMs.Should().Be(15_000);
+
+        // Remove current song while paused: falls back to remaining track, stays Paused (never forces Playing).
+        session.RemoveSongsFromQueue(new HashSet<Guid> { s2 }, now.AddSeconds(4)).Should().BeTrue();
+        session.State.Should().Be(PlaybackState.Paused);
+        session.QueueSongIds.Should().Equal(s3);
+        session.CurrentSongId.Should().Be(s3);
+        session.PositionMs.Should().Be(0);
+
+        // Removing final song transitions cleanly to Stopped.
+        session.RemoveSongsFromQueue(new HashSet<Guid> { s3 }, now.AddSeconds(5)).Should().BeTrue();
+        session.State.Should().Be(PlaybackState.Stopped);
+        session.QueueSongIds.Should().BeEmpty();
+        session.CurrentSongId.Should().BeNull();
     }
 }

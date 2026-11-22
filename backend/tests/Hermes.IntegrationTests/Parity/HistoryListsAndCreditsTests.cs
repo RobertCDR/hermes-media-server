@@ -60,10 +60,11 @@ public class HistoryListsAndCreditsTests
             song.ArtistCredits.Should().NotBeNull();
             song.ArtistCredits!.Select(c => c.Name).Should().Equal("Daft Punk", "Pharrell Williams", "Nile Rodgers");
 
-            // Secondary artist detail page also lists the shared track.
+            // Secondary artist detail page also lists the shared track and album displays true album artist.
             var pharrellId = song.ArtistCredits!.Single(c => c.Name == "Pharrell Williams").ArtistId;
             var pharrellDetail = await adminClient.GetFromJsonAsync<ArtistDetailDto>($"/api/v1/music/artists/{pharrellId}");
             pharrellDetail!.Songs.Should().ContainSingle(s => s.Id == song.Id);
+            pharrellDetail.Albums.Should().ContainSingle(a => a.Title == "Random Access Memories" && a.ArtistName == "Daft Punk");
 
             // Listening history rejects below threshold, accepts >= 30s, and dedupes within 10 minutes.
             var tooShort = await adminClient.PostAsJsonAsync(
@@ -108,6 +109,7 @@ public class HistoryListsAndCreditsTests
         using var adminClient = await CreateAuthenticatedAdminClientAsync(factory);
 
         Guid movieId;
+        Guid movie2Id;
         Guid seriesId;
         using (var scope = factory.Services.CreateScope())
         {
@@ -115,12 +117,14 @@ public class HistoryListsAndCreditsTests
             var moviesRoot = new MediaLibraryRoot("Movies", LibraryMediaType.Movies, "/tmp/movies-list", false);
             var seriesRoot = new MediaLibraryRoot("Series", LibraryMediaType.Series, "/tmp/series-list", false);
             var movie = new Movie(moviesRoot.Id, "Dune", 2021);
+            var movie2 = new Movie(moviesRoot.Id, "Arrival", 2016);
             var series = new TvSeries(seriesRoot.Id, "Andor", 2022);
             db.MediaLibraryRoots.AddRange(moviesRoot, seriesRoot);
-            db.Movies.Add(movie);
+            db.Movies.AddRange(movie, movie2);
             db.TvSeries.Add(series);
             await db.SaveChangesAsync();
             movieId = movie.Id;
+            movie2Id = movie2.Id;
             seriesId = series.Id;
         }
 
@@ -158,11 +162,20 @@ public class HistoryListsAndCreditsTests
         renamed!.Name.Should().Be("Late Night Watch");
         renamed.Description.Should().Be("Top picks");
 
-        // Remove movie by target query, remove series by item ID.
+        // Remove movie by target query, add another item after deletion (verifies monotonic Position), then clean up.
         var afterRemoveMovie = await (await adminClient.DeleteAsync(
             $"/api/v1/cinema/lists/{created.Id}/items?movieId={movieId}"))
             .Content.ReadFromJsonAsync<CustomListDto>();
         afterRemoveMovie!.Items.Should().ContainSingle(i => i.TvSeriesId == seriesId);
+
+        var afterAppendMovie2 = await (await adminClient.PostAsJsonAsync(
+            $"/api/v1/cinema/lists/{created.Id}/items",
+            new AddCustomListItemRequest(movie2Id, null)))
+            .Content.ReadFromJsonAsync<CustomListDto>();
+        afterAppendMovie2!.Items.Select(i => i.Title).Should().Equal("Andor", "Arrival");
+
+        (await adminClient.DeleteAsync($"/api/v1/cinema/lists/{created.Id}/items?movieId={movie2Id}"))
+            .StatusCode.Should().Be(HttpStatusCode.OK);
 
         var remainingItemId = afterRemoveMovie.Items.Single().Id;
         var afterRemoveSeries = await (await adminClient.DeleteAsync(

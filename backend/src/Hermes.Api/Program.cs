@@ -1,7 +1,11 @@
 using System.Collections.Concurrent;
+using System.Globalization;
+using System.Net;
+using System.Net.Sockets;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading.RateLimiting;
 using Hermes.Api.Features.Admin;
 using Hermes.Api.Features.Auth;
 using Hermes.Api.Features.Cinema;
@@ -18,7 +22,6 @@ using Hermes.Infrastructure.Persistence;
 using Hermes.Infrastructure.Realtime;
 using Hermes.Infrastructure.Security;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 
@@ -57,7 +60,10 @@ builder.Services.AddSingleton<IStreamTicketService>(sp =>
         sp.GetRequiredService<TimeProvider>());
 });
 
-builder.Services.AddHttpClient<ITmdbClient, TmdbMetadataClient>();
+builder.Services.AddHttpClient<ITmdbClient, TmdbMetadataClient>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(15);
+});
 builder.Services.AddSingleton<IMediaProbeService, FfprobeMediaProbeService>();
 builder.Services.AddSingleton<IAudioMetadataReader, TagLibAudioMetadataReader>();
 builder.Services.AddSingleton<IArtworkStore>(sp =>
@@ -130,6 +136,40 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
                 }
 
                 return Task.CompletedTask;
+            },
+            OnTokenValidated = async context =>
+            {
+                if (context.Principal is null || !context.Principal.TryGetUserId(out var userId))
+                {
+                    context.Fail("missing_user_id");
+                    return;
+                }
+
+                var db = context.HttpContext.RequestServices.GetRequiredService<HermesDbContext>();
+                var userState = await db.Users
+                    .AsNoTracking()
+                    .Where(u => u.Id == userId)
+                    .Select(u => new { u.IsActive, u.PasswordChangedAtUtc })
+                    .SingleOrDefaultAsync(context.HttpContext.RequestAborted);
+
+                if (userState is null || !userState.IsActive)
+                {
+                    context.Fail("user_inactive");
+                    return;
+                }
+
+                if (userState.PasswordChangedAtUtc is { } pwdChangedAt)
+                {
+                    var iatMsClaim = context.Principal.FindFirst("iat_ms")?.Value;
+                    var issuedAtUtc = long.TryParse(iatMsClaim, NumberStyles.Integer, CultureInfo.InvariantCulture, out var iatMs)
+                        ? DateTimeOffset.FromUnixTimeMilliseconds(iatMs)
+                        : new DateTimeOffset(DateTime.SpecifyKind(context.SecurityToken.ValidFrom, DateTimeKind.Utc));
+
+                    if (issuedAtUtc < pwdChangedAt)
+                    {
+                        context.Fail("token_revoked");
+                    }
+                }
             }
         };
     });
@@ -137,27 +177,62 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
 builder.Services.AddAuthorizationBuilder()
     .AddPolicy("AdminOnly", policy => policy.RequireRole(nameof(UserRole.Admin)));
 
+var configuredCorsOrigins = builder.Configuration.GetSection("Hermes:CorsAllowedOrigins").Get<string[]>()?
+    .Where(o => !string.IsNullOrWhiteSpace(o))
+    .Select(o => o.Trim())
+    .ToArray();
+
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
-        policy.SetIsOriginAllowed(_ => true)
-            .AllowAnyHeader()
-            .AllowAnyMethod()
-            .AllowCredentials());
+    {
+        if (configuredCorsOrigins is { Length: > 0 })
+        {
+            policy.WithOrigins(configuredCorsOrigins)
+                .AllowAnyHeader()
+                .AllowAnyMethod()
+                .AllowCredentials();
+        }
+        else
+        {
+            policy.SetIsOriginAllowed(IsLocalOrPrivateNetworkOrigin)
+                .AllowAnyHeader()
+                .AllowAnyMethod()
+                .AllowCredentials();
+        }
+    });
 });
 
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-    options.AddFixedWindowLimiter("auth", limiter =>
+    options.AddPolicy("auth", httpContext =>
     {
-        limiter.PermitLimit = 100;
-        limiter.Window = TimeSpan.FromMinutes(1);
-        limiter.QueueLimit = 0;
+        var partitionKey = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey,
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 100,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            });
     });
 });
 
 var app = builder.Build();
+
+foreach (var (secretKey, minBytes) in new[] { ("Security:JwtSigningKey", 32), ("Security:StreamTicketSecret", 16) })
+{
+    var configuredValue = app.Configuration[secretKey];
+    if (string.IsNullOrWhiteSpace(configuredValue) || Encoding.UTF8.GetByteCount(configuredValue) < minBytes)
+    {
+        app.Logger.LogWarning(
+            "Generated an ephemeral runtime secret for {ConfigKey}. Configure a persistent key before deploying to production.",
+            secretKey);
+    }
+}
 
 try
 {
@@ -205,9 +280,9 @@ try
         }
     }
 }
-catch (Exception)
+catch (Exception ex)
 {
-    // Startup continues when running in environments without an active PostgreSQL instance (e.g., lightweight health probes).
+    app.Logger.LogError(ex, "Startup database migration or initialization failed; continuing without DB bootstrap.");
 }
 
 app.UseCors();
@@ -234,5 +309,57 @@ app.MapPlaylistEndpoints();
 app.MapHub<PlaybackSyncHub>("/hubs/sync");
 
 await app.RunAsync();
+
+static bool IsLocalOrPrivateNetworkOrigin(string origin)
+{
+    if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri) ||
+        (!string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) &&
+         !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)))
+    {
+        return false;
+    }
+
+    var host = uri.Host;
+    if (uri.IsLoopback ||
+        string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase) ||
+        host.EndsWith(".local", StringComparison.OrdinalIgnoreCase) ||
+        host.EndsWith(".ts.net", StringComparison.OrdinalIgnoreCase))
+    {
+        return true;
+    }
+
+    if (!IPAddress.TryParse(host, out var ip))
+    {
+        return false;
+    }
+
+    if (ip.IsIPv4MappedToIPv6)
+    {
+        ip = ip.MapToIPv4();
+    }
+
+    if (IPAddress.IsLoopback(ip))
+    {
+        return true;
+    }
+
+    if (ip.AddressFamily == AddressFamily.InterNetwork)
+    {
+        var bytes = ip.GetAddressBytes();
+        return bytes[0] == 10 ||
+               (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) ||
+               (bytes[0] == 192 && bytes[1] == 168) ||
+               (bytes[0] == 100 && bytes[1] >= 64 && bytes[1] <= 127) ||
+               (bytes[0] == 169 && bytes[1] == 254);
+    }
+
+    if (ip.AddressFamily == AddressFamily.InterNetworkV6)
+    {
+        var bytes = ip.GetAddressBytes();
+        return ip.IsIPv6LinkLocal || ip.IsIPv6SiteLocal || (bytes[0] & 0xFE) == 0xFC;
+    }
+
+    return false;
+}
 
 public partial class Program;
