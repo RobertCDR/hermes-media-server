@@ -10,7 +10,8 @@ namespace Hermes.Api.Hubs;
 public sealed class PlaybackSyncHub(
     PlaybackConnectService connectService,
     IDevicePresenceRegistry presenceRegistry,
-    TimeProvider timeProvider) : Hub
+    TimeProvider timeProvider,
+    ILogger<PlaybackSyncHub>? logger = null) : Hub
 {
     public static string UserGroupName(Guid userId) => $"user:{userId:D}";
 
@@ -41,7 +42,7 @@ public sealed class PlaybackSyncHub(
         if (removed is { } info)
         {
             var groupName = UserGroupName(info.UserId);
-            if (!presenceRegistry.IsDeviceConnected(info.UserId, info.DeviceId))
+            try
             {
                 var pausedSession = await connectService.HandleDisconnectAsync(
                     info.UserId,
@@ -52,6 +53,10 @@ public sealed class PlaybackSyncHub(
                 {
                     await Clients.Group(groupName).SendAsync("SessionStateUpdated", pausedSession, CancellationToken.None);
                 }
+            }
+            catch (Exception ex)
+            {
+                logger?.LogWarning(ex, "Failed to update playback session on disconnect for device {DeviceId}.", info.DeviceId);
             }
 
             var devices = MapDevices(presenceRegistry.GetOnlineDevices(info.UserId));
@@ -147,7 +152,17 @@ public sealed class PlaybackSyncHub(
             platform = "Unknown";
         }
 
-        return (userId, deviceId.Trim(), deviceName.Trim(), platform.Trim());
+        return (
+            userId,
+            ClampIdentifier(deviceId, 128),
+            ClampIdentifier(deviceName, 128),
+            ClampIdentifier(platform, 64));
+    }
+
+    private static string ClampIdentifier(string raw, int maxLength)
+    {
+        var trimmed = raw.Trim();
+        return trimmed.Length <= maxLength ? trimmed : trimmed[..maxLength];
     }
 
     private static IReadOnlyList<OnlineDeviceDto> MapDevices(IReadOnlyList<OnlineDeviceInfo> devices) =>

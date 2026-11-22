@@ -278,6 +278,7 @@ public sealed class HermesDbContext(DbContextOptions<HermesDbContext> options) :
             b.Property(s => s.Title).HasMaxLength(512).IsRequired();
             b.Property(s => s.FilePath).HasMaxLength(2048).IsRequired();
             b.Property(s => s.Codec).HasMaxLength(64).IsRequired();
+            b.HasIndex(s => s.LibraryRootId);
             b.HasIndex(s => s.FilePath).IsUnique();
             b.HasIndex(s => s.Title)
                 .HasDatabaseName("IX_Songs_Title_Trgm")
@@ -310,6 +311,7 @@ public sealed class HermesDbContext(DbContextOptions<HermesDbContext> options) :
         modelBuilder.Entity<PlaybackSession>(b =>
         {
             b.HasKey(s => s.Id);
+            b.Property(s => s.Version).IsConcurrencyToken();
             b.Property(s => s.ActiveRendererDeviceId).HasMaxLength(128);
             b.Property(s => s.ActiveRendererDeviceName).HasMaxLength(128);
             b.HasIndex(s => s.UserId).IsUnique();

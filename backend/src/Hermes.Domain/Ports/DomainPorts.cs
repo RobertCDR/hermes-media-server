@@ -122,9 +122,15 @@ public interface ITranscodeSessionManager
         string? clientSession = null);
 
     Task StopSessionAsync(Guid sessionId, CancellationToken cancellationToken);
+    Task<bool> TryStopUserSessionAsync(Guid sessionId, Guid userId, Guid mediaSourceId, CancellationToken cancellationToken) =>
+        Task.FromResult(false);
+    Task StopSessionsForMediaSourcesAsync(IReadOnlyCollection<Guid> mediaSourceIds, CancellationToken cancellationToken) =>
+        Task.CompletedTask;
     Task StopClientSessionsAsync(Guid userId, string clientSession, CancellationToken cancellationToken) =>
         Task.CompletedTask;
     string? ResolveHlsAssetPath(Guid sessionId, string fileName);
+    string? ResolveHlsAssetPath(Guid sessionId, string fileName, Guid expectedUserId, Guid expectedMediaSourceId) =>
+        ResolveHlsAssetPath(sessionId, fileName);
     IReadOnlyList<ActiveTranscodeSessionInfo> GetActiveSessions() => [];
 }
 

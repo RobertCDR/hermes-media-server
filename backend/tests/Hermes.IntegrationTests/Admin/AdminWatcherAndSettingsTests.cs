@@ -204,6 +204,69 @@ public class AdminWatcherAndSettingsTests
         }
     }
 
+    [Fact]
+    public async Task DeleteMusicLibraryRoot_PrunesPausedSessionWithoutResumingPlayback()
+    {
+        await using var factory = new PostgresWebApplicationFactory();
+        await factory.InitializeAsync();
+        using var adminClient = await CreateAuthenticatedAdminClientAsync(factory);
+
+        Guid lib1Id;
+        Guid lib2Id;
+        Guid song2Id;
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<HermesDbContext>();
+            var admin = await db.Users.SingleAsync();
+            var lib1 = new MediaLibraryRoot("Music 1", LibraryMediaType.Music, "/tmp/music-1", watchEnabled: false);
+            var lib2 = new MediaLibraryRoot("Music 2", LibraryMediaType.Music, "/tmp/music-2", watchEnabled: false);
+            var artist = new Artist("Artist");
+            var album = new Album(artist.Id, "Album", 2025);
+            var song1 = new Song(lib1.Id, artist.Id, album.Id, "Song 1", 1, 1, 180_000, "/tmp/music-1/1.flac", "flac", 900_000, 44_100, 16, 1000, DateTimeOffset.UtcNow);
+            var song2 = new Song(lib2.Id, artist.Id, album.Id, "Song 2", 2, 1, 180_000, "/tmp/music-2/2.flac", "flac", 900_000, 44_100, 16, 1000, DateTimeOffset.UtcNow);
+
+            var session = PlaybackSession.CreateForUser(admin.Id);
+            var now = DateTimeOffset.UtcNow;
+            session.StartPlayback("win-pc", "Windows", [song1.Id, song2.Id], 0, now);
+            session.ApplyRemoteTransport(PlaybackState.Paused, 0, 22_000, now.AddSeconds(5));
+
+            db.MediaLibraryRoots.AddRange(lib1, lib2);
+            db.Artists.Add(artist);
+            db.Albums.Add(album);
+            db.Songs.AddRange(song1, song2);
+            db.PlaybackSessions.Add(session);
+            await db.SaveChangesAsync();
+
+            lib1Id = lib1.Id;
+            lib2Id = lib2.Id;
+            song2Id = song2.Id;
+        }
+
+        (await adminClient.DeleteAsync($"/api/v1/admin/libraries/{lib1Id}"))
+            .StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<HermesDbContext>();
+            var updated = await db.PlaybackSessions.SingleAsync();
+            updated.State.Should().Be(PlaybackState.Paused);
+            updated.QueueSongIds.Should().Equal(song2Id);
+            updated.CurrentSongId.Should().Be(song2Id);
+        }
+
+        (await adminClient.DeleteAsync($"/api/v1/admin/libraries/{lib2Id}"))
+            .StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<HermesDbContext>();
+            var emptied = await db.PlaybackSessions.SingleAsync();
+            emptied.State.Should().Be(PlaybackState.Stopped);
+            emptied.QueueSongIds.Should().BeEmpty();
+            emptied.CurrentSongId.Should().BeNull();
+        }
+    }
+
     private static async Task<HttpClient> CreateAuthenticatedAdminClientAsync(PostgresWebApplicationFactory factory)
     {
         var client = factory.CreateClient();

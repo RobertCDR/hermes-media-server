@@ -1,3 +1,4 @@
+using Hermes.Api.Features.Auth;
 using Hermes.Domain.Entities;
 using Hermes.Domain.Enums;
 using Hermes.Domain.Ports;
@@ -35,6 +36,11 @@ public static class SetupEndpoints
         if (string.IsNullOrWhiteSpace(request.Password) || request.Password.Length < 8)
         {
             return Results.BadRequest(new { error = "password_too_short" });
+        }
+
+        if (request.Password.Length > AuthEndpoints.MaxPasswordLength)
+        {
+            return Results.BadRequest(new { error = "password_too_long" });
         }
 
         if (string.IsNullOrWhiteSpace(request.ServerName))

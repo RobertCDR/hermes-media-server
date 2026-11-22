@@ -3,12 +3,18 @@ using System.Text.Json.Serialization;
 using Hermes.Domain.Enums;
 using Hermes.Domain.Ports;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 
 namespace Hermes.Infrastructure.Media;
 
-public sealed class TmdbMetadataClient(HttpClient httpClient, IConfiguration configuration) : ITmdbClient
+public sealed class TmdbMetadataClient(
+    HttpClient httpClient,
+    IConfiguration configuration,
+    ILogger<TmdbMetadataClient>? logger = null) : ITmdbClient
 {
     private const string ImageBaseUrl = "https://image.tmdb.org/t/p/original";
+    private const string AllowedImageHost = "image.tmdb.org";
+    private const int MaxImageDownloadBytes = 15 * 1024 * 1024;
 
     public async Task<IReadOnlyList<TmdbSearchCandidate>> SearchAsync(
         LibraryMediaType mediaType,
@@ -106,17 +112,55 @@ public sealed class TmdbMetadataClient(HttpClient httpClient, IConfiguration con
             return null;
         }
 
-        var fullUrl = remotePath.StartsWith("http", StringComparison.OrdinalIgnoreCase)
-            ? remotePath
-            : $"{ImageBaseUrl}{remotePath}";
+        var trimmed = remotePath.Trim();
+        var candidateUrl = trimmed.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+            ? trimmed
+            : $"{ImageBaseUrl}{(trimmed.StartsWith('/') ? trimmed : "/" + trimmed)}";
 
-        using var response = await httpClient.GetAsync(fullUrl, cancellationToken);
-        if (!response.IsSuccessStatusCode)
+        if (!Uri.TryCreate(candidateUrl, UriKind.Absolute, out var uri) ||
+            !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(uri.Host, AllowedImageHost, StringComparison.OrdinalIgnoreCase))
         {
+            logger?.LogWarning("Rejected non-TMDb image download URL host/scheme.");
             return null;
         }
 
-        return await response.Content.ReadAsByteArrayAsync(cancellationToken);
+        try
+        {
+            using var response = await httpClient.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            if (response.Content.Headers.ContentLength is > MaxImageDownloadBytes)
+            {
+                logger?.LogWarning("Rejected oversized TMDb image response ({ContentLength} bytes).", response.Content.Headers.ContentLength);
+                return null;
+            }
+
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            using var buffer = new MemoryStream();
+            var chunk = new byte[81920];
+            int bytesRead;
+            while ((bytesRead = await stream.ReadAsync(chunk, cancellationToken)) > 0)
+            {
+                if (buffer.Length + bytesRead > MaxImageDownloadBytes)
+                {
+                    logger?.LogWarning("Aborted oversized TMDb image download exceeding {Limit} bytes.", MaxImageDownloadBytes);
+                    return null;
+                }
+
+                buffer.Write(chunk, 0, bytesRead);
+            }
+
+            return buffer.ToArray();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            logger?.LogWarning(ex, "Failed to download TMDb artwork image.");
+            return null;
+        }
     }
 
     public async Task<IReadOnlyList<TmdbEpisodeCandidate>> GetSeasonEpisodesAsync(

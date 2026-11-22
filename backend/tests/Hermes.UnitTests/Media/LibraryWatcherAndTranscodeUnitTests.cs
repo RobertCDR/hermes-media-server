@@ -216,4 +216,92 @@ public class LibraryWatcherAndTranscodeUnitTests
             }
         }
     }
+
+    [Fact]
+    public async Task LibraryScanWorker_SurvivesThrowingScan_AndContinuesProcessingNextRoot()
+    {
+        var channel = new LibraryScanChannel();
+        var secondProcessed = new TaskCompletionSource<Guid>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var scopeFactory = new ThrowingThenSignalingScopeFactory(secondProcessed);
+        using var worker = new LibraryScanWorker(channel, scopeFactory, NullLogger<LibraryScanWorker>.Instance);
+
+        var root1 = Guid.NewGuid();
+        var root2 = Guid.NewGuid();
+        await channel.EnqueueScanAsync(root1, CancellationToken.None);
+        await channel.EnqueueScanAsync(root2, CancellationToken.None);
+
+        await worker.StartAsync(CancellationToken.None);
+        var completed = await Task.WhenAny(secondProcessed.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        completed.Should().Be(secondProcessed.Task);
+        await worker.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task LibraryWatcherService_ConcurrentBurstAndDispose_DoesNotThrow()
+    {
+        var services = new ServiceCollection();
+        await using var provider = services.BuildServiceProvider();
+        var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
+        var channel = new LibraryScanChannel();
+        var watcher = new LibraryWatcherService(
+            scopeFactory,
+            channel,
+            NullLogger<LibraryWatcherService>.Instance,
+            debounceDelay: TimeSpan.FromMilliseconds(15),
+            syncInterval: TimeSpan.FromMinutes(5));
+
+        var libId = Guid.NewGuid();
+        var scheduleTasks = Enumerable.Range(0, 20).Select(_ => Task.Run(async () =>
+        {
+            for (var i = 0; i < 15; i++)
+            {
+                watcher.ScheduleDebouncedScan(libId);
+                await Task.Delay(2);
+            }
+        }));
+
+        await Task.Delay(20);
+        watcher.Dispose();
+        await Task.WhenAll(scheduleTasks);
+    }
+
+    [Fact]
+    public void LibraryScannerService_ShouldIgnorePath_DoesNotIgnoreTrailerTitle_ButIgnoresExtrasAndTrailerSuffix()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "hermes-ignore-test");
+
+        LibraryScannerService.ShouldIgnorePath(
+            root,
+            Path.Combine(root, "Trailer Park Boys (2001)", "Season 01", "S01E01.mkv")).Should().BeFalse();
+        LibraryScannerService.ShouldIgnorePath(
+            root,
+            Path.Combine(root, "The Sampler Movie (2020)", "The Sampler Movie (2020) - 1080p.mkv")).Should().BeFalse();
+
+        LibraryScannerService.ShouldIgnorePath(
+            root,
+            Path.Combine(root, "Dune (2021)", "Extras", "trailer.mkv")).Should().BeTrue();
+        LibraryScannerService.ShouldIgnorePath(
+            root,
+            Path.Combine(root, "Dune (2021)", "Dune (2021)-trailer.mkv")).Should().BeTrue();
+        LibraryScannerService.ShouldIgnorePath(
+            root,
+            Path.Combine(root, "Dune (2021)", "sample.mkv")).Should().BeTrue();
+    }
+
+    private sealed class ThrowingThenSignalingScopeFactory(TaskCompletionSource<Guid> secondProcessed) : IServiceScopeFactory
+    {
+        private int _calls;
+
+        public IServiceScope CreateScope()
+        {
+            var callNumber = Interlocked.Increment(ref _calls);
+            if (callNumber == 1)
+            {
+                throw new InvalidOperationException("Simulated library scan crash.");
+            }
+
+            secondProcessed.TrySetResult(Guid.NewGuid());
+            throw new InvalidOperationException("Stop before resolving scoped DbContext in unit test.");
+        }
+    }
 }

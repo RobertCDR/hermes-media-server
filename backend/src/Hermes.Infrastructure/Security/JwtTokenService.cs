@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
@@ -47,7 +48,8 @@ public sealed class JwtTokenService : ITokenService
             [
                 new Claim(ClaimTypes.NameIdentifier, userId.ToString()),
                 new Claim(ClaimTypes.Name, username),
-                new Claim(ClaimTypes.Role, role.ToString())
+                new Claim(ClaimTypes.Role, role.ToString()),
+                new Claim("iat_ms", now.ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture))
             ]),
             IssuedAt = now.UtcDateTime,
             NotBefore = now.UtcDateTime,

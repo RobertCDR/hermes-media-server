@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using Hermes.Domain.Ports;
 using SkiaSharp;
@@ -16,6 +17,8 @@ public sealed class SkiaArtworkStore : IArtworkStore
     private static readonly HashSet<string> AllowedVariantNames =
         new(Variants.Select(v => v.FileName), StringComparer.Ordinal);
 
+    private static readonly ConcurrentDictionary<string, Lock> WriteLocks = new(StringComparer.Ordinal);
+
     private readonly string _artworkRoot;
 
     public SkiaArtworkStore(string artworkRootDirectory)
@@ -33,27 +36,60 @@ public sealed class SkiaArtworkStore : IArtworkStore
             return Task.FromResult<string?>(null);
         }
 
-        using var sourceBitmap = SKBitmap.Decode(sourceImageBytes);
-        if (sourceBitmap is null || sourceBitmap.Width <= 0 || sourceBitmap.Height <= 0)
-        {
-            return Task.FromResult<string?>(null);
-        }
-
         var hash = Convert.ToHexStringLower(SHA256.HashData(sourceImageBytes));
         var targetDirectory = Path.Combine(_artworkRoot, hash);
-        Directory.CreateDirectory(targetDirectory);
+        if (AllVariantsExist(targetDirectory))
+        {
+            return Task.FromResult<string?>(hash);
+        }
 
-        foreach (var (fileName, targetWidth) in Variants)
+        var hashLock = WriteLocks.GetOrAdd(targetDirectory, _ => new Lock());
+        lock (hashLock)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var outputPath = Path.Combine(targetDirectory, fileName);
-            if (!File.Exists(outputPath))
+            if (AllVariantsExist(targetDirectory))
             {
-                WriteWebpVariant(sourceBitmap, targetWidth, outputPath);
+                return Task.FromResult<string?>(hash);
+            }
+
+            using var sourceBitmap = SKBitmap.Decode(sourceImageBytes);
+            if (sourceBitmap is null || sourceBitmap.Width <= 0 || sourceBitmap.Height <= 0)
+            {
+                return Task.FromResult<string?>(null);
+            }
+
+            Directory.CreateDirectory(targetDirectory);
+
+            foreach (var (fileName, targetWidth) in Variants)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var outputPath = Path.Combine(targetDirectory, fileName);
+                if (!File.Exists(outputPath))
+                {
+                    WriteWebpVariant(sourceBitmap, targetWidth, outputPath);
+                }
             }
         }
 
         return Task.FromResult<string?>(hash);
+    }
+
+    private static bool AllVariantsExist(string targetDirectory)
+    {
+        if (!Directory.Exists(targetDirectory))
+        {
+            return false;
+        }
+
+        foreach (var (fileName, _) in Variants)
+        {
+            if (!File.Exists(Path.Combine(targetDirectory, fileName)))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     public string? ResolveVariantFilePath(string artworkHash, string variant)
@@ -81,9 +117,40 @@ public sealed class SkiaArtworkStore : IArtworkStore
 
         using var resized = source.Resize(new SKImageInfo(width, height), SKSamplingOptions.Default)
             ?? throw new InvalidOperationException("Failed to resize artwork bitmap.");
-        using var image = SKImage.FromBitmap(resized);
-        using var data = image.Encode(SKEncodedImageFormat.Webp, 82);
-        using var fileStream = File.Create(outputPath);
-        data.SaveTo(fileStream);
+        using var image = SKImage.FromBitmap(resized)
+            ?? throw new InvalidOperationException("Failed to materialize artwork image.");
+        using var data = image.Encode(SKEncodedImageFormat.Webp, 82)
+            ?? throw new InvalidOperationException("Failed to encode artwork bitmap as WebP.");
+
+        var tempPath = $"{outputPath}.{Guid.NewGuid():N}.tmp";
+        try
+        {
+            using (var fileStream = new FileStream(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                data.SaveTo(fileStream);
+            }
+
+            File.Move(tempPath, outputPath, overwrite: true);
+        }
+        catch
+        {
+            TryDeleteFile(tempPath);
+            throw;
+        }
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch
+        {
+            // Best-effort cleanup of incomplete temp artwork file.
+        }
     }
 }

@@ -252,6 +252,8 @@ public sealed class PlaybackSession
             ? QueueSongIds[CurrentIndex]
             : null;
 
+    public const int MaxQueueSize = 10_000;
+
     public static PlaybackSession CreateForUser(Guid userId) =>
         new(Guid.NewGuid(), userId, DateTimeOffset.UtcNow);
 
@@ -260,12 +262,12 @@ public sealed class PlaybackSession
         ArgumentException.ThrowIfNullOrWhiteSpace(deviceId);
         ArgumentException.ThrowIfNullOrWhiteSpace(deviceName);
 
-        QueueSongIds = [.. queueSongIds];
-        CurrentIndex = queueSongIds.Count == 0 ? 0 : Math.Clamp(startIndex, 0, queueSongIds.Count - 1);
+        QueueSongIds = [.. queueSongIds.Take(MaxQueueSize)];
+        CurrentIndex = QueueSongIds.Length == 0 ? 0 : Math.Clamp(startIndex, 0, QueueSongIds.Length - 1);
         PositionMs = 0;
         ActiveRendererDeviceId = deviceId;
         ActiveRendererDeviceName = deviceName;
-        State = queueSongIds.Count > 0 ? PlaybackState.Playing : PlaybackState.Stopped;
+        State = QueueSongIds.Length > 0 ? PlaybackState.Playing : PlaybackState.Stopped;
         Version++;
         UpdatedAtUtc = utcNow;
     }
@@ -282,9 +284,19 @@ public sealed class PlaybackSession
         string? callerDeviceId = null,
         string? callerDeviceName = null)
     {
+        if (!Enum.IsDefined(state))
+        {
+            throw new ArgumentOutOfRangeException(nameof(state));
+        }
+
+        if (repeatMode is RepeatMode rmCheck && !Enum.IsDefined(rmCheck))
+        {
+            throw new ArgumentOutOfRangeException(nameof(repeatMode));
+        }
+
         if (queueSongIds is { Count: > 0 })
         {
-            QueueSongIds = [.. queueSongIds];
+            QueueSongIds = [.. queueSongIds.Take(MaxQueueSize)];
         }
 
         State = state;
@@ -322,13 +334,59 @@ public sealed class PlaybackSession
             Shuffle = sh;
         }
 
-        if (volume is double vol)
+        if (volume is double vol && double.IsFinite(vol))
         {
             Volume = Math.Clamp(vol, 0.0, 1.0);
         }
 
         Version++;
         UpdatedAtUtc = utcNow;
+    }
+
+    public void ForceStop(DateTimeOffset utcNow)
+    {
+        State = PlaybackState.Stopped;
+        PositionMs = 0;
+        Version++;
+        UpdatedAtUtc = utcNow;
+    }
+
+    public bool RemoveSongsFromQueue(IReadOnlySet<Guid> removedSongIds, DateTimeOffset utcNow)
+    {
+        ArgumentNullException.ThrowIfNull(removedSongIds);
+        if (removedSongIds.Count == 0 || QueueSongIds.Length == 0)
+        {
+            return false;
+        }
+
+        var previousCurrentSongId = CurrentSongId;
+        var remaining = QueueSongIds.Where(id => !removedSongIds.Contains(id)).ToArray();
+        if (remaining.Length == QueueSongIds.Length)
+        {
+            return false;
+        }
+
+        QueueSongIds = remaining;
+        if (remaining.Length == 0)
+        {
+            CurrentIndex = 0;
+            PositionMs = 0;
+            State = PlaybackState.Stopped;
+        }
+        else if (previousCurrentSongId is Guid curId && !removedSongIds.Contains(curId))
+        {
+            var newIdx = Array.IndexOf(remaining, curId);
+            CurrentIndex = newIdx >= 0 ? newIdx : Math.Clamp(CurrentIndex, 0, remaining.Length - 1);
+        }
+        else
+        {
+            CurrentIndex = Math.Clamp(CurrentIndex, 0, remaining.Length - 1);
+            PositionMs = 0;
+        }
+
+        Version++;
+        UpdatedAtUtc = utcNow;
+        return true;
     }
 
     public void TransferOutput(string targetDeviceId, string targetDeviceName, DateTimeOffset utcNow, long? positionMs = null)

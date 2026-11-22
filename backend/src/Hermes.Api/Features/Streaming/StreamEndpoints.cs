@@ -75,6 +75,7 @@ public static class StreamEndpoints
         var preset = ParseVideoQuality(quality);
         if (preset == VideoQualityPreset.DirectPlay)
         {
+            httpContext.Response.Headers.CacheControl = "no-store";
             var directManifest = $"#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH={Math.Max(1_000_000, source.BitrateBps)}\n/api/v1/streams/{mediaSourceId}/direct?ticket={Uri.EscapeDataString(ticket!)}\n";
             return Results.Text(directManifest, "application/vnd.apple.mpegurl", Encoding.UTF8);
         }
@@ -107,6 +108,7 @@ public static class StreamEndpoints
         }
 
         httpContext.Response.Headers["X-Hermes-Transcode-Session"] = lease.SessionId.ToString("N");
+        httpContext.Response.Headers.CacheControl = "no-store";
         var bandwidth = preset switch
         {
             VideoQualityPreset.P480 => 1_500_000,
@@ -130,16 +132,17 @@ public static class StreamEndpoints
         Guid sessionId,
         string assetName,
         string? ticket,
+        HttpContext httpContext,
         IStreamTicketService ticketService,
         ITranscodeSessionManager transcodeManager,
         CancellationToken cancellationToken)
     {
-        if (!TryAuthorizeTicket(ticketService, ticket, mediaSourceId, out _))
+        if (!TryAuthorizeTicket(ticketService, ticket, mediaSourceId, out var userId))
         {
             return Results.StatusCode(StatusCodes.Status403Forbidden);
         }
 
-        var assetPath = transcodeManager.ResolveHlsAssetPath(sessionId, assetName);
+        var assetPath = transcodeManager.ResolveHlsAssetPath(sessionId, assetName, userId, mediaSourceId);
         if (assetPath is null)
         {
             return Results.NotFound();
@@ -147,6 +150,7 @@ public static class StreamEndpoints
 
         if (assetName.EndsWith(".m3u8", StringComparison.OrdinalIgnoreCase))
         {
+            httpContext.Response.Headers.CacheControl = "no-store";
             var rawPlaylist = await File.ReadAllTextAsync(assetPath, cancellationToken);
             var encodedTicket = Uri.EscapeDataString(ticket!);
             var rewritten = new StringBuilder();
@@ -178,13 +182,15 @@ public static class StreamEndpoints
         ITranscodeSessionManager transcodeManager,
         CancellationToken cancellationToken)
     {
-        if (!TryAuthorizeTicket(ticketService, ticket, mediaSourceId, out _))
+        if (!TryAuthorizeTicket(ticketService, ticket, mediaSourceId, out var userId))
         {
             return Results.StatusCode(StatusCodes.Status403Forbidden);
         }
 
-        await transcodeManager.StopSessionAsync(sessionId, cancellationToken);
-        return Results.NoContent();
+        var stopped = await transcodeManager.TryStopUserSessionAsync(sessionId, userId, mediaSourceId, cancellationToken);
+        return stopped
+            ? Results.NoContent()
+            : Results.NotFound(new { error = "transcode_session_not_found" });
     }
 
     private static async Task<IResult> StopClientHlsSessionsAsync(
@@ -251,15 +257,15 @@ public static class StreamEndpoints
         }
 
         var maxAudioSlots = settings?.MaxConcurrentAudioTranscodes ?? 4;
-        var transcoded = await sessionManager.TryTranscodeAudioToMp3Async(
+        var transcodedFilePath = await sessionManager.TryTranscodeAudioToMp3FileAsync(
             filePath,
             targetBitrateBps,
             cancellationToken,
             maxAudioSlots);
-        if (transcoded is { Length: > 0 })
+        if (!string.IsNullOrEmpty(transcodedFilePath) && File.Exists(transcodedFilePath))
         {
             httpContext.Response.Headers["X-Hermes-Delivery"] = "Transcoded";
-            return Results.File(transcoded, "audio/mpeg", enableRangeProcessing: true);
+            return Results.File(transcodedFilePath, "audio/mpeg", enableRangeProcessing: true);
         }
 
         httpContext.Response.Headers["X-Hermes-Delivery"] = "DirectPlay";
@@ -311,7 +317,8 @@ public static class StreamEndpoints
             return VideoQualityPreset.P720;
         }
 
-        if (Enum.TryParse<VideoQualityPreset>(raw.Trim(), ignoreCase: true, out var parsed))
+        if (Enum.TryParse<VideoQualityPreset>(raw.Trim(), ignoreCase: true, out var parsed) &&
+            Enum.IsDefined(parsed))
         {
             return parsed;
         }
@@ -333,7 +340,8 @@ public static class StreamEndpoints
             return AudioQualityPreset.High160;
         }
 
-        if (Enum.TryParse<AudioQualityPreset>(raw.Trim(), ignoreCase: true, out var parsed))
+        if (Enum.TryParse<AudioQualityPreset>(raw.Trim(), ignoreCase: true, out var parsed) &&
+            Enum.IsDefined(parsed))
         {
             return parsed;
         }

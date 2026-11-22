@@ -3,10 +3,11 @@ using System.Globalization;
 using System.Text.Json;
 using Hermes.Domain.Enums;
 using Hermes.Domain.Ports;
+using Microsoft.Extensions.Logging;
 
 namespace Hermes.Infrastructure.Media;
 
-public sealed class FfprobeMediaProbeService : IMediaProbeService
+public sealed class FfprobeMediaProbeService(ILogger<FfprobeMediaProbeService>? logger = null) : IMediaProbeService
 {
     public async Task<ProbedMediaInfo?> ProbeAsync(string filePath, CancellationToken cancellationToken)
     {
@@ -38,25 +39,42 @@ public sealed class FfprobeMediaProbeService : IMediaProbeService
 
             if (process.Start())
             {
-                var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-                var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
-
                 using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 timeoutCts.CancelAfter(TimeSpan.FromSeconds(10));
 
-                await process.WaitForExitAsync(timeoutCts.Token);
-                var json = await stdoutTask;
-                _ = await stderrTask;
-
-                if (process.ExitCode == 0 && TryParseFfprobeJson(filePath, json, out var parsed))
+                try
                 {
-                    return parsed;
+                    var stdoutTask = process.StandardOutput.ReadToEndAsync(timeoutCts.Token);
+                    var stderrTask = process.StandardError.ReadToEndAsync(timeoutCts.Token);
+
+                    await process.WaitForExitAsync(timeoutCts.Token);
+                    var json = await stdoutTask;
+                    _ = await stderrTask;
+
+                    if (process.ExitCode == 0 && TryParseFfprobeJson(filePath, json, out var parsed))
+                    {
+                        return parsed;
+                    }
+                }
+                finally
+                {
+                    if (!process.HasExited)
+                    {
+                        try
+                        {
+                            process.Kill(entireProcessTree: true);
+                        }
+                        catch
+                        {
+                            // Best-effort cleanup if process exited concurrently.
+                        }
+                    }
                 }
             }
         }
-        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
         {
-            // Fallback below handles dummy test files or environments lacking ffprobe.
+            logger?.LogDebug(ex, "ffprobe fell back to filename metadata for {FilePath}.", filePath);
         }
 
         return BuildFallbackFromFilename(filePath);

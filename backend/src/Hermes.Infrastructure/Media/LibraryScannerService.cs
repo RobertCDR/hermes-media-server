@@ -5,6 +5,7 @@ using Hermes.Domain.Enums;
 using Hermes.Domain.Ports;
 using Hermes.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace Hermes.Infrastructure.Media;
 
@@ -22,7 +23,8 @@ public sealed partial class LibraryScannerService(
     ITmdbClient tmdbClient,
     IArtworkStore artworkStore,
     TimeProvider timeProvider,
-    LibraryScanProgressTracker? scanProgress = null)
+    LibraryScanProgressTracker? scanProgress = null,
+    ILogger<LibraryScannerService>? logger = null)
 {
     private static readonly HashSet<string> VideoExtensions =
         new([".mkv", ".mp4", ".avi", ".mov", ".m4v", ".webm", ".ts"], StringComparer.OrdinalIgnoreCase);
@@ -49,7 +51,10 @@ public sealed partial class LibraryScannerService(
         };
     }
 
-    private static readonly string[] IgnoredTokens = ["extras", "trailers", "trailer", "sample"];
+    private static readonly HashSet<string> IgnoredFolderSegments =
+        new(["extras", "featurettes", "behind the scenes", "deleted scenes", "trailers", "trailer", "samples", "sample"], StringComparer.OrdinalIgnoreCase);
+
+    private static readonly string[] IgnoredFileSuffixes = ["-trailer", ".trailer", "_trailer", " trailer", "-sample", ".sample", "_sample", " sample"];
 
     public async Task<LibraryScanResult?> ScanLibraryAsync(Guid libraryRootId, CancellationToken cancellationToken)
     {
@@ -114,58 +119,70 @@ public sealed partial class LibraryScannerService(
         foreach (var filePath in files)
         {
             scanProgress?.Advance(root.Id);
-            var fileInfo = new FileInfo(filePath);
-            var lastWriteUtc = new DateTimeOffset(fileInfo.LastWriteTimeUtc, TimeSpan.Zero);
-
-            if (existingSourcesByPath.TryGetValue(filePath, out var existingSource))
+            try
             {
-                existingSource.UpdateFileFingerprint(fileInfo.Length, lastWriteUtc);
-                continue;
-            }
+                var fileInfo = new FileInfo(filePath);
+                if (!fileInfo.Exists)
+                {
+                    continue;
+                }
 
-            var (title, year, suffixLabel) = ParseMovieFilename(Path.GetFileNameWithoutExtension(filePath));
-            var movieKey = (NormalizeKey(title), year);
-            if (!moviesByKey.TryGetValue(movieKey, out var movie))
+                var lastWriteUtc = new DateTimeOffset(fileInfo.LastWriteTimeUtc, TimeSpan.Zero);
+
+                if (existingSourcesByPath.TryGetValue(filePath, out var existingSource))
+                {
+                    existingSource.UpdateFileFingerprint(fileInfo.Length, lastWriteUtc);
+                    continue;
+                }
+
+                var (title, year, suffixLabel) = ParseMovieFilename(Path.GetFileNameWithoutExtension(filePath));
+                var movieKey = (NormalizeKey(title), year);
+                if (!moviesByKey.TryGetValue(movieKey, out var movie))
+                {
+                    movie = new Movie(root.Id, title, year);
+                    db.Movies.Add(movie);
+                    moviesByKey[movieKey] = movie;
+                }
+
+                if (root.FetchMetadata)
+                {
+                    await TryEnrichMovieFromTmdbAsync(movie, title, year, cancellationToken);
+                }
+
+                var probed = await mediaProbeService.ProbeAsync(filePath, cancellationToken);
+                if (probed is null)
+                {
+                    continue;
+                }
+
+                var sourceLabel = !string.IsNullOrWhiteSpace(suffixLabel)
+                    ? suffixLabel
+                    : BuildSourceLabel(probed.Height, probed.IsHdr);
+
+                var source = MediaSource.ForMovie(
+                    movie.Id,
+                    filePath,
+                    sourceLabel,
+                    probed.Container,
+                    probed.VideoCodec,
+                    probed.AudioCodec,
+                    probed.Width,
+                    probed.Height,
+                    probed.IsHdr,
+                    probed.BitrateBps,
+                    fileInfo.Length,
+                    probed.DurationMs);
+                source.UpdateFileFingerprint(fileInfo.Length, lastWriteUtc);
+
+                AddProbedStreams(source, probed);
+                db.MediaSources.Add(source);
+                existingSourcesByPath[filePath] = source;
+                upserted++;
+            }
+            catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException or IOException or UnauthorizedAccessException)
             {
-                movie = new Movie(root.Id, title, year);
-                db.Movies.Add(movie);
-                moviesByKey[movieKey] = movie;
+                logger?.LogWarning(ex, "Skipped unreadable or vanished movie file {FilePath}.", filePath);
             }
-
-            if (root.FetchMetadata)
-            {
-                await TryEnrichMovieFromTmdbAsync(movie, title, year, cancellationToken);
-            }
-
-            var probed = await mediaProbeService.ProbeAsync(filePath, cancellationToken);
-            if (probed is null)
-            {
-                continue;
-            }
-
-            var sourceLabel = !string.IsNullOrWhiteSpace(suffixLabel)
-                ? suffixLabel
-                : BuildSourceLabel(probed.Height, probed.IsHdr);
-
-            var source = MediaSource.ForMovie(
-                movie.Id,
-                filePath,
-                sourceLabel,
-                probed.Container,
-                probed.VideoCodec,
-                probed.AudioCodec,
-                probed.Width,
-                probed.Height,
-                probed.IsHdr,
-                probed.BitrateBps,
-                fileInfo.Length,
-                probed.DurationMs);
-            source.UpdateFileFingerprint(fileInfo.Length, lastWriteUtc);
-
-            AddProbedStreams(source, probed);
-            db.MediaSources.Add(source);
-            existingSourcesByPath[filePath] = source;
-            upserted++;
         }
 
         if (root.FetchMetadata)
@@ -205,87 +222,109 @@ public sealed partial class LibraryScannerService(
             .ThenInclude(ep => ep.Sources)
             .ToListAsync(cancellationToken);
 
-        var seriesByKey = existingSeries.ToDictionary(s => (NormalizeKey(s.Title), s.Year));
-        var existingSourcesByPath = existingSeries
-            .SelectMany(s => s.Seasons)
-            .SelectMany(sn => sn.Episodes)
-            .SelectMany(ep => ep.Sources)
-            .ToDictionary(src => src.FilePath, StringComparer.Ordinal);
+        var seriesByKey = new Dictionary<(string, int?), TvSeries>();
+        var existingSourcesByPath = new Dictionary<string, MediaSource>(StringComparer.Ordinal);
+        foreach (var s in existingSeries)
+        {
+            seriesByKey.TryAdd((NormalizeKey(s.Title), s.Year), s);
+            foreach (var sn in s.Seasons)
+            {
+                foreach (var ep in sn.Episodes)
+                {
+                    foreach (var src in ep.Sources)
+                    {
+                        existingSourcesByPath.TryAdd(src.FilePath, src);
+                    }
+                }
+            }
+        }
 
         var upserted = 0;
         foreach (var filePath in files)
         {
             scanProgress?.Advance(root.Id);
-            var fileInfo = new FileInfo(filePath);
-            var lastWriteUtc = new DateTimeOffset(fileInfo.LastWriteTimeUtc, TimeSpan.Zero);
-
-            if (existingSourcesByPath.TryGetValue(filePath, out var existingSource))
+            try
             {
-                existingSource.UpdateFileFingerprint(fileInfo.Length, lastWriteUtc);
-                continue;
+                var fileInfo = new FileInfo(filePath);
+                if (!fileInfo.Exists)
+                {
+                    continue;
+                }
+
+                var lastWriteUtc = new DateTimeOffset(fileInfo.LastWriteTimeUtc, TimeSpan.Zero);
+
+                if (existingSourcesByPath.TryGetValue(filePath, out var existingSource))
+                {
+                    existingSource.UpdateFileFingerprint(fileInfo.Length, lastWriteUtc);
+                    continue;
+                }
+
+                var (seriesTitle, year, seasonNumber, episodeNumber, suffixLabel) =
+                    ParseEpisodeWithFolderContext(root.RootPath, filePath);
+                var seriesKey = (NormalizeKey(seriesTitle), year);
+
+                if (!seriesByKey.TryGetValue(seriesKey, out var series))
+                {
+                    series = new TvSeries(root.Id, seriesTitle, year);
+                    db.TvSeries.Add(series);
+                    seriesByKey[seriesKey] = series;
+                }
+
+                if (root.FetchMetadata)
+                {
+                    await TryEnrichSeriesFromTmdbAsync(series, seriesTitle, year, cancellationToken);
+                }
+
+                var season = series.Seasons.FirstOrDefault(s => s.SeasonNumber == seasonNumber);
+                if (season is null)
+                {
+                    season = new TvSeason(series.Id, seasonNumber, $"Season {seasonNumber}");
+                    series.Seasons.Add(season);
+                    db.TvSeasons.Add(season);
+                }
+
+                var episode = season.Episodes.FirstOrDefault(e => e.EpisodeNumber == episodeNumber);
+                if (episode is null)
+                {
+                    episode = new Episode(season.Id, episodeNumber, $"Episode {episodeNumber}");
+                    season.Episodes.Add(episode);
+                    db.Episodes.Add(episode);
+                }
+
+                var probed = await mediaProbeService.ProbeAsync(filePath, cancellationToken);
+                if (probed is null)
+                {
+                    continue;
+                }
+
+                var sourceLabel = !string.IsNullOrWhiteSpace(suffixLabel)
+                    ? suffixLabel
+                    : BuildSourceLabel(probed.Height, probed.IsHdr);
+
+                var source = MediaSource.ForEpisode(
+                    episode.Id,
+                    filePath,
+                    sourceLabel,
+                    probed.Container,
+                    probed.VideoCodec,
+                    probed.AudioCodec,
+                    probed.Width,
+                    probed.Height,
+                    probed.IsHdr,
+                    probed.BitrateBps,
+                    fileInfo.Length,
+                    probed.DurationMs);
+                source.UpdateFileFingerprint(fileInfo.Length, lastWriteUtc);
+
+                AddProbedStreams(source, probed);
+                db.MediaSources.Add(source);
+                existingSourcesByPath[filePath] = source;
+                upserted++;
             }
-
-            var (seriesTitle, year, seasonNumber, episodeNumber, suffixLabel) =
-                ParseEpisodeWithFolderContext(root.RootPath, filePath);
-            var seriesKey = (NormalizeKey(seriesTitle), year);
-
-            if (!seriesByKey.TryGetValue(seriesKey, out var series))
+            catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException or IOException or UnauthorizedAccessException)
             {
-                series = new TvSeries(root.Id, seriesTitle, year);
-                db.TvSeries.Add(series);
-                seriesByKey[seriesKey] = series;
+                logger?.LogWarning(ex, "Skipped unreadable or vanished series file {FilePath}.", filePath);
             }
-
-            if (root.FetchMetadata)
-            {
-                await TryEnrichSeriesFromTmdbAsync(series, seriesTitle, year, cancellationToken);
-            }
-
-            var season = series.Seasons.FirstOrDefault(s => s.SeasonNumber == seasonNumber);
-            if (season is null)
-            {
-                season = new TvSeason(series.Id, seasonNumber, $"Season {seasonNumber}");
-                series.Seasons.Add(season);
-                db.TvSeasons.Add(season);
-            }
-
-            var episode = season.Episodes.FirstOrDefault(e => e.EpisodeNumber == episodeNumber);
-            if (episode is null)
-            {
-                episode = new Episode(season.Id, episodeNumber, $"Episode {episodeNumber}");
-                season.Episodes.Add(episode);
-                db.Episodes.Add(episode);
-            }
-
-            var probed = await mediaProbeService.ProbeAsync(filePath, cancellationToken);
-            if (probed is null)
-            {
-                continue;
-            }
-
-            var sourceLabel = !string.IsNullOrWhiteSpace(suffixLabel)
-                ? suffixLabel
-                : BuildSourceLabel(probed.Height, probed.IsHdr);
-
-            var source = MediaSource.ForEpisode(
-                episode.Id,
-                filePath,
-                sourceLabel,
-                probed.Container,
-                probed.VideoCodec,
-                probed.AudioCodec,
-                probed.Width,
-                probed.Height,
-                probed.IsHdr,
-                probed.BitrateBps,
-                fileInfo.Length,
-                probed.DurationMs);
-            source.UpdateFileFingerprint(fileInfo.Length, lastWriteUtc);
-
-            AddProbedStreams(source, probed);
-            db.MediaSources.Add(source);
-            existingSourcesByPath[filePath] = source;
-            upserted++;
         }
 
         if (root.FetchMetadata)
@@ -329,104 +368,128 @@ public sealed partial class LibraryScannerService(
             .Include(s => s.SongArtists)
             .Where(s => s.LibraryRootId == root.Id)
             .ToListAsync(cancellationToken);
-        var songsByPath = existingSongs.ToDictionary(s => s.FilePath, StringComparer.Ordinal);
+        var songsByPath = new Dictionary<string, Song>(StringComparer.Ordinal);
+        foreach (var existing in existingSongs)
+        {
+            songsByPath.TryAdd(existing.FilePath, existing);
+        }
 
-        var artistsByName = (await db.Artists.Include(a => a.Albums).ToListAsync(cancellationToken))
-            .ToDictionary(a => NormalizeKey(a.Name));
+        var artistsByName = new Dictionary<string, Artist>();
+        foreach (var existingArtist in await db.Artists.Include(a => a.Albums).ToListAsync(cancellationToken))
+        {
+            artistsByName.TryAdd(NormalizeKey(existingArtist.Name), existingArtist);
+        }
 
         var upserted = 0;
         foreach (var filePath in files)
         {
             scanProgress?.Advance(root.Id);
-            if (songsByPath.TryGetValue(filePath, out var existingSong))
+            try
             {
-                var existingInfo = new FileInfo(filePath);
-                var existingWriteUtc = new DateTimeOffset(existingInfo.LastWriteTimeUtc, TimeSpan.Zero);
-                existingSong.UpdateFileFingerprint(existingInfo.Length, existingWriteUtc);
-                if (existingSong.SongArtists.Count == 0)
+                if (songsByPath.TryGetValue(filePath, out var existingSong))
                 {
-                    var refreshedMeta = audioMetadataReader.ReadMetadata(filePath);
-                    if (refreshedMeta is not null)
+                    var existingInfo = new FileInfo(filePath);
+                    if (!existingInfo.Exists)
                     {
-                        var refreshedCredits = ResolveArtistCredits(refreshedMeta);
-                        var creditArtists = EnsureArtistsExist(artistsByName, refreshedCredits);
-                        for (var pos = 0; pos < creditArtists.Count; pos++)
+                        continue;
+                    }
+
+                    var existingWriteUtc = new DateTimeOffset(existingInfo.LastWriteTimeUtc, TimeSpan.Zero);
+                    existingSong.UpdateFileFingerprint(existingInfo.Length, existingWriteUtc);
+                    if (existingSong.SongArtists.Count == 0)
+                    {
+                        var refreshedMeta = audioMetadataReader.ReadMetadata(filePath);
+                        if (refreshedMeta is not null)
                         {
-                            var sa = new SongArtist(existingSong.Id, creditArtists[pos].Id, pos);
-                            existingSong.SongArtists.Add(sa);
-                            db.SongArtists.Add(sa);
+                            var refreshedCredits = ResolveArtistCredits(refreshedMeta);
+                            var creditArtists = EnsureArtistsExist(artistsByName, refreshedCredits);
+                            for (var pos = 0; pos < creditArtists.Count; pos++)
+                            {
+                                var sa = new SongArtist(existingSong.Id, creditArtists[pos].Id, pos);
+                                existingSong.SongArtists.Add(sa);
+                                db.SongArtists.Add(sa);
+                            }
+                        }
+                        else
+                        {
+                            var fallbackSa = new SongArtist(existingSong.Id, existingSong.ArtistId, 0);
+                            existingSong.SongArtists.Add(fallbackSa);
+                            db.SongArtists.Add(fallbackSa);
                         }
                     }
-                    else
-                    {
-                        var fallbackSa = new SongArtist(existingSong.Id, existingSong.ArtistId, 0);
-                        existingSong.SongArtists.Add(fallbackSa);
-                        db.SongArtists.Add(fallbackSa);
-                    }
+                    continue;
                 }
-                continue;
-            }
 
-            var meta = audioMetadataReader.ReadMetadata(filePath);
-            if (meta is null)
-            {
-                continue;
-            }
-
-            var creditNames = ResolveArtistCredits(meta);
-            var creditedArtists = EnsureArtistsExist(artistsByName, creditNames);
-            var artist = creditedArtists[0];
-
-            var album = artist.Albums.FirstOrDefault(
-                a => string.Equals(a.Title, meta.AlbumTitle, StringComparison.OrdinalIgnoreCase));
-            if (album is null)
-            {
-                string? artworkHash = null;
-                if (meta.EmbeddedArtworkBytes is { Length: > 0 })
+                var meta = audioMetadataReader.ReadMetadata(filePath);
+                if (meta is null)
                 {
-                    try
-                    {
-                        artworkHash = await artworkStore.SaveArtworkVariantsAsync(meta.EmbeddedArtworkBytes, cancellationToken);
-                    }
-                    catch (Exception) when (!cancellationToken.IsCancellationRequested)
-                    {
-                        artworkHash = null;
-                    }
+                    continue;
                 }
 
-                album = new Album(artist.Id, meta.AlbumTitle, meta.Year, artworkHash);
-                artist.Albums.Add(album);
-                db.Albums.Add(album);
+                var creditNames = ResolveArtistCredits(meta);
+                var creditedArtists = EnsureArtistsExist(artistsByName, creditNames);
+                var artist = creditedArtists[0];
+
+                var album = artist.Albums.FirstOrDefault(
+                    a => string.Equals(a.Title, meta.AlbumTitle, StringComparison.OrdinalIgnoreCase));
+                if (album is null)
+                {
+                    string? artworkHash = null;
+                    if (meta.EmbeddedArtworkBytes is { Length: > 0 })
+                    {
+                        try
+                        {
+                            artworkHash = await artworkStore.SaveArtworkVariantsAsync(meta.EmbeddedArtworkBytes, cancellationToken);
+                        }
+                        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+                        {
+                            artworkHash = null;
+                        }
+                    }
+
+                    album = new Album(artist.Id, meta.AlbumTitle, meta.Year, artworkHash);
+                    artist.Albums.Add(album);
+                    db.Albums.Add(album);
+                }
+
+                var fileInfo = new FileInfo(filePath);
+                if (!fileInfo.Exists)
+                {
+                    continue;
+                }
+
+                var lastWriteUtc = new DateTimeOffset(fileInfo.LastWriteTimeUtc, TimeSpan.Zero);
+                var song = new Song(
+                    root.Id,
+                    artist.Id,
+                    album.Id,
+                    meta.Title,
+                    meta.TrackNumber,
+                    meta.DiscNumber,
+                    meta.DurationMs,
+                    filePath,
+                    meta.Codec,
+                    meta.BitrateBps,
+                    meta.SampleRateHz,
+                    meta.BitDepth,
+                    fileInfo.Length,
+                    lastWriteUtc);
+
+                db.Songs.Add(song);
+                for (var pos = 0; pos < creditedArtists.Count; pos++)
+                {
+                    var link = new SongArtist(song.Id, creditedArtists[pos].Id, pos);
+                    song.SongArtists.Add(link);
+                    db.SongArtists.Add(link);
+                }
+
+                songsByPath[filePath] = song;
+                upserted++;
             }
-
-            var fileInfo = new FileInfo(filePath);
-            var lastWriteUtc = new DateTimeOffset(fileInfo.LastWriteTimeUtc, TimeSpan.Zero);
-            var song = new Song(
-                root.Id,
-                artist.Id,
-                album.Id,
-                meta.Title,
-                meta.TrackNumber,
-                meta.DiscNumber,
-                meta.DurationMs,
-                filePath,
-                meta.Codec,
-                meta.BitrateBps,
-                meta.SampleRateHz,
-                meta.BitDepth,
-                fileInfo.Length,
-                lastWriteUtc);
-
-            db.Songs.Add(song);
-            for (var pos = 0; pos < creditedArtists.Count; pos++)
+            catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException or IOException or UnauthorizedAccessException)
             {
-                var link = new SongArtist(song.Id, creditedArtists[pos].Id, pos);
-                song.SongArtists.Add(link);
-                db.SongArtists.Add(link);
+                logger?.LogWarning(ex, "Skipped unreadable or vanished audio file {FilePath}.", filePath);
             }
-
-            songsByPath[filePath] = song;
-            upserted++;
         }
 
         List<Artist> EnsureArtistsExist(Dictionary<string, Artist> lookup, IReadOnlyList<string> names)
@@ -595,21 +658,41 @@ public sealed partial class LibraryScannerService(
 
     private static List<string> EnumerateSupportedFiles(string rootPath, HashSet<string> extensions)
     {
-        return Directory.EnumerateFiles(rootPath, "*", SearchOption.AllDirectories)
+        var options = new EnumerationOptions
+        {
+            RecurseSubdirectories = true,
+            IgnoreInaccessible = true,
+            ReturnSpecialDirectories = false
+        };
+
+        return Directory.EnumerateFiles(rootPath, "*", options)
             .Where(path => extensions.Contains(Path.GetExtension(path)))
             .Where(path => !ShouldIgnorePath(rootPath, path))
             .OrderBy(path => path, StringComparer.Ordinal)
             .ToList();
     }
 
-    private static bool ShouldIgnorePath(string rootPath, string filePath)
+    internal static bool ShouldIgnorePath(string rootPath, string filePath)
     {
         var relative = Path.GetRelativePath(rootPath, filePath);
         var segments = relative.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries);
-        foreach (var segment in segments)
+        for (var i = 0; i < segments.Length; i++)
         {
-            var token = Path.GetFileNameWithoutExtension(segment);
-            if (IgnoredTokens.Any(ignored => token.Contains(ignored, StringComparison.OrdinalIgnoreCase)))
+            var isFileSegment = i == segments.Length - 1;
+            var segment = segments[i];
+            if (!isFileSegment)
+            {
+                if (IgnoredFolderSegments.Contains(segment.Trim()))
+                {
+                    return true;
+                }
+
+                continue;
+            }
+
+            var stem = Path.GetFileNameWithoutExtension(segment).Trim();
+            if (IgnoredFolderSegments.Contains(stem) ||
+                IgnoredFileSuffixes.Any(suffix => stem.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)))
             {
                 return true;
             }
@@ -709,7 +792,8 @@ public sealed partial class LibraryScannerService(
             }
         }
 
-        return (parsedSeries, parsedYear, season, episode, suffixLabel);
+        var fallbackTitle = string.IsNullOrWhiteSpace(parsedSeries) ? "Unknown Series" : parsedSeries;
+        return (fallbackTitle, parsedYear, season, episode, suffixLabel);
     }
 
     private static (string SeriesTitle, int? Year, int SeasonNumber, int EpisodeNumber, string? SuffixLabel) ParseEpisodeFilename(string baseName)

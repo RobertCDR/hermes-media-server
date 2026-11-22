@@ -315,12 +315,17 @@ public static class MusicEndpoints
         }
 
         var utcNow = timeProvider.GetUtcNow();
-        var listenedAtUtc = request.ListenedAtUtc is { } explicitTs && explicitTs <= utcNow.AddMinutes(5)
+        var listenedAtUtc = request.ListenedAtUtc is { } explicitTs &&
+                            explicitTs > DateTimeOffset.UnixEpoch &&
+                            explicitTs <= utcNow.AddMinutes(5)
             ? explicitTs.ToUniversalTime()
             : utcNow;
 
         var windowStart = listenedAtUtc.Subtract(ListeningHistoryEntry.DuplicateWindow);
-        var normalizedDevice = string.IsNullOrWhiteSpace(request.DeviceId) ? null : request.DeviceId.Trim();
+        var trimmedDevice = string.IsNullOrWhiteSpace(request.DeviceId) ? null : request.DeviceId.Trim();
+        var normalizedDevice = trimmedDevice is null
+            ? null
+            : trimmedDevice[..Math.Min(trimmedDevice.Length, 128)];
 
         var existingQuery = db.ListeningHistoryEntries
             .AsNoTracking()
@@ -500,6 +505,7 @@ public static class MusicEndpoints
             .AsSplitQuery()
             .Include(s => s.Artist)
             .Include(s => s.Album)
+            .ThenInclude(a => a.Artist)
             .Include(s => s.SongArtists)
             .ThenInclude(sa => sa.Artist);
 

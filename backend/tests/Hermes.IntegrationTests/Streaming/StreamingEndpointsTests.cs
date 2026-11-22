@@ -282,6 +282,82 @@ public class StreamingEndpointsTests
         }
     }
 
+    [Fact]
+    public async Task HlsEndpoints_RejectCrossUserAssetReadAndSessionStop_WithoutStoppingOwnerSession()
+    {
+        var tempMediaDir = Path.Combine(Path.GetTempPath(), $"hermes-hls-idor-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempMediaDir);
+        await File.WriteAllBytesAsync(Path.Combine(tempMediaDir, "Dune (2021) - 1080p.mkv"), [0x01, 0x02, 0x03, 0x04]);
+
+        try
+        {
+            await using var factory = new PostgresWebApplicationFactory();
+            await factory.InitializeAsync();
+            using var ownerClient = await CreateAuthenticatedAdminClientAsync(factory);
+
+            var lib = await (await ownerClient.PostAsJsonAsync(
+                "/api/v1/admin/libraries",
+                new CreateLibraryRootRequest("Movies", LibraryMediaType.Movies, tempMediaDir, WatchEnabled: false, FetchMetadata: false)))
+                .Content.ReadFromJsonAsync<LibraryRootResponse>();
+            (await ownerClient.PostAsync($"/api/v1/admin/libraries/{lib!.Id}/scan", null)).EnsureSuccessStatusCode();
+
+            var movies = await ownerClient.GetFromJsonAsync<List<MovieSummaryDto>>("/api/v1/cinema/movies");
+            var sourceId = movies!.Single().Sources.Single().Id;
+
+            // Create second user ("attacker").
+            var invite = await (await ownerClient.PostAsJsonAsync("/api/v1/admin/invites", new CreateInviteRequest(1, 24)))
+                .Content.ReadFromJsonAsync<InviteResponse>();
+            using var attackerClient = factory.CreateClient();
+            (await attackerClient.PostAsJsonAsync(
+                "/api/v1/auth/register",
+                new RegisterRequest("bob", "BobPass!123", invite!.Code))).EnsureSuccessStatusCode();
+            var bobLogin = await (await attackerClient.PostAsJsonAsync(
+                "/api/v1/auth/login",
+                new LoginRequest("bob", "BobPass!123", "bob-pc", "Desktop"))).Content.ReadFromJsonAsync<AuthTokenResponse>();
+            attackerClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", bobLogin!.AccessToken);
+
+            var ownerTicket = (await (await ownerClient.PostAsJsonAsync(
+                "/api/v1/auth/stream-tickets",
+                new CreateStreamTicketRequest(sourceId))).Content.ReadFromJsonAsync<StreamTicketResponse>())!.Ticket;
+            var attackerTicket = (await (await attackerClient.PostAsJsonAsync(
+                "/api/v1/auth/stream-tickets",
+                new CreateStreamTicketRequest(sourceId))).Content.ReadFromJsonAsync<StreamTicketResponse>())!.Ticket;
+
+            using var anonymousClient = factory.CreateClient();
+            var startResp = await anonymousClient.GetAsync(
+                $"/api/v1/streams/{sourceId}/video/master.m3u8?quality=P720&audioStreamIndex=1&startSeconds=0&ticket={Uri.EscapeDataString(ownerTicket)}");
+            startResp.StatusCode.Should().Be(HttpStatusCode.OK);
+            startResp.Headers.CacheControl?.NoStore.Should().BeTrue();
+            var sessionId = startResp.Headers.GetValues("X-Hermes-Transcode-Session").Single();
+
+            // User B must neither read User A's HLS playlist/segments nor stop User A's session.
+            var attackerAssetResp = await anonymousClient.GetAsync(
+                $"/api/v1/streams/{sourceId}/hls/{sessionId}/index.m3u8?ticket={Uri.EscapeDataString(attackerTicket)}");
+            attackerAssetResp.StatusCode.Should().Be(HttpStatusCode.NotFound);
+
+            var attackerStopResp = await anonymousClient.DeleteAsync(
+                $"/api/v1/streams/{sourceId}/hls/{sessionId}?ticket={Uri.EscapeDataString(attackerTicket)}");
+            attackerStopResp.StatusCode.Should().Be(HttpStatusCode.NotFound);
+
+            // Owner session remains alive and readable.
+            var ownerPlaylistResp = await anonymousClient.GetAsync(
+                $"/api/v1/streams/{sourceId}/hls/{sessionId}/index.m3u8?ticket={Uri.EscapeDataString(ownerTicket)}");
+            ownerPlaylistResp.StatusCode.Should().Be(HttpStatusCode.OK);
+            ownerPlaylistResp.Headers.CacheControl?.NoStore.Should().BeTrue();
+
+            var ownerStopResp = await anonymousClient.DeleteAsync(
+                $"/api/v1/streams/{sourceId}/hls/{sessionId}?ticket={Uri.EscapeDataString(ownerTicket)}");
+            ownerStopResp.StatusCode.Should().Be(HttpStatusCode.NoContent);
+        }
+        finally
+        {
+            if (Directory.Exists(tempMediaDir))
+            {
+                Directory.Delete(tempMediaDir, recursive: true);
+            }
+        }
+    }
+
     private static async Task<HttpClient> CreateAuthenticatedAdminClientAsync(PostgresWebApplicationFactory factory)
     {
         var client = factory.CreateClient();

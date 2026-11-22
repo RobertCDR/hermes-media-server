@@ -38,6 +38,7 @@ public static class CinemaEndpoints
 
         var movies = await db.Movies
             .AsNoTracking()
+            .AsSplitQuery()
             .Include(m => m.Sources)
             .ThenInclude(s => s.Streams)
             .OrderBy(m => m.Title)
@@ -75,6 +76,7 @@ public static class CinemaEndpoints
 
         var movie = await db.Movies
             .AsNoTracking()
+            .AsSplitQuery()
             .Include(m => m.Sources)
             .ThenInclude(s => s.Streams)
             .SingleOrDefaultAsync(m => m.Id == id, cancellationToken);
@@ -107,6 +109,7 @@ public static class CinemaEndpoints
 
         var seriesList = await db.TvSeries
             .AsNoTracking()
+            .AsSplitQuery()
             .Include(s => s.Seasons)
             .ThenInclude(sn => sn.Episodes)
             .ThenInclude(ep => ep.Sources)

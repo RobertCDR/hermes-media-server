@@ -112,17 +112,17 @@ public sealed class PlaybackConnectService(
     {
         ArgumentNullException.ThrowIfNull(command);
 
-        var target = presenceRegistry.GetOnlineDevices(userId)
-            .FirstOrDefault(d => string.Equals(d.DeviceId, command.TargetDeviceId, StringComparison.Ordinal));
-        if (target is null)
-        {
-            throw new HubException("Target device is not currently connected.");
-        }
-
         var gate = lockProvider.GetLock(userId);
         await gate.WaitAsync(cancellationToken);
         try
         {
+            var target = presenceRegistry.GetOnlineDevices(userId)
+                .FirstOrDefault(d => string.Equals(d.DeviceId, command.TargetDeviceId, StringComparison.Ordinal));
+            if (target is null)
+            {
+                throw new HubException("Target device is not currently connected.");
+            }
+
             var session = await EnsureSessionAsync(userId, cancellationToken);
             session.TransferOutput(target.DeviceId, target.DeviceName, timeProvider.GetUtcNow(), command.PositionMs);
             await db.SaveChangesAsync(cancellationToken);
@@ -170,6 +170,11 @@ public sealed class PlaybackConnectService(
         await gate.WaitAsync(cancellationToken);
         try
         {
+            if (presenceRegistry.IsDeviceConnected(userId, disconnectedDeviceId))
+            {
+                return null;
+            }
+
             var session = await db.PlaybackSessions
                 .SingleOrDefaultAsync(s => s.UserId == userId, cancellationToken);
             if (session is null)
