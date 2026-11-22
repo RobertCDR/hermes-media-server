@@ -8,7 +8,6 @@
 
 #include <cstdint>
 #include <memory>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -16,17 +15,24 @@
 // - Frameless Windows 11 window chrome (rounded corners, Aero Snap, DPI-aware borders)
 // - True borderless monitor fullscreen
 // - System tray icon with quick playback menu & close-to-tray
-// - Mouse4/Mouse5 hardware Back/Forward navigation
+// - Keyboard browser Back/Forward app commands
 // - Subtle always-on-top no-activate media flyout
 class HermesDesktopWindow {
  public:
   static constexpr UINT kWmTrayIcon = WM_APP + 0x102;
 
-  HermesDesktopWindow(HWND hwnd, flutter::BinaryMessenger* messenger);
+  explicit HermesDesktopWindow(HWND hwnd);
   ~HermesDesktopWindow();
 
   HermesDesktopWindow(const HermesDesktopWindow&) = delete;
   HermesDesktopWindow& operator=(const HermesDesktopWindow&) = delete;
+
+  // Applies initial frameless DWM/chrome styles. Call after assigning this
+  // controller on the owning window so WM_NCCALCSIZE is intercepted.
+  void InitializeFrame();
+
+  // Attaches the Flutter MethodChannel and installs the system tray icon.
+  void AttachChannel(flutter::BinaryMessenger* messenger);
 
   // Intercepts window messages from FlutterWindow. Sets |handled| = true when
   // the message was fully handled and should not pass to DefWindowProc.
@@ -78,6 +84,9 @@ class HermesDesktopWindow {
   bool force_quit_ = false;
   bool tray_added_ = false;
   bool tray_is_playing_ = false;
+  UINT taskbar_created_msg_ = 0;
+  UINT activate_instance_msg_ = 0;
+  HICON tray_icon_ = nullptr;
   std::wstring tray_track_label_;
 
   LONG_PTR saved_style_ = 0;

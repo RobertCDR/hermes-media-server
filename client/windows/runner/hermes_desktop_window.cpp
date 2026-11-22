@@ -8,9 +8,11 @@
 
 #include <algorithm>
 #include <cstring>
+#include <optional>
 #include <utility>
 
 #include "resource.h"
+#include "utils.h"
 
 namespace {
 
@@ -31,25 +33,6 @@ constexpr UINT kMenuNext = 1002;
 constexpr UINT kMenuPrevious = 1003;
 constexpr UINT kMenuShow = 1004;
 constexpr UINT kMenuQuit = 1005;
-
-std::wstring Utf8ToWide(const std::string& utf8) {
-  if (utf8.empty()) {
-    return L"";
-  }
-  const int required = ::MultiByteToWideChar(
-      CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
-  if (required <= 0) {
-    return L"";
-  }
-  std::wstring wide(static_cast<size_t>(required), L'\0');
-  const int converted = ::MultiByteToWideChar(
-      CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), wide.data(),
-      required);
-  if (converted <= 0) {
-    return L"";
-  }
-  return wide;
-}
 
 std::string ReadStringArg(const flutter::EncodableMap& args, const char* key) {
   const auto it = args.find(flutter::EncodableValue(key));
@@ -246,10 +229,25 @@ struct HermesDesktopWindow::FlyoutState {
   bool tracking_leave = false;
 };
 
-HermesDesktopWindow::HermesDesktopWindow(HWND hwnd,
-                                         flutter::BinaryMessenger* messenger)
-    : hwnd_(hwnd), flyout_(std::make_unique<FlyoutState>()) {
-  if (messenger != nullptr) {
+HermesDesktopWindow::HermesDesktopWindow(HWND hwnd)
+    : hwnd_(hwnd),
+      flyout_(std::make_unique<FlyoutState>()),
+      taskbar_created_msg_(::RegisterWindowMessageW(L"TaskbarCreated")),
+      activate_instance_msg_(
+          ::RegisterWindowMessageW(L"HermesMediaClient_ActivateInstance")) {}
+
+HermesDesktopWindow::~HermesDesktopWindow() { Shutdown(); }
+
+void HermesDesktopWindow::InitializeFrame() {
+  if (hwnd_ == nullptr || !::IsWindow(hwnd_)) {
+    return;
+  }
+  last_maximized_ = ::IsZoomed(hwnd_) != FALSE;
+  ConfigureFrameStyles();
+}
+
+void HermesDesktopWindow::AttachChannel(flutter::BinaryMessenger* messenger) {
+  if (messenger != nullptr && !channel_) {
     channel_ = std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
         messenger, "hermes.window/control",
         &flutter::StandardMethodCodec::GetInstance());
@@ -259,15 +257,10 @@ HermesDesktopWindow::HermesDesktopWindow(HWND hwnd,
             std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
                 result) { HandleMethodCall(call, std::move(result)); });
   }
-
   if (hwnd_ != nullptr && ::IsWindow(hwnd_)) {
-    last_maximized_ = ::IsZoomed(hwnd_) != FALSE;
-    ConfigureFrameStyles();
     AddTrayIcon();
   }
 }
-
-HermesDesktopWindow::~HermesDesktopWindow() { Shutdown(); }
 
 void HermesDesktopWindow::Shutdown() {
   DestroyFlyoutWindow();
@@ -337,8 +330,9 @@ void HermesDesktopWindow::SetFullscreen(bool fullscreen) {
       ::SetWindowPlacement(hwnd_, &saved_placement_);
     }
     ::SetWindowPos(hwnd_, HWND_NOTOPMOST, 0, 0, 0, 0,
-                   SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
-                       SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+                   SWP_NOMOVE | SWP_NOSIZE | SWP_NOOWNERZORDER |
+                       SWP_FRAMECHANGED);
+    last_maximized_ = ::IsZoomed(hwnd_) != FALSE;
   }
 
   EmitWindowState();
@@ -365,8 +359,22 @@ void HermesDesktopWindow::AddTrayIcon() {
   nid.uID = kTrayIconId;
   nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
   nid.uCallbackMessage = kWmTrayIcon;
-  nid.hIcon = ::LoadIconW(::GetModuleHandleW(nullptr),
-                          MAKEINTRESOURCEW(IDI_APP_ICON));
+  const int sm_w = GetDpiMetric(hwnd_, SM_CXSMICON);
+  const int sm_h = GetDpiMetric(hwnd_, SM_CYSMICON);
+  if (tray_icon_ != nullptr) {
+    ::DestroyIcon(tray_icon_);
+    tray_icon_ = nullptr;
+  }
+  HICON small_icon = reinterpret_cast<HICON>(::LoadImageW(
+      ::GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDI_APP_ICON), IMAGE_ICON,
+      sm_w, sm_h, LR_DEFAULTCOLOR));
+  if (small_icon != nullptr) {
+    tray_icon_ = small_icon;
+    nid.hIcon = small_icon;
+  } else {
+    nid.hIcon = ::LoadIconW(::GetModuleHandleW(nullptr),
+                            MAKEINTRESOURCEW(IDI_APP_ICON));
+  }
   ::wcsncpy_s(nid.szTip, L"Hermes", _TRUNCATE);
   tray_added_ = ::Shell_NotifyIconW(NIM_ADD, &nid) != FALSE;
 }
@@ -387,15 +395,18 @@ void HermesDesktopWindow::UpdateTrayTooltip() {
 }
 
 void HermesDesktopWindow::RemoveTrayIcon() {
-  if (!tray_added_ || hwnd_ == nullptr) {
-    return;
+  if (tray_added_ && hwnd_ != nullptr) {
+    NOTIFYICONDATAW nid{};
+    nid.cbSize = sizeof(nid);
+    nid.hWnd = hwnd_;
+    nid.uID = kTrayIconId;
+    ::Shell_NotifyIconW(NIM_DELETE, &nid);
+    tray_added_ = false;
   }
-  NOTIFYICONDATAW nid{};
-  nid.cbSize = sizeof(nid);
-  nid.hWnd = hwnd_;
-  nid.uID = kTrayIconId;
-  ::Shell_NotifyIconW(NIM_DELETE, &nid);
-  tray_added_ = false;
+  if (tray_icon_ != nullptr) {
+    ::DestroyIcon(tray_icon_);
+    tray_icon_ = nullptr;
+  }
 }
 
 void HermesDesktopWindow::ShowTrayMenu() {
@@ -442,8 +453,14 @@ void HermesDesktopWindow::ShowTrayMenu() {
       EmitSimpleEvent("onTrayAction", "previous");
       break;
     case kMenuQuit:
-      force_quit_ = true;
-      EmitSimpleEvent("onTrayAction", "quit");
+      if (channel_) {
+        EmitSimpleEvent("onTrayAction", "quit");
+      } else {
+        force_quit_ = true;
+        if (hwnd_ != nullptr && ::IsWindow(hwnd_)) {
+          ::PostMessageW(hwnd_, WM_CLOSE, 0, 0);
+        }
+      }
       break;
     default:
       break;
@@ -493,27 +510,70 @@ flutter::EncodableMap HermesDesktopWindow::ReadBoundsMap() const {
   return map;
 }
 
+bool IsBoundsSafeForPlacement(const RECT& wp_normal) {
+  const int width = wp_normal.right - wp_normal.left;
+  const int height = wp_normal.bottom - wp_normal.top;
+  if (width < 600 || height < 400) {
+    return false;
+  }
+  HMONITOR mon = ::MonitorFromRect(&wp_normal, MONITOR_DEFAULTTONEAREST);
+  if (mon == nullptr) {
+    return false;
+  }
+  MONITORINFO mi{sizeof(mi)};
+  if (!::GetMonitorInfoW(mon, &mi)) {
+    return false;
+  }
+  const int dx = mi.rcWork.left - mi.rcMonitor.left;
+  const int dy = mi.rcWork.top - mi.rcMonitor.top;
+  const RECT title_band{
+      wp_normal.left + dx,
+      wp_normal.top + dy,
+      wp_normal.right + dx,
+      wp_normal.top + dy + 40,
+  };
+  RECT intersection{};
+  if (!::IntersectRect(&intersection, &title_band, &mi.rcWork)) {
+    return false;
+  }
+  return (intersection.right - intersection.left) >= 100 &&
+         (intersection.bottom - intersection.top) >= 24;
+}
+
 bool HermesDesktopWindow::ApplyBounds(const flutter::EncodableMap& args) {
   if (hwnd_ == nullptr || !::IsWindow(hwnd_) || is_fullscreen_) {
     return false;
   }
+  WINDOWPLACEMENT wp{sizeof(WINDOWPLACEMENT)};
+  if (!::GetWindowPlacement(hwnd_, &wp)) {
+    return false;
+  }
+
   const auto x = ReadIntArg(args, "x");
   const auto y = ReadIntArg(args, "y");
   const auto width = ReadIntArg(args, "width");
   const auto height = ReadIntArg(args, "height");
   const bool maximized = ReadBoolArg(args, "isMaximized", false);
 
-  if (x.has_value() && y.has_value() && width.has_value() && height.has_value() &&
-      *width >= 600 && *height >= 400) {
-    RECT rc{*x, *y, *x + *width, *y + *height};
-    if (::MonitorFromRect(&rc, MONITOR_DEFAULTTONULL) != nullptr) {
-      ::SetWindowPos(hwnd_, nullptr, rc.left, rc.top, rc.right - rc.left,
-                     rc.bottom - rc.top, SWP_NOZORDER | SWP_NOACTIVATE);
+  if (x.has_value() && y.has_value() && width.has_value() && height.has_value()) {
+    const double scale = GetScaleForHwnd(hwnd_);
+    const int min_w = ScalePx(900, scale);
+    const int min_h = ScalePx(600, scale);
+    RECT candidate{*x, *y, *x + (std::max)(*width, min_w),
+                   *y + (std::max)(*height, min_h)};
+    if (IsBoundsSafeForPlacement(candidate)) {
+      wp.rcNormalPosition = candidate;
     }
   }
+  const bool visible = ::IsWindowVisible(hwnd_) != FALSE;
   if (maximized) {
-    ::ShowWindow(hwnd_, SW_MAXIMIZE);
+    wp.showCmd = SW_SHOWMAXIMIZED;
+  } else if (!visible) {
+    wp.showCmd = SW_HIDE;
+  } else {
+    wp.showCmd = SW_SHOWNORMAL;
   }
+  ::SetWindowPlacement(hwnd_, &wp);
   EmitWindowState();
   return true;
 }
@@ -530,8 +590,10 @@ void HermesDesktopWindow::EnsureFlyoutWindow() {
     wc.hInstance = ::GetModuleHandleW(nullptr);
     wc.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
     wc.lpszClassName = kFlyoutWindowClass;
-    ::RegisterClassExW(&wc);
-    registered = true;
+    if (::RegisterClassExW(&wc) != 0 ||
+        ::GetLastError() == ERROR_CLASS_ALREADY_EXISTS) {
+      registered = true;
+    }
   }
 
   flyout_->hwnd = ::CreateWindowExW(
@@ -560,15 +622,19 @@ void HermesDesktopWindow::ShowMediaFlyout(const std::string& title,
     return;
   }
 
-  flyout_->title = Utf8ToWide(title);
-  flyout_->artist = Utf8ToWide(artist);
+  flyout_->title = Utf16FromUtf8(title);
+  flyout_->artist = Utf16FromUtf8(artist);
   flyout_->is_playing = is_playing;
   flyout_->art_bgra = std::move(art_bgra);
   flyout_->art_width = art_width;
   flyout_->art_height = art_height;
 
-  const POINT origin{0, 0};
-  HMONITOR monitor = ::MonitorFromPoint(origin, MONITOR_DEFAULTTOPRIMARY);
+  HMONITOR monitor = (hwnd_ != nullptr && ::IsWindow(hwnd_))
+                         ? ::MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST)
+                         : ::MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY);
+  if (monitor == nullptr) {
+    monitor = ::MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY);
+  }
   MONITORINFO mi{sizeof(mi)};
   RECT work{0, 0, 1280, 720};
   if (::GetMonitorInfoW(monitor, &mi)) {
@@ -586,7 +652,9 @@ void HermesDesktopWindow::ShowMediaFlyout(const std::string& title,
   ::SetWindowPos(flyout_->hwnd, HWND_TOPMOST, x, y, w, h,
                  SWP_NOACTIVATE | SWP_SHOWWINDOW);
   ::InvalidateRect(flyout_->hwnd, nullptr, FALSE);
-  ::SetTimer(flyout_->hwnd, kFlyoutHideTimerId, kFlyoutHideDelayMs, nullptr);
+  if (!flyout_->tracking_leave) {
+    ::SetTimer(flyout_->hwnd, kFlyoutHideTimerId, kFlyoutHideDelayMs, nullptr);
+  }
 }
 
 void HermesDesktopWindow::HideMediaFlyout() {
@@ -600,8 +668,10 @@ void HermesDesktopWindow::HideMediaFlyout() {
 
 void HermesDesktopWindow::DestroyFlyoutWindow() {
   if (flyout_->hwnd != nullptr) {
-    ::KillTimer(flyout_->hwnd, kFlyoutHideTimerId);
-    ::DestroyWindow(flyout_->hwnd);
+    if (::IsWindow(flyout_->hwnd)) {
+      ::KillTimer(flyout_->hwnd, kFlyoutHideTimerId);
+      ::DestroyWindow(flyout_->hwnd);
+    }
     flyout_->hwnd = nullptr;
   }
 }
@@ -614,10 +684,17 @@ LRESULT CALLBACK HermesDesktopWindow::FlyoutWndProc(HWND hwnd, UINT message,
     auto* cs = reinterpret_cast<CREATESTRUCTW*>(lparam);
     ::SetWindowLongPtrW(hwnd, GWLP_USERDATA,
                         reinterpret_cast<LONG_PTR>(cs->lpCreateParams));
-    return TRUE;
+    return ::DefWindowProcW(hwnd, message, wparam, lparam);
   }
   auto* self = reinterpret_cast<HermesDesktopWindow*>(
       ::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+  if (message == WM_NCDESTROY) {
+    ::SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+    if (self != nullptr && self->flyout_) {
+      self->flyout_->hwnd = nullptr;
+    }
+    return ::DefWindowProcW(hwnd, message, wparam, lparam);
+  }
   if (self != nullptr) {
     return self->HandleFlyoutMessage(hwnd, message, wparam, lparam);
   }
@@ -715,7 +792,15 @@ void HermesDesktopWindow::PaintFlyout(HWND hwnd) {
   }
 
   HDC mem_dc = ::CreateCompatibleDC(hdc);
-  HBITMAP mem_bmp = ::CreateCompatibleBitmap(hdc, width, height);
+  HBITMAP mem_bmp =
+      mem_dc != nullptr ? ::CreateCompatibleBitmap(hdc, width, height)
+                        : nullptr;
+  if (mem_dc == nullptr || mem_bmp == nullptr) {
+    if (mem_bmp != nullptr) ::DeleteObject(mem_bmp);
+    if (mem_dc != nullptr) ::DeleteDC(mem_dc);
+    ::EndPaint(hwnd, &ps);
+    return;
+  }
   HGDIOBJ old_bmp = ::SelectObject(mem_dc, mem_bmp);
 
   HBRUSH bg_brush = ::CreateSolidBrush(RGB(19, 19, 24));
@@ -726,7 +811,7 @@ void HermesDesktopWindow::PaintFlyout(HWND hwnd) {
 
   // Subtle crimson / neutral status edge strip.
   HBRUSH accent_brush = ::CreateSolidBrush(
-      flyout_->is_playing ? RGB(225, 29, 72) : RGB(90, 90, 102));
+      flyout_->is_playing ? RGB(220, 20, 60) : RGB(90, 90, 102));
   ::FillRect(mem_dc, &layout.accent, accent_brush);
   ::DeleteObject(accent_brush);
 
@@ -744,6 +829,7 @@ void HermesDesktopWindow::PaintFlyout(HWND hwnd) {
     bmi.bmiHeader.biBitCount = 32;
     bmi.bmiHeader.biCompression = BI_RGB;
     ::SetStretchBltMode(mem_dc, HALFTONE);
+    ::SetBrushOrgEx(mem_dc, 0, 0, nullptr);
     ::StretchDIBits(
         mem_dc, layout.art.left, layout.art.top,
         layout.art.right - layout.art.left, layout.art.bottom - layout.art.top,
@@ -754,8 +840,9 @@ void HermesDesktopWindow::PaintFlyout(HWND hwnd) {
     HPEN art_pen = ::CreatePen(PS_SOLID, 1, RGB(52, 52, 62));
     HGDIOBJ prev_b = ::SelectObject(mem_dc, art_brush);
     HGDIOBJ prev_p = ::SelectObject(mem_dc, art_pen);
+    const int corner = ScalePx(8, flyout_->scale);
     ::RoundRect(mem_dc, layout.art.left, layout.art.top, layout.art.right,
-                layout.art.bottom, 8, 8);
+                layout.art.bottom, corner, corner);
     ::SelectObject(mem_dc, prev_b);
     ::SelectObject(mem_dc, prev_p);
     ::DeleteObject(art_brush);
@@ -895,10 +982,10 @@ void HermesDesktopWindow::HandleMethodCall(
     force_quit_ = true;
     DestroyFlyoutWindow();
     RemoveTrayIcon();
-    if (hwnd_ != nullptr && ::IsWindow(hwnd_)) {
-      ::DestroyWindow(hwnd_);
-    }
     result->Success();
+    if (hwnd_ != nullptr && ::IsWindow(hwnd_)) {
+      ::PostMessageW(hwnd_, WM_CLOSE, 0, 0);
+    }
     return;
   }
 
@@ -917,7 +1004,7 @@ void HermesDesktopWindow::HandleMethodCall(
       title = ReadStringArg(*m, "title");
     }
     if (hwnd_ != nullptr && !title.empty()) {
-      ::SetWindowTextW(hwnd_, Utf8ToWide(title).c_str());
+      ::SetWindowTextW(hwnd_, Utf16FromUtf8(title).c_str());
     }
     result->Success();
     return;
@@ -940,9 +1027,9 @@ void HermesDesktopWindow::HandleMethodCall(
       if (title.empty()) {
         tray_track_label_.clear();
       } else if (artist.empty()) {
-        tray_track_label_ = Utf8ToWide(title);
+        tray_track_label_ = Utf16FromUtf8(title);
       } else {
-        tray_track_label_ = Utf8ToWide(title + " — " + artist);
+        tray_track_label_ = Utf16FromUtf8(title + " — " + artist);
       }
       UpdateTrayTooltip();
     }
@@ -1001,6 +1088,20 @@ LRESULT HermesDesktopWindow::HandleWindowMessage(HWND hwnd, UINT message,
                                                    bool* handled) noexcept {
   *handled = false;
 
+  if (taskbar_created_msg_ != 0 && message == taskbar_created_msg_) {
+    tray_added_ = false;
+    AddTrayIcon();
+    UpdateTrayTooltip();
+    *handled = true;
+    return 0;
+  }
+
+  if (activate_instance_msg_ != 0 && message == activate_instance_msg_) {
+    RestoreFromTray();
+    *handled = true;
+    return 0;
+  }
+
   switch (message) {
     case WM_NCCALCSIZE: {
       if (wparam == TRUE) {
@@ -1011,10 +1112,35 @@ LRESULT HermesDesktopWindow::HandleWindowMessage(HWND hwnd, UINT message,
         auto* params = reinterpret_cast<NCCALCSIZE_PARAMS*>(lparam);
         RECT* r = &params->rgrc[0];
         if (::IsZoomed(hwnd)) {
+          HMONITOR monitor = ::MonitorFromRect(r, MONITOR_DEFAULTTONEAREST);
           MONITORINFO mi{sizeof(mi)};
-          if (::GetMonitorInfoW(
-                  ::MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mi)) {
+          if (::GetMonitorInfoW(monitor, &mi)) {
             *r = mi.rcWork;
+            APPBARDATA abd{};
+            abd.cbSize = sizeof(abd);
+            if ((::SHAppBarMessage(ABM_GETSTATE, &abd) & ABS_AUTOHIDE) != 0 &&
+                ::SHAppBarMessage(ABM_GETTASKBARPOS, &abd)) {
+              HMONITOR tb_monitor =
+                  ::MonitorFromRect(&abd.rc, MONITOR_DEFAULTTONEAREST);
+              if (tb_monitor == monitor) {
+                switch (abd.uEdge) {
+                  case ABE_TOP:
+                    r->top += 1;
+                    break;
+                  case ABE_BOTTOM:
+                    r->bottom -= 1;
+                    break;
+                  case ABE_LEFT:
+                    r->left += 1;
+                    break;
+                  case ABE_RIGHT:
+                    r->right -= 1;
+                    break;
+                  default:
+                    break;
+                }
+              }
+            }
           }
           return 0;
         }
@@ -1026,6 +1152,14 @@ LRESULT HermesDesktopWindow::HandleWindowMessage(HWND hwnd, UINT message,
         r->right -= frame_x;
         r->bottom -= frame_y;
         return 0;
+      }
+      break;
+    }
+
+    case WM_NCACTIVATE: {
+      if (!is_fullscreen_) {
+        *handled = true;
+        return ::DefWindowProcW(hwnd, message, wparam, -1);
       }
       break;
     }
@@ -1054,18 +1188,34 @@ LRESULT HermesDesktopWindow::HandleWindowMessage(HWND hwnd, UINT message,
         *handled = true;
         return 0;
       }
+      DestroyFlyoutWindow();
+      RemoveTrayIcon();
+      break;
+    }
+
+    case WM_ENDSESSION: {
+      if (wparam != FALSE) {
+        force_quit_ = true;
+        DestroyFlyoutWindow();
+        RemoveTrayIcon();
+      }
       break;
     }
 
     case WM_APPCOMMAND: {
       const UINT cmd = GET_APPCOMMAND_LPARAM(lparam);
+      const UINT device = GET_DEVICE_LPARAM(lparam);
       if (cmd == APPCOMMAND_BROWSER_BACKWARD) {
-        EmitSimpleEvent("onAppCommand", "back");
+        if (device != FAPPCOMMAND_MOUSE) {
+          EmitSimpleEvent("onAppCommand", "back");
+        }
         *handled = true;
         return TRUE;
       }
       if (cmd == APPCOMMAND_BROWSER_FORWARD) {
-        EmitSimpleEvent("onAppCommand", "forward");
+        if (device != FAPPCOMMAND_MOUSE) {
+          EmitSimpleEvent("onAppCommand", "forward");
+        }
         *handled = true;
         return TRUE;
       }

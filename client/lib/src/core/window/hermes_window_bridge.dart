@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:ui' as ui;
 
-import 'package:flutter/foundation.dart' show ValueNotifier, kDebugMode;
+import 'package:flutter/foundation.dart' show ValueNotifier;
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -85,15 +85,17 @@ class HermesWindowBridge {
       return await _channel.invokeMethod<T>(method, arguments);
     } on MissingPluginException {
       return null;
-    } catch (err) {
-      if (kDebugMode) {
-        // Non-fatal in headless or unsupported test hosts.
-        assert(() {
-          return true;
-        }());
-      }
+    } catch (_) {
       return null;
     }
+  }
+
+  void dispose() {
+    _channel.setMethodCallHandler(null);
+    isFullscreen.dispose();
+    isMaximized.dispose();
+    title.dispose();
+    activeTrackSummary.dispose();
   }
 
   Future<void> startDragging() => _invoke<void>('startDragging');
@@ -189,21 +191,21 @@ class HermesWindowBridge {
     int targetSize = 96,
   }) async {
     if (encodedBytes.isEmpty) return null;
+    ui.Codec? codec;
+    ui.Image? img;
     try {
-      final codec = await ui.instantiateImageCodec(
+      codec = await ui.instantiateImageCodec(
         encodedBytes,
         targetWidth: targetSize,
         targetHeight: targetSize,
       );
       final frame = await codec.getNextFrame();
-      final img = frame.image;
+      img = frame.image;
       final byteData = await img.toByteData(format: ui.ImageByteFormat.rawRgba);
-      final width = img.width;
-      final height = img.height;
-      img.dispose();
-      codec.dispose();
       if (byteData == null) return null;
 
+      final width = img.width;
+      final height = img.height;
       final bytes = Uint8List.fromList(byteData.buffer.asUint8List());
       for (var i = 0; i + 3 < bytes.length; i += 4) {
         final r = bytes[i];
@@ -215,6 +217,9 @@ class HermesWindowBridge {
       return (bgra: bytes, width: width, height: height);
     } catch (_) {
       return null;
+    } finally {
+      img?.dispose();
+      codec?.dispose();
     }
   }
 }

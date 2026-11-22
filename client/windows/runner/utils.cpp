@@ -67,3 +67,23 @@ std::string Utf8FromUtf16(const wchar_t* utf16_string) {
   }
   return utf8_string;
 }
+
+std::wstring Utf16FromUtf8(const std::string& utf8_string) {
+  if (utf8_string.empty()) {
+    return L"";
+  }
+  const int required = ::MultiByteToWideChar(
+      CP_UTF8, 0, utf8_string.data(), static_cast<int>(utf8_string.size()),
+      nullptr, 0);
+  if (required <= 0) {
+    return L"";
+  }
+  std::wstring wide(static_cast<size_t>(required), L'\0');
+  const int converted = ::MultiByteToWideChar(
+      CP_UTF8, 0, utf8_string.data(), static_cast<int>(utf8_string.size()),
+      wide.data(), required);
+  if (converted <= 0) {
+    return L"";
+  }
+  return wide;
+}
