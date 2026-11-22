@@ -135,14 +135,13 @@ class _CinemaDetailPageState extends State<CinemaDetailPage> {
 
   void _openEpisodeSourceSheet(
     BuildContext context,
-    String episodeTitle,
     List<MediaSourceModel> sources,
     CinemaEpisodeEntry entry,
   ) {
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: HermesThemeTokens.of(context).bgElevated,
+      backgroundColor: HermesThemeTokens.of(context).surface,
       builder: (ctx) => Padding(
         padding: const EdgeInsets.all(20),
         child: SourceSelectorCard(
@@ -813,7 +812,6 @@ class _CinemaDetailPageState extends State<CinemaDetailPage> {
                   onPickVersion: ep.sources.length > 1
                       ? () => _openEpisodeSourceSheet(
                             context,
-                            '${series.title} · S${activeSeason.seasonNumber} E${ep.episodeNumber}',
                             ep.sources,
                             entry,
                           )

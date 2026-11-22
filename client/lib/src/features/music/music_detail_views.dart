@@ -125,7 +125,6 @@ class MusicAlbumPage extends StatelessWidget {
     required this.onNavigate,
     this.onPlayAlbum,
     this.onQueueAlbum,
-    this.asSliver = false,
     this.sliverContentWidth,
   });
 
@@ -141,7 +140,6 @@ class MusicAlbumPage extends StatelessWidget {
   final ValueChanged<MusicPageRoute> onNavigate;
   final ValueChanged<AlbumSummaryModel>? onPlayAlbum;
   final ValueChanged<AlbumSummaryModel>? onQueueAlbum;
-  final bool asSliver;
   final double? sliverContentWidth;
 
   String _formatAlbumDuration(List<SongModel> items) {
@@ -298,55 +296,8 @@ class MusicAlbumPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (asSliver) {
-      return SliverMainAxisGroup(
-        slivers: buildSlivers(context, sliverContentWidth ?? 800),
-      );
-    }
-    final tokens = HermesThemeTokens.of(context);
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _buildHeaderAndActions(context, tokens),
-        MusicTrackTable(
-          songs: songs,
-          musicService: musicService,
-          coordinator: coordinator,
-          playlists: playlists,
-          showAlbum: false,
-          discGrouping: true,
-          onPlayTrackAt: (idx) => onPlayCollection(
-            songs,
-            startIndex: idx,
-            sourceLabel: album.title,
-            sourceRoute: MusicPageRoute.album(album.id),
-          ),
-          onToggleLike: onToggleLike,
-          onAddToPlaylist: onAddToPlaylist,
-          onNavigate: onNavigate,
-        ),
-        if (songs.isNotEmpty) _buildFooterMetadata(tokens),
-        if (moreByArtist.isNotEmpty) ...[
-          const SizedBox(height: 12),
-          Text(
-            'More by ${album.artistName}',
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.w800,
-              color: tokens.text,
-            ),
-          ),
-          const SizedBox(height: 12),
-          _AlbumCardGrid(
-            albums: moreByArtist,
-            musicService: musicService,
-            onNavigate: onNavigate,
-            onPlayAlbum: onPlayAlbum ?? (other) => onNavigate(MusicPageRoute.album(other.id)),
-            onQueueAlbum: onQueueAlbum,
-          ),
-        ],
-      ],
+    return SliverMainAxisGroup(
+      slivers: buildSlivers(context, sliverContentWidth ?? 800),
     );
   }
 }
@@ -367,7 +318,6 @@ class MusicArtistPage extends StatelessWidget {
     required this.onToggleLike,
     required this.onAddToPlaylist,
     required this.onNavigate,
-    this.asSliver = false,
     this.sliverContentWidth,
   });
 
@@ -383,7 +333,6 @@ class MusicArtistPage extends StatelessWidget {
   final ValueChanged<SongModel> onToggleLike;
   final Future<void> Function(String playlistId, SongModel song) onAddToPlaylist;
   final ValueChanged<MusicPageRoute> onNavigate;
-  final bool asSliver;
   final double? sliverContentWidth;
 
   Widget _buildHeroAndActions() {
@@ -554,65 +503,8 @@ class MusicArtistPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (asSliver) {
-      return SliverMainAxisGroup(
-        slivers: buildSlivers(context, sliverContentWidth ?? 800),
-      );
-    }
-    final tokens = HermesThemeTokens.of(context);
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _buildHeroAndActions(),
-        if (songs.isNotEmpty) ...[
-          Text(
-            'Popular',
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.w800,
-              color: tokens.text,
-            ),
-          ),
-          const SizedBox(height: 10),
-          MusicTrackTable(
-            songs: songs.take(10).toList(),
-            musicService: musicService,
-            coordinator: coordinator,
-            playlists: playlists,
-            showAlbum: true,
-            discGrouping: false,
-            onPlayTrackAt: (idx) => onPlayCollection(
-              songs,
-              startIndex: idx,
-              sourceLabel: artist.name,
-              sourceRoute: MusicPageRoute.artist(artist.id),
-            ),
-            onToggleLike: onToggleLike,
-            onAddToPlaylist: onAddToPlaylist,
-            onNavigate: onNavigate,
-          ),
-        ],
-        if (albums.isNotEmpty) ...[
-          const SizedBox(height: 28),
-          Text(
-            'Discography',
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.w800,
-              color: tokens.text,
-            ),
-          ),
-          const SizedBox(height: 12),
-          _AlbumCardGrid(
-            albums: albums,
-            musicService: musicService,
-            onNavigate: onNavigate,
-            onPlayAlbum: onPlayAlbum,
-            onQueueAlbum: onQueueAlbum,
-          ),
-        ],
-      ],
+    return SliverMainAxisGroup(
+      slivers: buildSlivers(context, sliverContentWidth ?? 800),
     );
   }
 }
@@ -640,7 +532,6 @@ class MusicCollectionPage extends StatelessWidget {
     this.onRenamePlaylist,
     this.onDeletePlaylist,
     this.onRemoveFromPlaylist,
-    this.asSliver = false,
     this.sliverContentWidth,
   });
 
@@ -663,7 +554,6 @@ class MusicCollectionPage extends StatelessWidget {
   final VoidCallback? onRenamePlaylist;
   final VoidCallback? onDeletePlaylist;
   final Future<void> Function(String playlistId, int position)? onRemoveFromPlaylist;
-  final bool asSliver;
   final double? sliverContentWidth;
 
   Widget _buildHeaderAndActions(HermesThemeTokens tokens) {
@@ -751,41 +641,8 @@ class MusicCollectionPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (asSliver) {
-      return SliverMainAxisGroup(
-        slivers: buildSlivers(context, sliverContentWidth ?? 800),
-      );
-    }
-    final tokens = HermesThemeTokens.of(context);
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _buildHeaderAndActions(tokens),
-        MusicTrackTable(
-          songs: songs,
-          musicService: musicService,
-          coordinator: coordinator,
-          playlists: playlists,
-          showAlbum: true,
-          discGrouping: false,
-          playlistIdForRemoval: playlistId,
-          onPlayTrackAt: (idx) => onPlayCollection(
-            songs,
-            startIndex: idx,
-            sourceLabel: title,
-            sourceRoute: route,
-          ),
-          onToggleLike: onToggleLike,
-          onAddToPlaylist: onAddToPlaylist,
-          onRemoveFromPlaylist: onRemoveFromPlaylist,
-          onNavigate: onNavigate,
-          emptyTitle: isLikedCollection ? 'No liked songs yet' : 'Empty playlist',
-          emptySubtitle: isLikedCollection
-              ? 'Tap the heart on any track to save it to Liked Songs.'
-              : 'Use the track menu on any song to add tracks here.',
-        ),
-      ],
+    return SliverMainAxisGroup(
+      slivers: buildSlivers(context, sliverContentWidth ?? 800),
     );
   }
 }
@@ -823,48 +680,4 @@ Widget _buildAlbumSliverGrid({
       childCount: albums.length,
     ),
   );
-}
-
-class _AlbumCardGrid extends StatelessWidget {
-  const _AlbumCardGrid({
-    required this.albums,
-    required this.musicService,
-    required this.onNavigate,
-    required this.onPlayAlbum,
-    this.onQueueAlbum,
-  });
-
-  final List<AlbumSummaryModel> albums;
-  final MusicService musicService;
-  final ValueChanged<MusicPageRoute> onNavigate;
-  final ValueChanged<AlbumSummaryModel> onPlayAlbum;
-  final ValueChanged<AlbumSummaryModel>? onQueueAlbum;
-
-  @override
-  Widget build(BuildContext context) {
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      itemCount: albums.length,
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 205,
-        mainAxisSpacing: 8,
-        crossAxisSpacing: 8,
-        childAspectRatio: 0.78,
-      ),
-      itemBuilder: (context, index) {
-        final alb = albums[index];
-        final year = alb.year != null ? '${alb.year} • ' : '';
-        return MusicBrowseCard(
-          title: alb.title,
-          subtitle: '$year${alb.artistName}',
-          openLabel: 'Open album',
-          artworkUri: musicService.buildArtworkUri(alb.artworkHash),
-          onOpen: () => onNavigate(MusicPageRoute.album(alb.id)),
-          onPlay: () => onPlayAlbum(alb),
-          onAddToQueue: onQueueAlbum == null ? null : () => onQueueAlbum!(alb),
-        );
-      },
-    );
-  }
 }

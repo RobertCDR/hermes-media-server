@@ -686,16 +686,6 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
     unawaited(_playback.setSubtitleDelaySeconds(clamped));
   }
 
-  String _formatClock(int ms) {
-    final totalSec = (ms / 1000).floor().clamp(0, 86400);
-    final h = totalSec ~/ 3600;
-    final m = (totalSec % 3600) ~/ 60;
-    final s = totalSec % 60;
-    final mm = h > 0 ? m.toString().padLeft(2, '0') : m.toString();
-    final ss = s.toString().padLeft(2, '0');
-    return h > 0 ? '$h:$mm:$ss' : '$mm:$ss';
-  }
-
   @override
   Widget build(BuildContext context) {
     final baseTokens = HermesThemeTokens.of(context);
@@ -1130,7 +1120,7 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
                               Row(
                                 children: [
                                   Text(
-                                    _formatClock(_positionMs),
+                                    formatDurationMs(_positionMs),
                                     style: TextStyle(
                                       fontFamily: 'Figtree',
                                       fontSize: 13,
@@ -1172,7 +1162,7 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
                                   ),
                                   const SizedBox(width: 10),
                                   Text(
-                                    '-${_formatClock(remainingMs)}',
+                                    '-${formatDurationMs(remainingMs)}',
                                     style: TextStyle(
                                       fontFamily: 'Figtree',
                                       fontSize: 13,
@@ -1818,19 +1808,13 @@ class _TracksAndQualityPanelState extends State<_TracksAndQualityPanel> {
                             ),
                           )
                         : _PanelColumn(
-                            title: switch (_activeTab) {
-                              _TrackPanelTab.subtitles => 'Subtitles',
-                              _TrackPanelTab.style => 'Style',
-                              _TrackPanelTab.audio => 'Audio',
-                              _TrackPanelTab.quality => 'Quality',
-                            },
+                            title: _activeTab == _TrackPanelTab.subtitles
+                                ? 'Subtitles'
+                                : 'Audio',
                             tokens: tokens,
-                            items: switch (_activeTab) {
-                              _TrackPanelTab.subtitles => _subtitleItems(),
-                              _TrackPanelTab.style => const [],
-                              _TrackPanelTab.audio => _audioItems(),
-                              _TrackPanelTab.quality => _qualityItems(),
-                            },
+                            items: _activeTab == _TrackPanelTab.subtitles
+                                ? _subtitleItems()
+                                : _audioItems(),
                             fillWidth: true,
                           ),
               ),

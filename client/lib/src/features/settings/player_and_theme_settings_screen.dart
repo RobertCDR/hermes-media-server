@@ -40,9 +40,7 @@ class PlayerAndThemeSettingsScreen extends StatefulWidget {
     required this.onThemeChanged,
     required this.onRendererChanged,
     required this.onDefaultVideoQualityChanged,
-    this.networkMode = NetworkTransportMode.wifi,
     this.audioQualityPolicy = const AudioQualityPolicy(),
-    this.onNetworkModeChanged,
     this.onAudioQualityPolicyChanged,
     this.devicePreferences,
     this.accountPreferences = const HermesAccountPreferences(),
@@ -64,9 +62,7 @@ class PlayerAndThemeSettingsScreen extends StatefulWidget {
   final ValueChanged<HermesThemeTokens> onThemeChanged;
   final ValueChanged<VideoRendererBackend> onRendererChanged;
   final ValueChanged<VideoQualityPreset> onDefaultVideoQualityChanged;
-  final NetworkTransportMode networkMode;
   final AudioQualityPolicy audioQualityPolicy;
-  final ValueChanged<NetworkTransportMode>? onNetworkModeChanged;
   final ValueChanged<AudioQualityPolicy>? onAudioQualityPolicyChanged;
   final HermesDevicePreferences? devicePreferences;
   final HermesAccountPreferences accountPreferences;

@@ -1,6 +1,17 @@
 import 'package:material_ui/material_ui.dart';
 import '../theme/hermes_theme_tokens.dart';
 
+Uri? buildHermesArtworkUri(
+  Uri baseUri,
+  String? artworkHash, {
+  String variant = 'thumb_400',
+}) {
+  if (artworkHash == null || artworkHash.isEmpty) {
+    return null;
+  }
+  return baseUri.resolve('/api/v1/artwork/$artworkHash/$variant.webp');
+}
+
 String formatDurationMs(int durationMs) {
   if (durationMs <= 0) {
     return '0:00';
@@ -50,9 +61,9 @@ class HermesArtworkImage extends StatelessWidget {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            tokens.accentPrimary.withValues(alpha: 0.24),
-            tokens.bgElevated,
-            tokens.bgPrimary,
+            tokens.accent.withValues(alpha: 0.24),
+            tokens.surface,
+            tokens.bg,
           ],
         ),
       ),
@@ -63,7 +74,7 @@ class HermesArtworkImage extends StatelessWidget {
           Icon(
             fallbackIcon,
             size: compact ? 18 : 34,
-            color: tokens.textSecondary.withValues(alpha: 0.85),
+            color: tokens.text2.withValues(alpha: 0.85),
           ),
           if (showFallbackLabel && (width == null || width! > 80)) ...[
             const SizedBox(height: 8),
@@ -73,7 +84,7 @@ class HermesArtworkImage extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
               style: TextStyle(
-                color: tokens.textSecondary,
+                color: tokens.text2,
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
               ),

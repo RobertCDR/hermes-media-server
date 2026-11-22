@@ -21,33 +21,6 @@ enum HermesThemeId {
   }
 }
 
-/// Legacy preset enum retained for backward compatibility with older call sites.
-enum SurfacePreset {
-  obsidianGlow('obsidian_glow', 'Obsidian'),
-  oledBlack('oled_black', 'Pure Black (OLED)'),
-  slate('slate', 'Slate');
-
-  const SurfacePreset(this.id, this.label);
-
-  final String id;
-  final String label;
-}
-
-/// Legacy accent enum retained for backward compatibility with older call sites.
-enum HermesAccentKind {
-  crimson('crimson', 'Crimson'),
-  violet('violet', 'Amethyst'),
-  amber('amber', 'Amber'),
-  emerald('emerald', 'Forest'),
-  cyan('cyan', 'Midnight'),
-  dynamicAlbumArt('dynamic', 'Dynamic Album Art');
-
-  const HermesAccentKind(this.id, this.label);
-
-  final String id;
-  final String label;
-}
-
 class _HermesPalette {
   const _HermesPalette({
     required this.bg,
@@ -185,8 +158,6 @@ class HermesThemeTokens {
     required this.line,
     required this.lineSoft,
     this.titleTint,
-    this.surfacePreset = SurfacePreset.obsidianGlow,
-    this.accentKind = HermesAccentKind.crimson,
   });
 
   final HermesThemeId themeId;
@@ -207,81 +178,26 @@ class HermesThemeTokens {
   final Color lineSoft;
   final Color? titleTint;
 
-  // Legacy properties preserved so untouched features continue compiling cleanly.
-  final SurfacePreset surfacePreset;
-  final HermesAccentKind accentKind;
-
-  Color get bgPrimary => bg;
-  Color get bgElevated => surface;
-  Color get bgGlass => surface.withValues(alpha: 0.72);
-  Color get surfaceBorder => line;
-  Color get textPrimary => text;
-  Color get textSecondary => text2;
-  Color get accentPrimary => accent;
   Color get subtitleSafeColor => const Color(0xFFD8D8D8);
 
   /// Light ambient wash matching Figma v4 `#view-cinema` and `#view-cinema-detail`.
   Color get pageWash =>
       titleTint == null ? bg : Color.lerp(bg, titleTint!, 0.09)!;
 
-  static HermesThemeId _themeFromLegacyAccent(HermesAccentKind kind) {
-    return switch (kind) {
-      HermesAccentKind.crimson => HermesThemeId.crimson,
-      HermesAccentKind.cyan => HermesThemeId.midnight,
-      HermesAccentKind.emerald => HermesThemeId.forest,
-      HermesAccentKind.violet => HermesThemeId.amethyst,
-      HermesAccentKind.amber => HermesThemeId.amber,
-      HermesAccentKind.dynamicAlbumArt => HermesThemeId.crimson,
-    };
-  }
-
-  static HermesAccentKind _legacyAccentFromTheme(HermesThemeId id) {
-    return switch (id) {
-      HermesThemeId.crimson => HermesAccentKind.crimson,
-      HermesThemeId.midnight => HermesAccentKind.cyan,
-      HermesThemeId.forest => HermesAccentKind.emerald,
-      HermesThemeId.amethyst => HermesAccentKind.violet,
-      HermesThemeId.amber => HermesAccentKind.amber,
-      HermesThemeId.graphite => HermesAccentKind.crimson,
-    };
-  }
-
   factory HermesThemeTokens.resolve({
     HermesThemeId? themeId,
     bool pureBlack = false,
-    SurfacePreset surfacePreset = SurfacePreset.obsidianGlow,
-    HermesAccentKind accentKind = HermesAccentKind.crimson,
-    Color? albumArtAccent,
-    Color? dynamicSourceColor,
   }) {
-    final resolvedId = themeId ?? _themeFromLegacyAccent(accentKind);
-    final effectivePureBlack = pureBlack || surfacePreset == SurfacePreset.oledBlack;
+    final resolvedId = themeId ?? HermesThemeId.crimson;
     final palette = _v4Palettes[resolvedId]!;
 
-    final bg = effectivePureBlack ? const Color(0xFF000000) : palette.bg;
-    final bgSunken =
-        effectivePureBlack ? const Color(0xFF000000) : palette.bgSunken;
-    final bgRail =
-        effectivePureBlack ? const Color(0xFF000000) : palette.bgRail;
-
-    Color accent = palette.accent;
-    Color accentHover = palette.accentHover;
-    Color accentInk = palette.accentInk;
-
-    final effectiveDynamicColor = albumArtAccent ?? dynamicSourceColor;
-    if (accentKind == HermesAccentKind.dynamicAlbumArt &&
-        effectiveDynamicColor != null) {
-      accent = _clampDynamicAccent(effectiveDynamicColor, bg);
-      accentHover = Color.lerp(accent, const Color(0xFFFFFFFF), 0.16)!;
-      accentInk = wcagContrastRatio(accent, const Color(0xFF08080A)) >=
-              wcagContrastRatio(accent, const Color(0xFFFFFFFF))
-          ? const Color(0xFF08080A)
-          : const Color(0xFFFFFFFF);
-    }
+    final bg = pureBlack ? const Color(0xFF000000) : palette.bg;
+    final bgSunken = pureBlack ? const Color(0xFF000000) : palette.bgSunken;
+    final bgRail = pureBlack ? const Color(0xFF000000) : palette.bgRail;
 
     return HermesThemeTokens(
       themeId: resolvedId,
-      pureBlack: effectivePureBlack,
+      pureBlack: pureBlack,
       bg: bg,
       bgSunken: bgSunken,
       bgRail: bgRail,
@@ -291,13 +207,11 @@ class HermesThemeTokens {
       text: palette.text,
       text2: palette.text2,
       text3: palette.text3,
-      accent: accent,
-      accentHover: accentHover,
-      accentInk: accentInk,
+      accent: palette.accent,
+      accentHover: palette.accentHover,
+      accentInk: palette.accentInk,
       line: const Color(0x14FFFFFF),
       lineSoft: const Color(0x0DFFFFFF),
-      surfacePreset: effectivePureBlack ? SurfacePreset.oledBlack : surfacePreset,
-      accentKind: themeId == null ? accentKind : _legacyAccentFromTheme(resolvedId),
     );
   }
 
@@ -345,9 +259,6 @@ class HermesThemeTokens {
     Color? line,
     Color? lineSoft,
     Color? titleTint,
-    bool clearTitleTint = false,
-    SurfacePreset? surfacePreset,
-    HermesAccentKind? accentKind,
   }) {
     return HermesThemeTokens(
       themeId: themeId ?? this.themeId,
@@ -366,9 +277,7 @@ class HermesThemeTokens {
       accentInk: accentInk ?? this.accentInk,
       line: line ?? this.line,
       lineSoft: lineSoft ?? this.lineSoft,
-      titleTint: clearTitleTint ? null : (titleTint ?? this.titleTint),
-      surfacePreset: surfacePreset ?? this.surfacePreset,
-      accentKind: accentKind ?? this.accentKind,
+      titleTint: titleTint ?? this.titleTint,
     );
   }
 

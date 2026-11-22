@@ -83,7 +83,6 @@ class NowPlayingPanel extends StatefulWidget {
     required this.onClose,
     required this.onOpenDevices,
     required this.onNavigate,
-    this.isModal = false,
   });
 
   final MusicPlaybackCoordinator coordinator;
@@ -92,7 +91,6 @@ class NowPlayingPanel extends StatefulWidget {
   final VoidCallback onClose;
   final VoidCallback onOpenDevices;
   final ValueChanged<MusicPageRoute> onNavigate;
-  final bool isModal;
 
   @override
   State<NowPlayingPanel> createState() => _NowPlayingPanelState();
@@ -206,12 +204,10 @@ class _NowPlayingPanelState extends State<NowPlayingPanel> {
         : 'This Device';
 
     final content = Container(
-      width: widget.isModal ? double.infinity : 340,
-      margin: widget.isModal
-          ? EdgeInsets.zero
-          : const EdgeInsets.fromLTRB(0, 8, 8, 8),
+      width: 340,
+      margin: const EdgeInsets.fromLTRB(0, 8, 8, 8),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(widget.isModal ? 12 : 8),
+        borderRadius: BorderRadius.circular(8),
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: const Alignment(0, 0.35),

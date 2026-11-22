@@ -8,12 +8,10 @@ class HermesMarkIcon extends StatelessWidget {
     super.key,
     this.size = 28,
     this.color,
-    this.strokeWidth = 2.0,
   });
 
   final double size;
   final Color? color;
-  final double strokeWidth;
 
   @override
   Widget build(BuildContext context) {
@@ -24,7 +22,6 @@ class HermesMarkIcon extends StatelessWidget {
       child: CustomPaint(
         painter: _HermesMarkPainter(
           color: resolvedColor,
-          strokeWidth: strokeWidth,
         ),
       ),
     );
@@ -34,11 +31,9 @@ class HermesMarkIcon extends StatelessWidget {
 class _HermesMarkPainter extends CustomPainter {
   const _HermesMarkPainter({
     required this.color,
-    required this.strokeWidth,
   });
 
   final Color color;
-  final double strokeWidth;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -174,7 +169,7 @@ class _HermesMarkPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _HermesMarkPainter oldDelegate) {
-    return oldDelegate.color != color || oldDelegate.strokeWidth != strokeWidth;
+    return oldDelegate.color != color;
   }
 }
 

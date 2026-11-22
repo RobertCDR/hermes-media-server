@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import '../../core/widgets/hermes_artwork_image.dart';
 import 'cinema_models.dart';
 
 class CinemaApiException implements Exception {
@@ -141,12 +142,8 @@ class CinemaService {
         .replace(queryParameters: {'ticket': ticket});
   }
 
-  Uri? buildArtworkUri(String? artworkHash, {String variant = 'poster_800'}) {
-    if (artworkHash == null || artworkHash.isEmpty) {
-      return null;
-    }
-    return baseUri.resolve('/api/v1/artwork/$artworkHash/$variant.webp');
-  }
+  Uri? buildArtworkUri(String? artworkHash, {String variant = 'poster_800'}) =>
+      buildHermesArtworkUri(baseUri, artworkHash, variant: variant);
 
   Future<WatchProgressModel> updateWatchProgress({
     String? movieId,

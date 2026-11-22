@@ -210,7 +210,7 @@ class LibraryRootModel {
     }
     return switch (mediaType) {
       0 => '$itemCount ${itemCount == 1 ? 'movie' : 'movies'}',
-      1 => '$itemCount ${itemCount == 1 ? 'series' : 'series'}',
+      1 => '$itemCount series',
       _ => '$itemCount ${itemCount == 1 ? 'track' : 'tracks'}',
     };
   }

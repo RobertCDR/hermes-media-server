@@ -400,6 +400,11 @@ class _HermesAppState extends State<HermesApp> {
             ? _worldNotifier.value
             : _lastContentWorld;
     if (direction == 'back') {
+      final navState = _navigatorKey.currentState;
+      if (navState != null && navState.canPop()) {
+        unawaited(navState.maybePop());
+        return;
+      }
       if (activeContentWorld == HermesWorld.music) {
         _musicNav.handleBack();
       } else {
@@ -1041,7 +1046,6 @@ class _HermesAppState extends State<HermesApp> {
                         tokens: _tokens,
                         rendererBackend: _rendererBackend,
                         defaultVideoQuality: _defaultVideoQuality,
-                        networkMode: musicCoordinator.networkMode,
                         audioQualityPolicy: musicCoordinator.audioQualityPolicy,
                         devicePreferences: _devicePrefs,
                         accountPreferences: _accountPrefs,
@@ -1059,7 +1063,6 @@ class _HermesAppState extends State<HermesApp> {
                             setState(() => _rendererBackend = next),
                         onDefaultVideoQualityChanged: (next) =>
                             setState(() => _defaultVideoQuality = next),
-                        onNetworkModeChanged: musicCoordinator.setNetworkMode,
                         onAudioQualityPolicyChanged: (policy) =>
                             _applyDevicePreferencesState(
                           _devicePrefs.copyWith(

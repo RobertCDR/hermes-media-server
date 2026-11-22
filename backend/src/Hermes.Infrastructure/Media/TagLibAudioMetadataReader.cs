@@ -62,7 +62,7 @@ public sealed class TagLibAudioMetadataReader : IAudioMetadataReader
                 artwork is { Length: > 0 } ? artwork : null,
                 performerCredits);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception)
         {
             var ext = Path.GetExtension(filePath).TrimStart('.').ToLowerInvariant();
             return new ProbedAudioTrackMetadata(

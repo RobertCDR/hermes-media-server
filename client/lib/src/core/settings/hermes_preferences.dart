@@ -109,11 +109,9 @@ class HermesDevicePreferences {
   AudioQualityPolicy toAudioQualityPolicy() {
     return AudioQualityPolicy(
       wifiPreset: wifiAudioPreset,
-      cellularPreset: cellularPresetOrDefault,
+      cellularPreset: cellularAudioPreset,
     );
   }
-
-  AudioQualityPreset get cellularPresetOrDefault => cellularAudioPreset;
 
   HermesDevicePreferences copyWith({
     HermesThemeId? themeId,

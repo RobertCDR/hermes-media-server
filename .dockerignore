@@ -10,6 +10,9 @@
 **/TestResults
 .env
 .env.*
+**/.env
+**/.env.*
+backend/tests
 appsettings.Development.json
 appsettings.Local.json
 client

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import '../../core/widgets/hermes_artwork_image.dart';
 import 'music_models.dart';
 
 class MusicApiException implements Exception {
@@ -283,12 +284,8 @@ class MusicService {
     );
   }
 
-  Uri? buildArtworkUri(String? artworkHash, {String variant = 'thumb_400'}) {
-    if (artworkHash == null || artworkHash.isEmpty) {
-      return null;
-    }
-    return baseUri.resolve('/api/v1/artwork/$artworkHash/$variant.webp');
-  }
+  Uri? buildArtworkUri(String? artworkHash, {String variant = 'thumb_400'}) =>
+      buildHermesArtworkUri(baseUri, artworkHash, variant: variant);
 
   Future<UnifiedSearchResult> searchLibrary(String query) async {
     final uri = baseUri.resolve('/api/v1/search').replace(

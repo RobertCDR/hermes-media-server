@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Hermes.Api.Features.System;
+using Hermes.Domain.Common;
 using Hermes.Domain.Entities;
 using Hermes.Domain.Ports;
 using Hermes.Infrastructure.Media;
@@ -528,7 +529,7 @@ public static class MusicEndpoints
             credits.Add(new SongArtistCreditDto(song.ArtistId, song.Artist.Name));
         }
 
-        var displayArtist = string.Join(", ", credits.Select(c => c.Name));
+        var displayArtist = ArtistCreditParser.ToDisplayString(credits.Select(c => c.Name));
 
         return new SongDto(
             song.Id,

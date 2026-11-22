@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import '../../core/widgets/hermes_artwork_image.dart';
 import 'admin_models.dart';
 
 class AdminApiException implements Exception {
@@ -256,12 +257,8 @@ class AdminService {
         .toList();
   }
 
-  Uri? buildArtworkUri(String? artworkHash, {String variant = 'thumb_400'}) {
-    if (artworkHash == null || artworkHash.isEmpty) {
-      return null;
-    }
-    return baseUri.resolve('/api/v1/artwork/$artworkHash/$variant.webp');
-  }
+  Uri? buildArtworkUri(String? artworkHash, {String variant = 'thumb_400'}) =>
+      buildHermesArtworkUri(baseUri, artworkHash, variant: variant);
 
   Future<List<InviteModel>> listInvites() async {
     final response = await httpClient.get(baseUri.resolve('/api/v1/admin/invites'), headers: _headers);
