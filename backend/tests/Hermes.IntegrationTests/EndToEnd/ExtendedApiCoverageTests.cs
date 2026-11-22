@@ -255,15 +255,19 @@ public class ExtendedApiCoverageTests
             var listPlaylists = await bobClient.GetFromJsonAsync<List<PlaylistSummaryDto>>("/api/v1/music/playlists/");
             listPlaylists.Should().ContainSingle(p => p.Id == createdPlaylist!.Id);
 
+            await Task.Delay(25);
             await bobClient.PostAsJsonAsync($"/api/v1/music/playlists/{createdPlaylist!.Id}/tracks", new AddPlaylistTrackRequest(song1Id));
             await bobClient.PostAsJsonAsync($"/api/v1/music/playlists/{createdPlaylist.Id}/tracks", new AddPlaylistTrackRequest(song2Id));
 
             var detailAfterAdd = await bobClient.GetFromJsonAsync<PlaylistDetailDto>($"/api/v1/music/playlists/{createdPlaylist.Id}");
             detailAfterAdd!.Tracks.Should().HaveCount(2);
+            detailAfterAdd.UpdatedAtUtc.Should().BeAfter(createdPlaylist.UpdatedAtUtc);
 
+            await Task.Delay(25);
             var detailAfterDelete = await (await bobClient.DeleteAsync($"/api/v1/music/playlists/{createdPlaylist.Id}/tracks/0"))
                 .Content.ReadFromJsonAsync<PlaylistDetailDto>();
             detailAfterDelete!.Tracks.Should().ContainSingle(t => t.Position == 0 && t.Song.Id == song2Id);
+            detailAfterDelete.UpdatedAtUtc.Should().BeAfter(detailAfterAdd.UpdatedAtUtc);
 
             // Rename + Delete playlist + Song lyrics endpoint
             (await bobClient.PutAsJsonAsync($"/api/v1/music/playlists/{createdPlaylist.Id}", new RenamePlaylistRequest("   ")))
