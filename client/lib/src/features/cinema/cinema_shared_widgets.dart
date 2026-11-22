@@ -3,13 +3,6 @@ import 'package:material_ui/material_ui.dart';
 import '../../core/theme/hermes_theme_tokens.dart';
 import '../../core/widgets/hermes_artwork_image.dart';
 import '../../core/widgets/hermes_icons.dart';
-import 'cinema_models.dart';
-
-String formatDurationShort(int durationMs) {
-  if (durationMs <= 0) return '0m';
-  final totalMin = (durationMs / 60000).round();
-  return formatCinemaMinutes(totalMin);
-}
 
 class CinemaPlayPillButton extends StatelessWidget {
   const CinemaPlayPillButton({

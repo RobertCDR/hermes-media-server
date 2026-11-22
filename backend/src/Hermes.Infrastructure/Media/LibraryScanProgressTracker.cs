@@ -72,7 +72,8 @@ public sealed class LibraryScanProgressTracker
         }
 
         var total = state.TotalFiles;
-        var processed = Math.Clamp(Volatile.Read(ref state.ProcessedFiles), 0, Math.Max(total, Volatile.Read(ref state.ProcessedFiles)));
+        var rawProcessed = Volatile.Read(ref state.ProcessedFiles);
+        var processed = total > 0 ? Math.Clamp(rawProcessed, 0, total) : Math.Max(0, rawProcessed);
         return new LibraryScanProgressSnapshot(libraryRootId, true, processed, total, state.StartedAtUtc);
     }
 }

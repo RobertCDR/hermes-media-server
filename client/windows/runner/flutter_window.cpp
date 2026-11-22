@@ -14,6 +14,9 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
 
+  desktop_window_ = std::make_unique<HermesDesktopWindow>(GetHandle());
+  desktop_window_->InitializeFrame();
+
   RECT frame = GetClientArea();
 
   // The size here must match the window dimensions to avoid unnecessary surface
@@ -22,13 +25,14 @@ bool FlutterWindow::OnCreate() {
       frame.right - frame.left, frame.bottom - frame.top, project_);
   // Ensure that basic setup of the controller was successful.
   if (!flutter_controller_->engine() || !flutter_controller_->view()) {
+    desktop_window_->Shutdown();
+    desktop_window_.reset();
     return false;
   }
   RegisterPlugins(flutter_controller_->engine());
   smtc_bridge_ = std::make_unique<HermesSmtcBridge>(
       GetHandle(), flutter_controller_->engine()->messenger());
-  desktop_window_ = std::make_unique<HermesDesktopWindow>(
-      GetHandle(), flutter_controller_->engine()->messenger());
+  desktop_window_->AttachChannel(flutter_controller_->engine()->messenger());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
@@ -84,7 +88,9 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
 
   switch (message) {
     case WM_FONTCHANGE:
-      flutter_controller_->engine()->ReloadSystemFonts();
+      if (flutter_controller_ && flutter_controller_->engine()) {
+        flutter_controller_->engine()->ReloadSystemFonts();
+      }
       break;
     case HermesSmtcBridge::kWmButtonPressed:
       if (smtc_bridge_) {

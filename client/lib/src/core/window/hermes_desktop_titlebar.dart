@@ -22,160 +22,172 @@ class HermesDesktopTitleBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final tokens = HermesThemeTokens.of(context);
 
-    return Container(
-      key: const Key('hermes-desktop-titlebar'),
-      height: height,
-      decoration: BoxDecoration(
-        color: tokens.bgRail,
-        border: Border(
-          bottom: BorderSide(
-            color: tokens.lineSoft.withValues(alpha: 0.55),
+    return Material(
+      color: tokens.bgRail,
+      child: Container(
+        key: const Key('hermes-desktop-titlebar'),
+        height: height,
+        decoration: BoxDecoration(
+          color: tokens.bgRail,
+          border: Border(
+            bottom: BorderSide(
+              color: tokens.lineSoft,
+            ),
           ),
         ),
-      ),
-      child: Stack(
-        children: [
-          Row(
-            children: [
-              const SizedBox(width: 14),
-              HermesMarkIcon(size: 14, color: tokens.accent),
-              const SizedBox(width: 8),
-              Text(
-                'Hermes',
-                style: TextStyle(
-                  fontFamily: 'Figtree',
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: -0.1,
-                  color: tokens.text,
+        child: Stack(
+          children: [
+            Row(
+              children: [
+                const SizedBox(width: 14),
+                HermesMarkIcon(size: 14, color: tokens.accent),
+                const SizedBox(width: 8),
+                Text(
+                  'Hermes',
+                  style: TextStyle(
+                    fontFamily: 'Figtree',
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.1,
+                    color: tokens.text,
+                  ),
                 ),
-              ),
-              Expanded(
-                child: GestureDetector(
-                  key: const Key('win-drag-area'),
-                  behavior: HitTestBehavior.opaque,
-                  onPanStart: (_) => unawaited(bridge.startDragging()),
-                  onDoubleTap: () => unawaited(bridge.toggleMaximize()),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: ValueListenableBuilder<String?>(
-                      valueListenable: bridge.activeTrackSummary,
-                      builder: (context, track, _) {
-                        if (track == null || track.isEmpty) {
-                          return const SizedBox.shrink();
-                        }
-                        return Padding(
-                          padding: const EdgeInsets.only(left: 14, right: 12),
-                          child: Container(
-                            constraints: const BoxConstraints(maxWidth: 340),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 3,
-                            ),
-                            decoration: BoxDecoration(
-                              color: tokens.surface.withValues(alpha: 0.72),
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: tokens.lineSoft.withValues(alpha: 0.7),
+                Expanded(
+                  child: GestureDetector(
+                    key: const Key('win-drag-area'),
+                    behavior: HitTestBehavior.opaque,
+                    onPanStart: (_) => unawaited(bridge.startDragging()),
+                    onDoubleTap: () => unawaited(bridge.toggleMaximize()),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: ValueListenableBuilder<String?>(
+                        valueListenable: bridge.activeTrackSummary,
+                        builder: (context, track, _) {
+                          if (track == null || track.isEmpty) {
+                            return const SizedBox.shrink();
+                          }
+                          return Padding(
+                            padding: const EdgeInsets.only(left: 14, right: 12),
+                            child: Container(
+                              constraints: const BoxConstraints(maxWidth: 340),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 3,
                               ),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Icons.music_note_rounded,
-                                  size: 12,
-                                  color: tokens.accent,
+                              decoration: BoxDecoration(
+                                color: tokens.surface.withValues(alpha: 0.72),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: tokens.line,
                                 ),
-                                const SizedBox(width: 5),
-                                Flexible(
-                                  child: Text(
-                                    track,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontFamily: 'Figtree',
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w500,
-                                      color: tokens.text2,
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.music_note_rounded,
+                                    size: 12,
+                                    color: tokens.accent,
+                                  ),
+                                  const SizedBox(width: 5),
+                                  Flexible(
+                                    child: Text(
+                                      track,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontFamily: 'Figtree',
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w500,
+                                        color: tokens.text2,
+                                      ),
                                     ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
-                          ),
-                        );
-                      },
+                          );
+                        },
+                      ),
                     ),
                   ),
                 ),
-              ),
-              _CaptionActionButton(
-                key: const Key('desktop-shortcuts-btn'),
-                semanticLabel: 'Keyboard shortcuts',
-                width: 36,
-                icon: Icons.keyboard_alt_outlined,
-                iconSize: 15,
-                normalFg: tokens.text3,
-                hoverFg: tokens.text,
-                hoverBg: tokens.surface3.withValues(alpha: 0.8),
-                onTap: onOpenShortcuts ??
-                    () => unawaited(showHermesKeyboardShortcutsDialog(context)),
-              ),
-              _CaptionActionButton(
-                key: const Key('win-btn-minimize'),
-                semanticLabel: 'Minimize',
-                width: 44,
-                icon: Icons.remove_rounded,
-                iconSize: 16,
-                normalFg: tokens.text2,
-                hoverFg: tokens.text,
-                hoverBg: tokens.surface3.withValues(alpha: 0.85),
-                onTap: () => unawaited(bridge.minimize()),
-              ),
-              ValueListenableBuilder<bool>(
-                valueListenable: bridge.isMaximized,
-                builder: (context, maximized, _) => _CaptionActionButton(
-                  key: const Key('win-btn-maximize'),
-                  semanticLabel: maximized ? 'Restore' : 'Maximize',
+                _CaptionActionButton(
+                  key: const Key('desktop-shortcuts-btn'),
+                  semanticLabel: 'Keyboard shortcuts',
+                  width: 36,
+                  icon: Icons.keyboard_alt_outlined,
+                  iconSize: 15,
+                  normalFg: tokens.text3,
+                  hoverFg: tokens.text,
+                  hoverBg: tokens.surface3.withValues(alpha: 0.8),
+                  onTap: onOpenShortcuts ??
+                      () => unawaited(showHermesKeyboardShortcutsDialog(context)),
+                ),
+                _CaptionActionButton(
+                  key: const Key('win-btn-minimize'),
+                  semanticLabel: 'Minimize',
                   width: 44,
-                  icon: maximized
-                      ? Icons.filter_none_rounded
-                      : Icons.crop_square_rounded,
-                  iconSize: maximized ? 12 : 13,
+                  icon: Icons.remove_rounded,
+                  iconSize: 16,
                   normalFg: tokens.text2,
                   hoverFg: tokens.text,
                   hoverBg: tokens.surface3.withValues(alpha: 0.85),
-                  onTap: () => unawaited(bridge.toggleMaximize()),
+                  onTap: () => unawaited(bridge.minimize()),
                 ),
-              ),
-              _CaptionActionButton(
-                key: const Key('win-btn-close'),
-                semanticLabel: 'Close',
-                width: 46,
-                icon: Icons.close_rounded,
-                iconSize: 16,
-                normalFg: tokens.text2,
-                hoverFg: Colors.white,
-                hoverBg: const Color(0xFFC42B1C),
-                onTap: () => unawaited(bridge.closeWindow()),
-              ),
-            ],
-          ),
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            height: 4,
-            child: MouseRegion(
-              cursor: SystemMouseCursors.resizeUpDown,
-              child: GestureDetector(
-                behavior: HitTestBehavior.translucent,
-                onPanStart: (_) => unawaited(bridge.startTopResize()),
-              ),
+                ValueListenableBuilder<bool>(
+                  valueListenable: bridge.isMaximized,
+                  builder: (context, maximized, _) => _CaptionActionButton(
+                    key: const Key('win-btn-maximize'),
+                    semanticLabel: maximized ? 'Restore' : 'Maximize',
+                    width: 44,
+                    icon: maximized
+                        ? Icons.filter_none_rounded
+                        : Icons.crop_square_rounded,
+                    iconSize: maximized ? 12 : 13,
+                    normalFg: tokens.text2,
+                    hoverFg: tokens.text,
+                    hoverBg: tokens.surface3.withValues(alpha: 0.85),
+                    onTap: () => unawaited(bridge.toggleMaximize()),
+                  ),
+                ),
+                _CaptionActionButton(
+                  key: const Key('win-btn-close'),
+                  semanticLabel: 'Close',
+                  width: 46,
+                  icon: Icons.close_rounded,
+                  iconSize: 16,
+                  normalFg: tokens.text2,
+                  hoverFg: Colors.white,
+                  hoverBg: const Color(0xFFC42B1C),
+                  onTap: () => unawaited(bridge.closeWindow()),
+                ),
+              ],
             ),
-          ),
-        ],
+            ValueListenableBuilder<bool>(
+              valueListenable: bridge.isMaximized,
+              builder: (context, maximized, _) {
+                if (maximized) {
+                  return const SizedBox.shrink();
+                }
+                return Positioned(
+                  key: const Key('win-top-resize-strip'),
+                  top: 0,
+                  left: 0,
+                  right: 170,
+                  height: 4,
+                  child: MouseRegion(
+                    cursor: SystemMouseCursors.resizeUpDown,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.translucent,
+                      onPanStart: (_) => unawaited(bridge.startTopResize()),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
       ),
     );
   }

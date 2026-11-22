@@ -8,9 +8,12 @@
 #include <windows.storage.streams.h>
 #include <wrl/client.h>
 #include <wrl/event.h>
+#include <wrl/implements.h>
 #include <wrl/wrappers/corewrappers.h>
 
 #include <utility>
+
+#include "utils.h"
 
 namespace {
 
@@ -39,27 +42,11 @@ using ABI::Windows::Media::SystemMediaTransportControlsButton_Stop;
 using ABI::Windows::Storage::Streams::IRandomAccessStreamReference;
 using ABI::Windows::Storage::Streams::IRandomAccessStreamReferenceStatics;
 using Microsoft::WRL::Callback;
+using Microsoft::WRL::ClassicCom;
 using Microsoft::WRL::ComPtr;
-using Microsoft::WRL::Wrappers::HStringReference;
-
-std::wstring Utf8ToWide(const std::string& utf8) {
-  if (utf8.empty()) {
-    return L"";
-  }
-  const int required = ::MultiByteToWideChar(
-      CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
-  if (required <= 0) {
-    return L"";
-  }
-  std::wstring wide(static_cast<size_t>(required), L'\0');
-  const int converted = ::MultiByteToWideChar(
-      CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), wide.data(),
-      required);
-  if (converted <= 0) {
-    return L"";
-  }
-  return wide;
-}
+using Microsoft::WRL::FtmBase;
+using Microsoft::WRL::Implements;
+using Microsoft::WRL::RuntimeClassFlags;
 
 std::string MapSmtcButtonName(SystemMediaTransportControlsButton button) {
   switch (button) {
@@ -108,6 +95,8 @@ struct HermesSmtcBridge::Impl {
   ComPtr<ISystemMediaTransportControls> smtc;
   EventRegistrationToken button_token{};
   bool has_button_token = false;
+  bool ro_initialized = false;
+  std::string last_art_url;
 };
 
 HermesSmtcBridge::HermesSmtcBridge(HWND hwnd,
@@ -128,7 +117,8 @@ HermesSmtcBridge::HermesSmtcBridge(HWND hwnd,
     return;
   }
 
-  ::RoInitialize(RO_INIT_SINGLETHREADED);
+  const HRESULT ro_hr = ::RoInitialize(RO_INIT_SINGLETHREADED);
+  impl_->ro_initialized = SUCCEEDED(ro_hr);
 
   ComPtr<ISystemMediaTransportControlsInterop> interop;
   HSTRING_HEADER class_header{};
@@ -160,9 +150,12 @@ HermesSmtcBridge::HermesSmtcBridge(HWND hwnd,
   controls->put_IsPreviousEnabled(TRUE);
   controls->put_PlaybackStatus(MediaPlaybackStatus_Closed);
 
-  auto callback = Callback<ITypedEventHandler<
-      SystemMediaTransportControls*,
-      SystemMediaTransportControlsButtonPressedEventArgs*>>(
+  using AgileButtonPressedHandler = Implements<
+      RuntimeClassFlags<ClassicCom>,
+      ITypedEventHandler<SystemMediaTransportControls*,
+                         SystemMediaTransportControlsButtonPressedEventArgs*>,
+      FtmBase>;
+  auto callback = Callback<AgileButtonPressedHandler>(
       [hwnd = hwnd_](
           ISystemMediaTransportControls*,
           ISystemMediaTransportControlsButtonPressedEventArgs* args) -> HRESULT {
@@ -197,6 +190,13 @@ void HermesSmtcBridge::Shutdown() {
     }
     impl_->smtc->put_IsEnabled(FALSE);
     impl_->smtc.Reset();
+  }
+  if (impl_) {
+    impl_->last_art_url.clear();
+    if (impl_->ro_initialized) {
+      ::RoUninitialize();
+      impl_->ro_initialized = false;
+    }
   }
   if (channel_) {
     channel_->SetMethodCallHandler(nullptr);
@@ -267,9 +267,9 @@ void HermesSmtcBridge::PublishState(const std::string& title,
 
   ComPtr<IMusicDisplayProperties> music_props;
   if (SUCCEEDED(updater->get_MusicProperties(&music_props)) && music_props) {
-    const std::wstring w_title = Utf8ToWide(title);
-    const std::wstring w_artist = Utf8ToWide(artist);
-    const std::wstring w_album = Utf8ToWide(album);
+    const std::wstring w_title = Utf16FromUtf8(title);
+    const std::wstring w_artist = Utf16FromUtf8(artist);
+    const std::wstring w_album = Utf16FromUtf8(album);
 
     HSTRING_HEADER title_hdr{};
     HSTRING h_title = nullptr;
@@ -299,44 +299,48 @@ void HermesSmtcBridge::PublishState(const std::string& title,
     }
   }
 
-  if (!art_url.empty()) {
-    const std::wstring w_art = Utf8ToWide(art_url);
-    HSTRING_HEADER uri_class_hdr{};
-    HSTRING uri_class_id = nullptr;
-    const wchar_t* uri_cls = RuntimeClass_Windows_Foundation_Uri;
+  if (art_url != impl_->last_art_url) {
+    if (!art_url.empty()) {
+      const std::wstring w_art = Utf16FromUtf8(art_url);
+      HSTRING_HEADER uri_class_hdr{};
+      HSTRING uri_class_id = nullptr;
+      const wchar_t* uri_cls = RuntimeClass_Windows_Foundation_Uri;
 
-    HSTRING_HEADER art_hdr{};
-    HSTRING h_art = nullptr;
-    ComPtr<IUriRuntimeClassFactory> uri_factory;
-    ComPtr<IUriRuntimeClass> win_uri;
+      HSTRING_HEADER art_hdr{};
+      HSTRING h_art = nullptr;
+      ComPtr<IUriRuntimeClassFactory> uri_factory;
+      ComPtr<IUriRuntimeClass> win_uri;
 
-    if (SUCCEEDED(::WindowsCreateStringReference(
-            uri_cls, static_cast<UINT32>(wcslen(uri_cls)), &uri_class_hdr,
-            &uri_class_id)) &&
-        SUCCEEDED(::RoGetActivationFactory(uri_class_id,
-                                           IID_PPV_ARGS(&uri_factory))) &&
-        SUCCEEDED(::WindowsCreateStringReference(
-            w_art.c_str(), static_cast<UINT32>(w_art.size()), &art_hdr,
-            &h_art)) &&
-        SUCCEEDED(uri_factory->CreateUri(h_art, &win_uri)) && win_uri) {
-      const wchar_t* stream_cls =
-          RuntimeClass_Windows_Storage_Streams_RandomAccessStreamReference;
-      HSTRING_HEADER stream_class_hdr{};
-      HSTRING stream_class_id = nullptr;
-      ComPtr<IRandomAccessStreamReferenceStatics> stream_statics;
-      ComPtr<IRandomAccessStreamReference> stream_ref;
       if (SUCCEEDED(::WindowsCreateStringReference(
-              stream_cls, static_cast<UINT32>(wcslen(stream_cls)),
-              &stream_class_hdr, &stream_class_id)) &&
-          SUCCEEDED(::RoGetActivationFactory(
-              stream_class_id, IID_PPV_ARGS(&stream_statics))) &&
-          SUCCEEDED(stream_statics->CreateFromUri(win_uri.Get(), &stream_ref)) &&
-          stream_ref) {
-        updater->put_Thumbnail(stream_ref.Get());
+              uri_cls, static_cast<UINT32>(wcslen(uri_cls)), &uri_class_hdr,
+              &uri_class_id)) &&
+          SUCCEEDED(::RoGetActivationFactory(uri_class_id,
+                                             IID_PPV_ARGS(&uri_factory))) &&
+          SUCCEEDED(::WindowsCreateStringReference(
+              w_art.c_str(), static_cast<UINT32>(w_art.size()), &art_hdr,
+              &h_art)) &&
+          SUCCEEDED(uri_factory->CreateUri(h_art, &win_uri)) && win_uri) {
+        const wchar_t* stream_cls =
+            RuntimeClass_Windows_Storage_Streams_RandomAccessStreamReference;
+        HSTRING_HEADER stream_class_hdr{};
+        HSTRING stream_class_id = nullptr;
+        ComPtr<IRandomAccessStreamReferenceStatics> stream_statics;
+        ComPtr<IRandomAccessStreamReference> stream_ref;
+        if (SUCCEEDED(::WindowsCreateStringReference(
+                stream_cls, static_cast<UINT32>(wcslen(stream_cls)),
+                &stream_class_hdr, &stream_class_id)) &&
+            SUCCEEDED(::RoGetActivationFactory(
+                stream_class_id, IID_PPV_ARGS(&stream_statics))) &&
+            SUCCEEDED(
+                stream_statics->CreateFromUri(win_uri.Get(), &stream_ref)) &&
+            stream_ref) {
+          updater->put_Thumbnail(stream_ref.Get());
+        }
       }
+    } else {
+      updater->put_Thumbnail(nullptr);
     }
-  } else {
-    updater->put_Thumbnail(nullptr);
+    impl_->last_art_url = art_url;
   }
 
   updater->Update();
@@ -346,6 +350,7 @@ void HermesSmtcBridge::ClearState() {
   if (!impl_ || !impl_->smtc) {
     return;
   }
+  impl_->last_art_url.clear();
   impl_->smtc->put_PlaybackStatus(MediaPlaybackStatus_Closed);
   ComPtr<ISystemMediaTransportControlsDisplayUpdater> updater;
   if (SUCCEEDED(impl_->smtc->get_DisplayUpdater(&updater)) && updater) {

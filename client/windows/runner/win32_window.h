@@ -3,8 +3,6 @@
 
 #include <windows.h>
 
-#include <functional>
-#include <memory>
 #include <string>
 
 // A class abstraction for a high DPI-aware Win32 Window. Intended to be
@@ -91,6 +89,7 @@ class Win32Window {
   static void UpdateTheme(HWND const window);
 
   bool quit_on_close_ = false;
+  bool on_destroy_called_ = false;
 
   // window handle for top level window.
   HWND window_handle_ = nullptr;

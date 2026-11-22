@@ -51,10 +51,11 @@ For an in-depth breakdown of assemblies, PostgreSQL schema, SignalR Connect sema
   - External `.srt` / `.vtt` conversion and embedded text-subtitle extraction into normalized `WEBVTT` (`/api/v1/streams/{id}/subtitles/{index}.vtt`).
   - Pre-resized `SkiaSharp` WebP artwork thumbnails (`thumb` / `poster`) stored cleanly by SHA-256 content hash.
 
-### Cross-Platform Flutter Client (`Windows` & `Android`)
-- **Obsidian Crimson Token Theme (`HermesThemeTokens`)**: Dark cinema-first aesthetic (`Obsidian Glow` `#090B12` primary, `#111522` elevated, Crimson `#E11D48` accent) with selectable `OLED Black` (`#000000`) and `Slate` (`#0F172A`) surface presets, multi-accent options, and **Dynamic Album Art** clamping.
+### Cross-Platform Flutter Client (`Windows`, `Android`, & `Web`)
+- **Crimson Obsidian Token Theme (`HermesThemeTokens`)**: Six curated dark-first palettes (`Crimson` `#130A0C` / `#DC143C`, `Midnight`, `Forest`, `Amethyst`, `Amber`, `Graphite`), optional **Pure Black (OLED)** mode, and contrast-clamped local title/artwork tinting.
+- **Frameless Windows Desktop Integration**: Custom Windows 11 borderless titlebar (auto-hidden in fullscreen), system tray icon with close-to-tray playback controls, always-on-top media flyout, Mouse4/5 navigation, and Win32 SMTC integration.
 - **Multi-Source Selector & OpenGL HDR-Safe Subtitles**:
-  - `SourceSelectorCard` lets you pick between multiple releases per title (`1080p`, `4K HDR10`, codec, bitrate, audio tracks, subtitle tracks) and target video quality (`DirectPlay` -> `480p`).
+  - `SourceSelectorCard` lets you pick between multiple releases per title (`1080p`, `4K HDR10`, codec, bitrate, audio tracks, subtitle tracks) and target video quality (`DirectPlay` -> `480p`), plus Nuvio-style subtitle styling (`Fit` / `Cover` / `Stretch`, delay, size, background).
   - `HermesVideoPlayerConfig.hdrSafeDefault` configures `gpu-api=opengl` and clamps subtitle text to `#D8D8D8` over `#80000000` to prevent SDR subtitle luminance blooming on HDR monitors.
 - **Spotify-Style Connect Coordinator (`MusicPlaybackCoordinator`)**:
   - Monotonic `Version` state synchronization (`SessionStateUpdated`) prevents stale WebSocket messages from overwriting newer state.

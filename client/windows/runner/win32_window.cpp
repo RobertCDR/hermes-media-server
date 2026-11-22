@@ -16,15 +16,7 @@ namespace {
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
 #endif
 
-constexpr const wchar_t kWindowClassName[] = L"FLUTTER_RUNNER_WIN32_WINDOW";
-
-/// Registry key for app theme preference.
-///
-/// A value of 0 indicates apps should use dark mode. A non-zero or missing
-/// value indicates apps should use light mode.
-constexpr const wchar_t kGetPreferredBrightnessRegKey[] =
-  L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize";
-constexpr const wchar_t kGetPreferredBrightnessRegValue[] = L"AppsUseLightTheme";
+constexpr const wchar_t kWindowClassName[] = L"HERMES_MEDIA_CLIENT_WINDOW";
 
 // The number of Win32Window objects that currently exist.
 static int g_active_window_count = 0;
@@ -123,7 +115,10 @@ Win32Window::~Win32Window() {
 bool Win32Window::Create(const std::wstring& title,
                          const Point& origin,
                          const Size& size) {
-  Destroy();
+  if (window_handle_ != nullptr) {
+    Destroy();
+  }
+  on_destroy_called_ = false;
 
   const wchar_t* window_class =
       WindowClassRegistrar::GetInstance()->GetWindowClass();
@@ -132,6 +127,9 @@ bool Win32Window::Create(const std::wstring& title,
                               static_cast<LONG>(origin.y)};
   HMONITOR monitor = MonitorFromPoint(target_point, MONITOR_DEFAULTTONEAREST);
   UINT dpi = FlutterDesktopGetDpiForMonitor(monitor);
+  if (dpi == 0) {
+    dpi = 96;
+  }
   double scale_factor = dpi / 96.0;
 
   HWND window = CreateWindow(
@@ -150,7 +148,14 @@ bool Win32Window::Create(const std::wstring& title,
 }
 
 bool Win32Window::Show() {
-  return ShowWindow(window_handle_, SW_SHOWNORMAL);
+  if (window_handle_ == nullptr || !::IsWindow(window_handle_)) {
+    return false;
+  }
+  if (::IsWindowVisible(window_handle_)) {
+    return true;
+  }
+  return ShowWindow(window_handle_,
+                    ::IsZoomed(window_handle_) ? SW_SHOWMAXIMIZED : SW_SHOWNORMAL);
 }
 
 // static
@@ -181,11 +186,18 @@ Win32Window::MessageHandler(HWND hwnd,
   switch (message) {
     case WM_DESTROY:
       window_handle_ = nullptr;
-      Destroy();
+      if (!on_destroy_called_) {
+        on_destroy_called_ = true;
+        OnDestroy();
+      }
       if (quit_on_close_) {
         PostQuitMessage(0);
       }
       return 0;
+
+    case WM_NCDESTROY:
+      ::SetWindowLongPtr(hwnd, GWLP_USERDATA, 0);
+      return DefWindowProc(hwnd, message, wparam, lparam);
 
     case WM_DPICHANGED: {
       auto newRectSize = reinterpret_cast<RECT*>(lparam);
@@ -218,15 +230,18 @@ Win32Window::MessageHandler(HWND hwnd,
       return 0;
   }
 
-  return DefWindowProc(window_handle_, message, wparam, lparam);
+  return DefWindowProc(hwnd, message, wparam, lparam);
 }
 
 void Win32Window::Destroy() {
-  OnDestroy();
-
   if (window_handle_) {
-    DestroyWindow(window_handle_);
+    HWND handle = window_handle_;
     window_handle_ = nullptr;
+    if (!on_destroy_called_) {
+      on_destroy_called_ = true;
+      OnDestroy();
+    }
+    DestroyWindow(handle);
   }
   if (g_active_window_count == 0) {
     WindowClassRegistrar::GetInstance()->UnregisterWindowClass();
@@ -273,16 +288,7 @@ void Win32Window::OnDestroy() {
 }
 
 void Win32Window::UpdateTheme(HWND const window) {
-  DWORD light_mode;
-  DWORD light_mode_size = sizeof(light_mode);
-  LSTATUS result = RegGetValue(HKEY_CURRENT_USER, kGetPreferredBrightnessRegKey,
-                               kGetPreferredBrightnessRegValue,
-                               RRF_RT_REG_DWORD, nullptr, &light_mode,
-                               &light_mode_size);
-
-  if (result == ERROR_SUCCESS) {
-    BOOL enable_dark_mode = light_mode == 0;
-    DwmSetWindowAttribute(window, DWMWA_USE_IMMERSIVE_DARK_MODE,
-                          &enable_dark_mode, sizeof(enable_dark_mode));
-  }
+  BOOL enable_dark_mode = TRUE;
+  DwmSetWindowAttribute(window, DWMWA_USE_IMMERSIVE_DARK_MODE,
+                        &enable_dark_mode, sizeof(enable_dark_mode));
 }

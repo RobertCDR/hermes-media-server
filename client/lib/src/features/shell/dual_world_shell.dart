@@ -25,7 +25,6 @@ class DualWorldShell extends StatefulWidget {
     this.floatingOverlayBuilder,
     this.worldNotifier,
     this.onOpenSearch,
-    this.onOpenAdmin,
     this.onOpenSettings,
     this.onOpenAccountSettings,
     this.onSwitchServer,
@@ -57,7 +56,6 @@ class DualWorldShell extends StatefulWidget {
   final WidgetBuilder? floatingOverlayBuilder;
   final ValueNotifier<HermesWorld>? worldNotifier;
   final VoidCallback? onOpenSearch;
-  final VoidCallback? onOpenAdmin;
   final VoidCallback? onOpenSettings;
   final VoidCallback? onOpenAccountSettings;
   final VoidCallback? onSwitchServer;
@@ -233,10 +231,6 @@ class _DualWorldShellState extends State<DualWorldShell> {
   void _selectWorld(HermesWorld world) {
     setState(() {
       _popoverOpen = false;
-      if (world == HermesWorld.admin && widget.adminBuilder == null) {
-        widget.onOpenAdmin?.call();
-        return;
-      }
       if (world == HermesWorld.settings && widget.settingsBuilder == null) {
         widget.onOpenSettings?.call();
         return;

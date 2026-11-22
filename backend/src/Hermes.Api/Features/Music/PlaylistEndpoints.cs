@@ -193,6 +193,7 @@ public static class PlaylistEndpoints
 
         var nextPosition = existingMaxPosition.HasValue ? existingMaxPosition.Value + 1 : 0;
         db.PlaylistTracks.Add(new PlaylistTrack(id, request.SongId, nextPosition));
+        playlist.Touch(DateTimeOffset.UtcNow);
         await db.SaveChangesAsync(cancellationToken);
 
         var detail = await LoadPlaylistDetailAsync(db, id, userId, cancellationToken);
@@ -211,9 +212,9 @@ public static class PlaylistEndpoints
             return Results.Unauthorized();
         }
 
-        var playlistExists = await db.Playlists
-            .AnyAsync(p => p.Id == id && p.OwnerUserId == userId, cancellationToken);
-        if (!playlistExists)
+        var playlist = await db.Playlists
+            .SingleOrDefaultAsync(p => p.Id == id && p.OwnerUserId == userId, cancellationToken);
+        if (playlist is null)
         {
             return Results.NotFound(new { error = "playlist_not_found" });
         }
@@ -231,6 +232,7 @@ public static class PlaylistEndpoints
 
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         db.PlaylistTracks.RemoveRange(affected);
+        playlist.Touch(DateTimeOffset.UtcNow);
         await db.SaveChangesAsync(cancellationToken);
 
         var shifted = affected

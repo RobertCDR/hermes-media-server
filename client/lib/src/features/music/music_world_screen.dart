@@ -1288,7 +1288,6 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
             onToggleLike: _toggleLike,
             onAddToPlaylist: _addToPlaylist,
             onNavigate: _navigate,
-            asSliver: true,
             sliverContentWidth: contentWidth,
           ),
         ];
@@ -1310,7 +1309,6 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
             onToggleLike: _toggleLike,
             onAddToPlaylist: _addToPlaylist,
             onNavigate: _navigate,
-            asSliver: true,
             sliverContentWidth: contentWidth,
           ),
         ];
@@ -1334,7 +1332,6 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
             onToggleLike: _toggleLike,
             onAddToPlaylist: _addToPlaylist,
             onNavigate: _navigate,
-            asSliver: true,
             sliverContentWidth: contentWidth,
           ),
         ];
@@ -1365,7 +1362,6 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
             onToggleLike: _toggleLike,
             onAddToPlaylist: _addToPlaylist,
             onNavigate: _navigate,
-            asSliver: true,
             sliverContentWidth: contentWidth,
           ),
         ];
@@ -1397,7 +1393,6 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
             onToggleLike: _toggleLike,
             onAddToPlaylist: _addToPlaylist,
             onNavigate: _navigate,
-            asSliver: true,
             sliverContentWidth: contentWidth,
           ),
         ];
@@ -1427,7 +1422,6 @@ class _MusicWorldScreenState extends State<MusicWorldScreen> {
             onDeletePlaylist: () => unawaited(_deletePlaylist(pl)),
             onRemoveFromPlaylist: _removeFromPlaylist,
             onNavigate: _navigate,
-            asSliver: true,
             sliverContentWidth: contentWidth,
           ),
         ];

@@ -9,6 +9,8 @@ public sealed partial class SubtitleExtractorService
     public const int SidecarStreamIndexOffset = 1000;
 
     private static readonly string[] SidecarExtensions = [".vtt", ".srt", ".ass", ".ssa"];
+    private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+    private static readonly char[] LanguageSeparators = ['.', '-'];
 
     private static readonly char[] Windows1250HighBytes =
     [
@@ -134,8 +136,7 @@ public sealed partial class SubtitleExtractorService
 
         try
         {
-            var strictUtf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
-            return NormalizeRomanianDiacritics(strictUtf8.GetString(bytes));
+            return NormalizeRomanianDiacritics(StrictUtf8.GetString(bytes));
         }
         catch (DecoderFallbackException)
         {
@@ -194,7 +195,7 @@ public sealed partial class SubtitleExtractorService
 
     private static string TrimLanguageSuffix(string name)
     {
-        foreach (var sep in new[] { '.', '-' })
+        foreach (var sep in LanguageSeparators)
         {
             var idx = name.LastIndexOf(sep);
             if (idx > 0 && name.Length - idx - 1 is >= 2 and <= 3)

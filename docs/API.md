@@ -89,6 +89,11 @@ Mints a signed 6-hour HMAC-SHA256 stream ticket scoped to `mediaSourceId` (or `s
 - **Request Body (`CreateStreamTicketRequest`)**: `{ "mediaSourceId": "guid" }`
 - **Responses**: `200 OK` (`StreamTicketResponse`: `ticket`, `expiresAtUtc`), `400 Bad Request` (`invalid_media_source_id`), `401 Unauthorized`
 
+### `GET /api/v1/auth/me/preferences` & `PUT /api/v1/auth/me/preferences`
+Reads or updates the authenticated user's persisted account preferences (`AccountPreferencesDto` / `UpdateAccountPreferencesRequest`): `{ "autoplayNextEpisode", "normalizeVolume", "matchTitleColors", "subtitleSize", "subtitleBackground" }`.
+- **Auth**: Bearer JWT
+- **Responses**: `200 OK` (`AccountPreferencesDto`), `400 Bad Request`, `401 Unauthorized`
+
 ---
 
 ## 3. Administration (`/api/v1/admin`)
@@ -98,16 +103,28 @@ All endpoints require the `AdminOnly` authorization policy (`Role == Admin`).
 ### Invites
 - `POST /api/v1/admin/invites` — Body (`CreateInviteRequest`): `{ "maxUses": 1, "expiresInHours": 24 }` -> `201 Created` (`InviteResponse`: `id`, `code`, `maxUses`, `usedCount`, `expiresAtUtc`, `isRevoked`)
 - `GET /api/v1/admin/invites` -> `200 OK` (`InviteResponse[]`)
+- `POST /api/v1/admin/invites/{id:guid}/revoke` — Revokes an invite code -> `200 OK` (`InviteResponse`), or `404 Not Found`
 
 ### Users
 - `GET /api/v1/admin/users` -> `200 OK` (`UserSummaryDto[]`: `id`, `username`, `role`, `isActive`, `createdAtUtc`)
 - `POST /api/v1/admin/users/{id:guid}/reset-code` -> `200 OK` (`ResetCodeResponse`: `resetCode`, `expiresAtUtc`), or `404 Not Found` (`user_not_found`)
+- `DELETE /api/v1/admin/users/{id:guid}` — Deactivates user account and revokes active sessions -> `204 No Content`, `400 Bad Request`, or `404 Not Found`
+
+### Active Sessions & Server Settings
+- `GET /api/v1/admin/sessions` -> `200 OK` (`ActiveStreamSessionDto[]` covering both active HLS `transcode:*` streams and Connect `music:*` sessions)
+- `DELETE /api/v1/admin/sessions/{id}` — Stops an active `transcode:{sessionId}` or `music:{sessionId}` session -> `204 No Content` or `404 Not Found`
+- `GET /api/v1/admin/settings` -> `200 OK` (`ServerSettingsResponse`)
+- `PUT /api/v1/admin/settings` — Body (`UpdateServerSettingsRequest`): `{ "serverName", "transcodingEnabled", "maxConcurrentVideoTranscodes", "maxConcurrentAudioTranscodes", "maxRemoteVideoBitrateBps", "hardwareAccelerationMode" }` -> `200 OK` (`ServerSettingsResponse`), `400 Bad Request`
 
 ### Media Libraries & Metadata Matching
-- `POST /api/v1/admin/libraries` — Body (`CreateLibraryRootRequest`): `{ "name", "mediaType": "Movies" | "Series" | "Music", "rootPath", "watchEnabled": true }` -> `201 Created` (`LibraryRootResponse`), `400 Bad Request`, `409 Conflict`
+- `POST /api/v1/admin/libraries` — Body (`CreateLibraryRootRequest`): `{ "name", "mediaType": "Movies" | "Series" | "Music", "rootPath", "watchEnabled": true, "fetchMetadata": true }` -> `201 Created` (`LibraryRootResponse`), `400 Bad Request`, `409 Conflict`
 - `GET /api/v1/admin/libraries` -> `200 OK` (`LibraryRootResponse[]`)
+- `PUT /api/v1/admin/libraries/{id:guid}` — Body (`UpdateLibraryRootRequest`): `{ "name", "rootPath", "watchEnabled", "fetchMetadata" }` -> `200 OK` (`LibraryRootResponse`), `400 Bad Request`, `404 Not Found`
+- `DELETE /api/v1/admin/libraries/{id:guid}` — Deletes library root and cleans indexed records -> `204 No Content` or `404 Not Found`
 - `POST /api/v1/admin/libraries/{id:guid}/scan` — Runs library scan synchronously -> `200 OK` (`LibraryScanSummaryDto`: `libraryRootId`, `filesDiscovered`, `sourcesUpserted`, `sourcesMarkedMissing`, `completedAtUtc`), `404 Not Found`
 - `POST /api/v1/admin/libraries/{id:guid}/scan/queue` — Enqueues background scan via `LibraryScanChannel` -> `202 Accepted`, `404 Not Found`
+- `GET /api/v1/admin/media/unmatched` -> `200 OK` (`UnmatchedMediaDto[]`)
+- `GET /api/v1/admin/media/tmdb-search?query=...&mediaType=Movies|Series` -> `200 OK` (`TmdbCandidateDto[]`)
 - `POST /api/v1/admin/media/{id:guid}/identify` — Locks TMDB match & downloads artwork on Movie or TV Series. Body (`IdentifyMediaRequest`): `{ "tmdbId": 123, "title": "...", "year": 2024, "overview": "..." }` -> `200 OK` (`IdentifyMediaResponse`), `400 Bad Request`, `404 Not Found`
 
 ---
@@ -124,6 +141,25 @@ Returns `MovieSummaryDto` for the specified movie, or `404 Not Found` (`movie_no
 
 ### `GET /api/v1/cinema/series`
 Returns `TvSeriesSummaryDto[]` including nested `TvSeasonDto[]` -> `EpisodeSummaryDto[]` with per-episode watch progress and sources.
+
+### `PUT /api/v1/cinema/watchlist`
+Adds or removes a movie or series from the authenticated user's watchlist.
+- **Request Body (`UpdateWatchlistRequest`)**: `{ "movieId": "guid-or-null", "tvSeriesId": "guid-or-null", "inWatchlist": true }`
+- **Responses**: `200 OK` (`WatchlistResponse`), `400 Bad Request`, `404 Not Found`
+
+### `PUT /api/v1/cinema/series/{id:guid}/watched`
+Marks all episodes of a series watched or unwatched for the authenticated user and broadcasts `WatchProgressUpdated`.
+- **Request Body (`MarkSeriesWatchedRequest`)**: `{ "watched": true }`
+- **Responses**: `200 OK` (`SeriesWatchedResponse`), `404 Not Found`
+
+### Custom Lists (`/api/v1/cinema/lists`)
+- `GET /api/v1/cinema/lists` -> `200 OK` (`CustomListDto[]`)
+- `POST /api/v1/cinema/lists` — Body (`CreateCustomListRequest`): `{ "name", "description" }` -> `201 Created` (`CustomListDto`)
+- `PUT /api/v1/cinema/lists/{id:guid}` — Body (`UpdateCustomListRequest`): `{ "name", "description" }` -> `200 OK` (`CustomListDto`)
+- `DELETE /api/v1/cinema/lists/{id:guid}` -> `204 No Content`
+- `POST /api/v1/cinema/lists/{id:guid}/items` — Body (`AddCustomListItemRequest`): `{ "movieId", "tvSeriesId" }` -> `200 OK` (`CustomListDto`)
+- `DELETE /api/v1/cinema/lists/{id:guid}/items/{itemId:guid}` -> `200 OK` (`CustomListDto`)
+- `DELETE /api/v1/cinema/lists/{id:guid}/items?movieId=...&tvSeriesId=...` -> `200 OK` (`CustomListDto`)
 
 ### `PUT /api/v1/cinema/progress`
 Persists watch position (`PositionMs` / `DurationMs`), evaluates the 90% auto-watched rule (unless overridden by `MarkWatched`), and broadcasts `WatchProgressUpdated` over SignalR.
@@ -151,8 +187,11 @@ All endpoints require authentication (`Bearer` JWT).
 - `GET /api/v1/music/albums` -> `AlbumSummaryDto[]`
 - `GET /api/v1/music/albums/{id:guid}` -> `AlbumDetailDto` (`songs`) or `404 Not Found` (`album_not_found`)
 - `GET /api/v1/music/songs` -> `SongDto[]` (ordered by Artist, Album, DiscNumber, TrackNumber, Title; includes `isLiked` and `isMissing`)
+- `GET /api/v1/music/songs/{id:guid}/lyrics` -> `200 OK` (`SongLyricsDto`: `songId`, `isSynced`, `source`, `lines`) or `404 Not Found`
 - `GET /api/v1/music/songs/liked` -> `SongDto[]` (most recently liked first)
 - `POST /api/v1/music/songs/{id:guid}/like` -> `200 OK` (`LikeToggleResponse`: `songId`, `isLiked`), or `404 Not Found`
+- `GET /api/v1/music/history` -> `200 OK` (`ListeningHistoryItemDto[]`)
+- `POST /api/v1/music/history` — Body (`RecordListenRequest`): `{ "songId", "positionMs", "durationMs", "deviceId", "contextLabel", "listenedAtUtc" }` -> `200 OK` (`RecordListenResponse`)
 - `GET /api/v1/music/session` -> `PlaybackSessionDto` (fetches or initializes the user's Connect playback state)
 - `GET /api/v1/music/devices` -> `OnlineDeviceDto[]` (`deviceId`, `deviceName`, `platform`, `connectedAtUtc`)
 
@@ -160,6 +199,8 @@ All endpoints require authentication (`Bearer` JWT).
 - `GET /api/v1/music/playlists/` -> `PlaylistSummaryDto[]`
 - `GET /api/v1/music/playlists/{id:guid}` -> `PlaylistDetailDto` (`tracks`: `{ position, song }[]`) or `404 Not Found`
 - `POST /api/v1/music/playlists/` — Body (`CreatePlaylistRequest`): `{ "name", "description" }` -> `201 Created` (`PlaylistDetailDto`)
+- `PUT /api/v1/music/playlists/{id:guid}` — Body (`RenamePlaylistRequest`): `{ "name", "description" }` -> `200 OK` (`PlaylistDetailDto`), `404 Not Found`
+- `DELETE /api/v1/music/playlists/{id:guid}` -> `204 No Content`, `404 Not Found`
 - `POST /api/v1/music/playlists/{id:guid}/tracks` — Body (`AddPlaylistTrackRequest`): `{ "songId" }` -> `200 OK` (`PlaylistDetailDto`)
 - `DELETE /api/v1/music/playlists/{id:guid}/tracks/{position:int}` — Removes track at `position` and compacts subsequent positions inside a transaction -> `200 OK` (`PlaylistDetailDto`), `404 Not Found`
 
@@ -176,6 +217,7 @@ All stream routes validate `?ticket=<signedTicket>` against the target GUID:
 - `GET /api/v1/streams/{mediaSourceId:guid}/video/master.m3u8?quality=direct|480p|720p|1080p&audioStreamIndex=1&startSeconds=0&ticket=...` — Returns HLS master playlist (`X-Hermes-Transcode-Session` header for transcoded sessions, `429 transcode_slots_exhausted` if busy)
 - `GET /api/v1/streams/{mediaSourceId:guid}/hls/{sessionId:guid}/{assetName}?ticket=...` — Serves `.m3u8` (rewritten with `?ticket=...`) and `.ts` media segments
 - `DELETE /api/v1/streams/{mediaSourceId:guid}/hls/{sessionId:guid}?ticket=...` — Terminates FFmpeg session and cleans segment temp directory (`204 No Content`)
+- `DELETE /api/v1/streams/{mediaSourceId:guid}/hls/by-client/{clientSession}?ticket=...` — Stops all HLS sessions belonging to `clientSession` for the ticket user (`204 No Content`)
 - `GET /api/v1/streams/{targetId:guid}/audio?quality=lossless|veryhigh|high|medium|low&ticket=...` — Streams Song or MediaSource audio with strict zero-upscale (`X-Hermes-Delivery: DirectPlay` or `Transcoded`)
 - `GET /api/v1/streams/{mediaSourceId:guid}/subtitles/{streamIndex:int}.vtt?ticket=...` — Extracts or converts subtitles to `text/vtt`
 

@@ -11,8 +11,6 @@ public sealed class User
         Username = string.Empty;
         PasswordHash = string.Empty;
         PreferredAccentHex = "#E11D48";
-        SubtitleSize = "medium";
-        SubtitleBackground = "shadow";
     }
 
     private User(Guid id, string username, string passwordHash, UserRole role, DateTimeOffset createdAtUtc)

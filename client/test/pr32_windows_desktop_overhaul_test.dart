@@ -11,6 +11,7 @@ import 'package:hermes_client/src/core/network/hermes_sync_client.dart';
 import 'package:hermes_client/src/core/settings/hermes_preferences.dart';
 import 'package:hermes_client/src/core/theme/hermes_theme_tokens.dart';
 import 'package:hermes_client/src/core/widgets/hermes_horizontal_shelf.dart';
+import 'package:hermes_client/src/core/window/hermes_desktop_titlebar.dart';
 import 'package:hermes_client/src/core/window/hermes_window_bridge.dart';
 import 'package:hermes_client/src/features/cinema/cinema_models.dart';
 import 'package:hermes_client/src/features/cinema/cinema_service.dart';
@@ -923,6 +924,73 @@ void main() {
         } finally {
           debugDefaultTargetPlatformOverride = null;
         }
+      },
+    );
+
+    testWidgets(
+      'HermesDesktopTitleBar provides Material ancestor, subtle border, non-overlapping resize strip, and bridge dispose',
+      (tester) async {
+        const channel = MethodChannel('hermes.window/test_pr32_titlebar');
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (_) async => null);
+        addTearDown(
+          () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+              .setMockMethodCallHandler(channel, null),
+        );
+
+        final bridge = HermesWindowBridge(channel: channel);
+        final tokens = HermesThemeTokens.resolve();
+        await tester.binding.setSurfaceSize(const Size(1200, 800));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: tokens.toThemeData(),
+            builder: (context, child) => Column(
+              children: [
+                HermesDesktopTitleBar(bridge: bridge),
+                Expanded(child: child ?? const SizedBox.shrink()),
+              ],
+            ),
+            home: const Scaffold(body: SizedBox.shrink()),
+          ),
+        );
+        await tester.pump();
+
+        final titleTextFinder = find.text('Hermes');
+        expect(titleTextFinder, findsOneWidget);
+        final materialAncestors = find.ancestor(
+          of: titleTextFinder,
+          matching: find.byType(Material),
+        );
+        expect(materialAncestors, findsAtLeastNWidgets(1));
+
+        final inheritedStyle =
+            DefaultTextStyle.of(tester.element(titleTextFinder)).style;
+        expect(inheritedStyle.decoration, isNot(TextDecoration.underline));
+
+        final titleBarContainer = tester.widget<Container>(
+          find.byKey(const Key('hermes-desktop-titlebar')),
+        );
+        final boxDeco = titleBarContainer.decoration as BoxDecoration?;
+        final bottomBorder = boxDeco?.border?.bottom;
+        expect(bottomBorder, isNotNull);
+        expect(bottomBorder!.color.a, lessThanOrEqualTo(0.1));
+
+        final resizeStrip = find.byKey(const Key('win-top-resize-strip'));
+        expect(resizeStrip, findsOneWidget);
+        final closeBtn = find.byKey(const Key('win-btn-close'));
+        expect(
+          tester.getRect(resizeStrip).right,
+          lessThanOrEqualTo(tester.getRect(closeBtn).left),
+        );
+
+        bridge.isMaximized.value = true;
+        await tester.pump();
+        expect(find.byKey(const Key('win-top-resize-strip')), findsNothing);
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        expect(bridge.dispose, returnsNormally);
       },
     );
   });
