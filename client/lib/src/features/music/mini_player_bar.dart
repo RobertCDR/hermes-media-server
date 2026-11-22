@@ -24,6 +24,9 @@ class MiniPlayerBar extends StatefulWidget {
     this.onCycleRepeat,
     this.onSeekMs,
     this.onVolumeChanged,
+    this.onVolumeChangeEnd,
+    this.volumeOverride,
+    this.remoteDeviceName,
     this.onToggleMute,
     this.onToggleLike,
     this.onToggleNowPlaying,
@@ -45,6 +48,9 @@ class MiniPlayerBar extends StatefulWidget {
   final VoidCallback? onCycleRepeat;
   final ValueChanged<int>? onSeekMs;
   final ValueChanged<double>? onVolumeChanged;
+  final ValueChanged<double>? onVolumeChangeEnd;
+  final double? volumeOverride;
+  final String? remoteDeviceName;
   final VoidCallback? onToggleMute;
   final VoidCallback? onToggleLike;
   final VoidCallback? onToggleNowPlaying;
@@ -81,7 +87,8 @@ class _MiniPlayerBarState extends State<MiniPlayerBar> {
     final activeMs =
         (_scrubDragMs ?? (widget.positionMs ?? s.positionMs).toDouble())
             .clamp(0.0, maxMs);
-    final effectiveVolume = (_volumeDrag ?? s.volume).clamp(0.0, 1.0);
+    final baseVolume = widget.volumeOverride ?? s.volume;
+    final effectiveVolume = (_volumeDrag ?? baseVolume).clamp(0.0, 1.0);
 
     return Container(
       decoration: BoxDecoration(
@@ -400,54 +407,87 @@ class _MiniPlayerBarState extends State<MiniPlayerBar> {
                               child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                _CompactIconSlot(
-                                  tooltip: effectiveVolume == 0 ? 'Unmute' : 'Mute',
-                                  icon: effectiveVolume == 0
-                                      ? Icons.volume_off_rounded
-                                      : effectiveVolume < 0.5
-                                          ? Icons.volume_down_rounded
-                                          : Icons.volume_up_rounded,
-                                  size: 19,
-                                  color: tokens.text2,
-                                  onPressed: widget.onToggleMute,
-                                ),
+                                (() {
+                                  final isRemoteVolume =
+                                      widget.remoteDeviceName != null &&
+                                          widget.remoteDeviceName!.isNotEmpty;
+                                  return _CompactIconSlot(
+                                    tooltip: isRemoteVolume
+                                        ? 'Remote volume (${widget.remoteDeviceName})'
+                                        : (effectiveVolume == 0
+                                            ? 'Unmute'
+                                            : 'Mute'),
+                                    icon: effectiveVolume == 0
+                                        ? Icons.volume_off_rounded
+                                        : effectiveVolume < 0.5
+                                            ? Icons.volume_down_rounded
+                                            : Icons.volume_up_rounded,
+                                    size: 19,
+                                    color: isRemoteVolume
+                                        ? tokens.accent
+                                        : tokens.text2,
+                                    onPressed: widget.onToggleMute,
+                                  );
+                                })(),
                                 SizedBox(
                                   width: 84,
                                   height: 18,
-                                  child: SliderTheme(
-                                    data: SliderTheme.of(context).copyWith(
-                                      trackHeight: 4,
-                                      activeTrackColor:
-                                          (_volumeHover || _volumeDrag != null)
+                                  child: Builder(
+                                    builder: (context) {
+                                      final isRemoteVolume =
+                                          widget.remoteDeviceName != null &&
+                                              widget.remoteDeviceName!.isNotEmpty;
+                                      return SliderTheme(
+                                        data: SliderTheme.of(context).copyWith(
+                                          trackHeight: 4,
+                                          activeTrackColor: isRemoteVolume
+                                              ? tokens.accent
+                                              : (_volumeHover ||
+                                                      _volumeDrag != null)
+                                                  ? tokens.accent
+                                                  : tokens.text,
+                                          inactiveTrackColor: tokens.text
+                                              .withValues(alpha: 0.25),
+                                          thumbColor: isRemoteVolume
                                               ? tokens.accent
                                               : tokens.text,
-                                      inactiveTrackColor:
-                                          tokens.text.withValues(alpha: 0.25),
-                                      thumbColor: tokens.text,
-                                      thumbShape: RoundSliderThumbShape(
-                                        enabledThumbRadius:
-                                            (_volumeHover || _volumeDrag != null)
+                                          thumbShape: RoundSliderThumbShape(
+                                            enabledThumbRadius: (_volumeHover ||
+                                                    _volumeDrag != null)
                                                 ? 5.5
                                                 : 3.5,
-                                      ),
-                                      overlayShape: const RoundSliderOverlayShape(
-                                        overlayRadius: 9,
-                                      ),
-                                    ),
-                                    child: Slider(
-                                      value: effectiveVolume,
-                                      min: 0.0,
-                                      max: 1.0,
-                                      onChanged: widget.onVolumeChanged == null
-                                          ? null
-                                          : (v) {
-                                              setState(() => _volumeDrag = v);
-                                              widget.onVolumeChanged!(v);
-                                            },
-                                      onChangeEnd: widget.onVolumeChanged == null
-                                          ? null
-                                          : (_) => setState(() => _volumeDrag = null),
-                                    ),
+                                          ),
+                                          overlayShape:
+                                              const RoundSliderOverlayShape(
+                                            overlayRadius: 9,
+                                          ),
+                                        ),
+                                        child: Slider(
+                                          value: effectiveVolume,
+                                          min: 0.0,
+                                          max: 1.0,
+                                          onChanged:
+                                              widget.onVolumeChanged == null
+                                                  ? null
+                                                  : (v) {
+                                                      setState(
+                                                        () => _volumeDrag = v,
+                                                      );
+                                                      widget.onVolumeChanged!(v);
+                                                    },
+                                          onChangeEnd:
+                                              widget.onVolumeChanged == null
+                                                  ? null
+                                                  : (v) {
+                                                      setState(
+                                                        () => _volumeDrag = null,
+                                                      );
+                                                      widget.onVolumeChangeEnd
+                                                          ?.call(v);
+                                                    },
+                                        ),
+                                      );
+                                    },
                                   ),
                                 ),
                                 ExcludeSemantics(

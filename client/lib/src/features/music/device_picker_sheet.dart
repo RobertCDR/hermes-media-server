@@ -13,12 +13,22 @@ class DevicePickerSheet extends StatelessWidget {
     required this.activeRendererDeviceId,
     required this.localDeviceId,
     required this.onSelectDevice,
+    this.volume,
+    this.onVolumeChanged,
+    this.onVolumeChangeEnd,
+    this.onToggleMute,
+    this.volumeTargetLabel,
   });
 
   final List<OnlineDeviceModel> devices;
   final String? activeRendererDeviceId;
   final String localDeviceId;
   final ValueChanged<String> onSelectDevice;
+  final double? volume;
+  final ValueChanged<double>? onVolumeChanged;
+  final ValueChanged<double>? onVolumeChangeEnd;
+  final VoidCallback? onToggleMute;
+  final String? volumeTargetLabel;
 
   IconData _deviceIcon(String platform) {
     final p = platform.toLowerCase();
@@ -46,8 +56,9 @@ class DevicePickerSheet extends StatelessWidget {
             : activeDevice.deviceName)
         : (localInList != null ? 'This Device (${localInList.deviceName})' : 'This Device');
 
+    final excludeId = activeDevice?.deviceId ?? localDeviceId;
     final otherDevices = devices
-        .where((d) => d.deviceId != activeDevice?.deviceId)
+        .where((d) => d.deviceId != excludeId)
         .toList();
 
     return Container(
@@ -189,6 +200,141 @@ class DevicePickerSheet extends StatelessWidget {
                 },
               ),
             ),
+          if (volume != null && onVolumeChanged != null)
+            _DeviceVolumeSection(
+              volume: volume!,
+              label: volumeTargetLabel ?? 'Device volume',
+              onVolumeChanged: onVolumeChanged!,
+              onVolumeChangeEnd: onVolumeChangeEnd,
+              onToggleMute: onToggleMute,
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DeviceVolumeSection extends StatefulWidget {
+  const _DeviceVolumeSection({
+    required this.volume,
+    required this.label,
+    required this.onVolumeChanged,
+    this.onVolumeChangeEnd,
+    this.onToggleMute,
+  });
+
+  final double volume;
+  final String label;
+  final ValueChanged<double> onVolumeChanged;
+  final ValueChanged<double>? onVolumeChangeEnd;
+  final VoidCallback? onToggleMute;
+
+  @override
+  State<_DeviceVolumeSection> createState() => _DeviceVolumeSectionState();
+}
+
+class _DeviceVolumeSectionState extends State<_DeviceVolumeSection> {
+  double? _dragVolume;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final effective = (_dragVolume ?? widget.volume).clamp(0.0, 1.0);
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Divider(
+            height: 1,
+            color: Colors.white.withValues(alpha: 0.08),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              IconButton(
+                tooltip: effective == 0 ? 'Unmute' : 'Mute',
+                visualDensity: VisualDensity.compact,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                padding: EdgeInsets.zero,
+                onPressed: widget.onToggleMute,
+                icon: Icon(
+                  effective == 0
+                      ? Icons.volume_off_rounded
+                      : effective < 0.5
+                          ? Icons.volume_down_rounded
+                          : Icons.volume_up_rounded,
+                  size: 20,
+                  color: scheme.primary,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            widget.label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: scheme.onSurface.withValues(alpha: 0.85),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          '${(effective * 100).round()}%',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                    SizedBox(
+                      height: 24,
+                      child: SliderTheme(
+                        data: SliderTheme.of(context).copyWith(
+                          trackHeight: 4,
+                          activeTrackColor: scheme.primary,
+                          inactiveTrackColor:
+                              Colors.white.withValues(alpha: 0.16),
+                          thumbColor: scheme.onSurface,
+                          thumbShape: const RoundSliderThumbShape(
+                            enabledThumbRadius: 6,
+                          ),
+                          overlayShape: const RoundSliderOverlayShape(
+                            overlayRadius: 12,
+                          ),
+                        ),
+                        child: Slider(
+                          value: effective,
+                          min: 0.0,
+                          max: 1.0,
+                          onChanged: (v) {
+                            setState(() => _dragVolume = v);
+                            widget.onVolumeChanged(v);
+                          },
+                          onChangeEnd: (v) {
+                            setState(() => _dragVolume = null);
+                            widget.onVolumeChangeEnd?.call(v);
+                          },
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );

@@ -35,6 +35,10 @@ abstract interface class ControllableAudioEngine implements AudioEngineAdapter {
   Stream<void> get trackCompletedStream;
 }
 
+abstract interface class PrewarmableAudioEngine {
+  Future<void> warmUp();
+}
+
 class NoOpAudioEngineAdapter implements AudioEngineAdapter {
   @override
   Future<void> loadAndPlay(Uri streamUri, SongModel track, int startPositionMs) async {}
@@ -93,13 +97,22 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
   NetworkTransportMode _networkMode = NetworkTransportMode.wifi;
   PlaybackSessionState? _session;
   String? _lastRecordedListenSongId;
-  int _lastAppliedVersion = 0;
+  int _lastAppliedVersion = -1;
+  int _applyGeneration = 0;
+  int _catalogVersion = 0;
   String? _activeSourceLabel;
   MusicPageRoute? _activeSourceRoute;
   bool _nowPlayingOpen = false;
   bool _wasRemoteRenderer = false;
   bool _claimingDisconnect = false;
   double _lastNonZeroVolume = 0.85;
+  double? _pendingVolumeOverride;
+  double? _queuedVolumeToSend;
+  Timer? _volumeThrottleTimer;
+  double? _lastAppliedEngineVolume;
+  final Map<String, ({String ticket, DateTime expiresAt})> _ticketCache = {};
+  final Map<String, Future<String>> _inFlightTickets = {};
+  Future<void>? _catalogLoadFuture;
   final Random _random = Random();
 
   StreamSubscription<int>? _positionSub;
@@ -113,7 +126,8 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
   int _lastHeartbeatPositionMs = -10000;
   bool _disposed = false;
 
-  int get lastAppliedVersion => _lastAppliedVersion;
+  int get lastAppliedVersion => _lastAppliedVersion < 0 ? 0 : _lastAppliedVersion;
+  int get catalogVersion => _catalogVersion;
   PlaybackSessionState? get session => _session;
   int get currentPositionMs =>
       _session != null && _session!.state != PlaybackState.stopped
@@ -124,9 +138,17 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
   bool get nowPlayingOpen => _nowPlayingOpen;
   String? get activeSourceLabel => _activeSourceLabel;
   MusicPageRoute? get activeSourceRoute => _activeSourceRoute;
+  double get effectiveVolume =>
+      (_pendingVolumeOverride ?? _session?.volume ?? _lastNonZeroVolume)
+          .clamp(0.0, 1.0);
 
   bool get isLocalRenderer =>
       _session != null && _session!.activeRendererDeviceId == localDeviceId;
+
+  bool get isControllingRemoteDevice =>
+      _session != null &&
+      _session!.activeRendererDeviceId != null &&
+      _session!.activeRendererDeviceId != localDeviceId;
 
   SongModel? get currentSong {
     final songId = _session?.currentSongId;
@@ -153,7 +175,7 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
         .toList();
   }
 
-  void indexSongs(List<SongModel> songs) {
+  void indexSongs(List<SongModel> songs, {bool notify = true}) {
     var changed = false;
     for (final song in songs) {
       final existing = _songsById[song.id];
@@ -163,7 +185,10 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
       _songsById[song.id] = song;
     }
     if (changed) {
-      notifyListeners();
+      _catalogVersion++;
+      if (notify && !_disposed) {
+        notifyListeners();
+      }
     }
   }
 
@@ -173,6 +198,7 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
       return;
     }
     _songsById[songId] = existing.copyWith(isLiked: liked);
+    _catalogVersion++;
     notifyListeners();
   }
 
@@ -252,6 +278,14 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
     _disposed = true;
     _remoteTickTimer?.cancel();
     _remoteTickTimer = null;
+    _volumeThrottleTimer?.cancel();
+    _volumeThrottleTimer = null;
+    _ticketCache.clear();
+    _inFlightTickets.clear();
+    mediaBridge.setCommandHandler((_) {});
+    if (mediaBridge case final SeekCapableMediaBridge seeker) {
+      seeker.setSeekHandler((_) {});
+    }
     unawaited(_positionSub?.cancel());
     unawaited(_completedSub?.cancel());
     _positionSub = null;
@@ -397,17 +431,89 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
     return [chosenId, ...rest];
   }
 
+  Future<String> _getOrIssueTicket(String songId) {
+    final cached = _ticketCache[songId];
+    if (cached != null && DateTime.now().isBefore(cached.expiresAt)) {
+      return Future<String>.value(cached.ticket);
+    }
+
+    final existing = _inFlightTickets[songId];
+    if (existing != null) {
+      return existing;
+    }
+
+    final future = () async {
+      try {
+        final ticket = await _ticketIssuer(songId);
+        if (!_disposed && ticket.isNotEmpty) {
+          _ticketCache[songId] = (
+            ticket: ticket,
+            expiresAt: DateTime.now().add(const Duration(hours: 4)),
+          );
+        }
+        return ticket;
+      } finally {
+        _inFlightTickets.remove(songId);
+      }
+    }();
+    _inFlightTickets[songId] = future;
+    return future;
+  }
+
+  Future<void> _ensureCatalogLoaded() {
+    final existing = _catalogLoadFuture;
+    if (existing != null) {
+      return existing;
+    }
+
+    final future = () async {
+      try {
+        final songs = await musicService.listSongs();
+        if (!_disposed) {
+          indexSongs(songs, notify: false);
+        }
+      } catch (_) {
+        // Best-effort lazy catalog lookup when Connect transfers before Music tab opens.
+      } finally {
+        _catalogLoadFuture = null;
+      }
+    }();
+    _catalogLoadFuture = future;
+    return future;
+  }
+
+  Future<void> _prewarmForTransfer(String songId) async {
+    if (_disposed) return;
+    if (audioEngine case final PrewarmableAudioEngine prewarmable) {
+      unawaited(prewarmable.warmUp());
+    }
+    try {
+      await _getOrIssueTicket(songId);
+    } catch (_) {
+      // Non-fatal prewarm failure will retry on actual transfer.
+    }
+  }
+
   Future<void> applyServerSession(PlaybackSessionState incoming) async {
-    // Strict monotonic Connect guard: discard stale/reordered packets.
-    if (_disposed || incoming.version < _lastAppliedVersion) {
+    if (_disposed) {
       return;
     }
 
+    // Strict monotonic Connect guard: ignore duplicate same-version echoes and stale packets.
+    if (_session != null &&
+        incoming.sessionId == _session!.sessionId &&
+        incoming.version <= _lastAppliedVersion) {
+      return;
+    }
+
+    final gen = ++_applyGeneration;
     final previousTrackId = _session?.currentSongId;
-    final previousVolume = _session?.volume;
     final previousWasRemote = _wasRemoteRenderer;
     _lastAppliedVersion = incoming.version;
     _session = incoming;
+    if (_volumeThrottleTimer == null) {
+      _pendingVolumeOverride = null;
+    }
     _wasRemoteRenderer = incoming.activeRendererDeviceId != null &&
         incoming.activeRendererDeviceId != localDeviceId;
     if (!incoming.shuffle &&
@@ -428,9 +534,24 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
       _loadedEngineState = PlaybackState.stopped;
       _livePositionMs = incoming.positionMs;
       _syncRemoteProgressTimer();
-      await audioEngine.stop();
-      await mediaBridge.clearState();
       notifyListeners();
+      await audioEngine.stop();
+      if (_disposed || gen != _applyGeneration) return;
+      await mediaBridge.clearState();
+      if (_disposed || gen != _applyGeneration) return;
+      if (incoming.currentSongId != null &&
+          !_songsById.containsKey(incoming.currentSongId)) {
+        unawaited(_ensureCatalogLoaded().then((_) {
+          if (!_disposed &&
+              _songsById.containsKey(_session?.currentSongId)) {
+            notifyListeners();
+          }
+        }));
+      }
+      if (incoming.currentSongId != null &&
+          incoming.state == PlaybackState.playing) {
+        unawaited(_prewarmForTransfer(incoming.currentSongId!));
+      }
       if (previousWasRemote &&
           incoming.activeRendererDeviceId == null &&
           incoming.currentSongId != null &&
@@ -444,7 +565,13 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
     _syncRemoteProgressTimer();
 
     final trackId = incoming.currentSongId;
-    final track = trackId == null ? null : _songsById[trackId];
+    var track = trackId == null ? null : _songsById[trackId];
+    if (trackId != null && track == null) {
+      notifyListeners();
+      await _ensureCatalogLoaded();
+      if (_disposed || gen != _applyGeneration) return;
+      track = _songsById[trackId];
+    }
 
     if (incoming.state == PlaybackState.playing && track != null) {
       final controllable = audioEngine is ControllableAudioEngine
@@ -457,32 +584,58 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
           _loadedEngineState != PlaybackState.stopped;
 
       if (sameTrackLoaded) {
-        if (previousVolume != incoming.volume) {
-          await controllable.setVolume(incoming.volume);
-        }
         if ((incoming.positionMs - _livePositionMs).abs() > 2500) {
           _livePositionMs = incoming.positionMs;
+          notifyListeners();
           await audioEngine.seek(incoming.positionMs);
+          if (_disposed || gen != _applyGeneration) return;
+        }
+        if (_lastAppliedEngineVolume != incoming.volume) {
+          _lastAppliedEngineVolume = incoming.volume;
+          await controllable.setVolume(incoming.volume);
+          if (_disposed || gen != _applyGeneration) return;
         }
         if (_loadedEngineState == PlaybackState.paused) {
+          _loadedEngineState = PlaybackState.playing;
+          notifyListeners();
           await controllable.resume();
+          if (_disposed || gen != _applyGeneration) return;
+        } else {
+          _loadedEngineState = PlaybackState.playing;
+          notifyListeners();
         }
-        _loadedEngineState = PlaybackState.playing;
       } else {
-        final ticket = await _ticketIssuer(track.id);
+        _livePositionMs = incoming.positionMs;
+        _lastNotifiedPositionMs = incoming.positionMs;
+        _lastHeartbeatPositionMs = incoming.positionMs;
+        notifyListeners();
+
+        final ticket = await _getOrIssueTicket(track.id);
+        if (_disposed || gen != _applyGeneration) return;
+
         final streamUri = musicService.buildAudioStreamUri(
           songId: track.id,
           ticket: ticket,
           quality: quality,
         );
+        if (controllable != null && _lastAppliedEngineVolume != incoming.volume) {
+          _lastAppliedEngineVolume = incoming.volume;
+          await controllable.setVolume(incoming.volume);
+          if (_disposed || gen != _applyGeneration) return;
+        }
         _loadedTrackId = track.id;
         _loadedQuality = quality;
         _loadedEngineState = PlaybackState.playing;
-        _livePositionMs = incoming.positionMs;
-        _lastNotifiedPositionMs = incoming.positionMs;
-        _lastHeartbeatPositionMs = incoming.positionMs;
-        await audioEngine.loadAndPlay(streamUri, track, incoming.positionMs);
-        await controllable?.setVolume(incoming.volume);
+        try {
+          await audioEngine.loadAndPlay(streamUri, track, incoming.positionMs);
+        } catch (_) {
+          if (gen == _applyGeneration) {
+            _loadedTrackId = null;
+            _loadedEngineState = PlaybackState.stopped;
+          }
+          rethrow;
+        }
+        if (_disposed || gen != _applyGeneration) return;
       }
       await mediaBridge.publishState(
         MediaBridgeMetadata(
@@ -495,18 +648,23 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
           artUri: musicService.buildArtworkUri(track.artworkHash),
         ),
       );
+      if (_disposed || gen != _applyGeneration) return;
     } else if (incoming.state == PlaybackState.paused && track != null) {
       if (previousTrackId != track.id ||
           (incoming.positionMs - _livePositionMs).abs() > 2500) {
         _livePositionMs = incoming.positionMs;
       }
       _loadedEngineState = PlaybackState.paused;
+      notifyListeners();
       if (audioEngine case final ControllableAudioEngine controllable) {
-        if (previousVolume != incoming.volume) {
+        if (_lastAppliedEngineVolume != incoming.volume) {
+          _lastAppliedEngineVolume = incoming.volume;
           await controllable.setVolume(incoming.volume);
+          if (_disposed || gen != _applyGeneration) return;
         }
       }
       await audioEngine.pause();
+      if (_disposed || gen != _applyGeneration) return;
       await mediaBridge.publishState(
         MediaBridgeMetadata(
           title: track.title,
@@ -518,13 +676,17 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
           artUri: musicService.buildArtworkUri(track.artworkHash),
         ),
       );
+      if (_disposed || gen != _applyGeneration) return;
     } else {
       _loadedTrackId = null;
       _loadedQuality = null;
       _loadedEngineState = PlaybackState.stopped;
       _livePositionMs = 0;
+      notifyListeners();
       await audioEngine.stop();
+      if (_disposed || gen != _applyGeneration) return;
       await mediaBridge.clearState();
+      if (_disposed || gen != _applyGeneration) return;
     }
 
     notifyListeners();
@@ -552,7 +714,15 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
     final effectiveStart = isShuffled ? 0 : safeIndex;
 
     if (transport != null) {
-      final updated = await transport!.startPlayback(ids, effectiveStart);
+      // Preserve active remote renderer when controlling playback from another device.
+      final updated = isControllingRemoteDevice
+          ? await transport!.sendTransport(
+              PlaybackState.playing,
+              currentIndex: effectiveStart,
+              positionMs: 0,
+              queueSongIds: ids,
+            )
+          : await transport!.startPlayback(ids, effectiveStart);
       await applyServerSession(updated);
       return;
     }
@@ -563,7 +733,7 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
     await applyServerSession(
       PlaybackSessionState(
         sessionId: 'local',
-        version: _lastAppliedVersion + 1,
+        version: lastAppliedVersion + 1,
         activeRendererDeviceId: localDeviceId,
         activeRendererDeviceName: 'This Device',
         state: PlaybackState.playing,
@@ -599,6 +769,17 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
     await _dispatchTransport(nextState);
   }
 
+  Future<void> pauseIfPlaying() async {
+    final current = _session;
+    if (_disposed ||
+        current == null ||
+        !isLocalRenderer ||
+        current.state != PlaybackState.playing) {
+      return;
+    }
+    await _dispatchTransport(PlaybackState.paused, positionMs: currentPositionMs);
+  }
+
   Future<void> playUpNextAt(int index) async {
     final current = _session;
     if (index < 0 || index >= _upNextSongIds.length) {
@@ -617,14 +798,21 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
     final insertAt = (current.currentIndex + 1).clamp(0, updatedQueue.length);
     updatedQueue.insert(insertAt, nextId);
     if (transport != null) {
-      final updated = await transport!.startPlayback(updatedQueue, insertAt);
+      final updated = isControllingRemoteDevice
+          ? await transport!.sendTransport(
+              PlaybackState.playing,
+              currentIndex: insertAt,
+              positionMs: 0,
+              queueSongIds: updatedQueue,
+            )
+          : await transport!.startPlayback(updatedQueue, insertAt);
       await applyServerSession(updated);
       return;
     }
     await applyServerSession(
       PlaybackSessionState(
         sessionId: current.sessionId,
-        version: _lastAppliedVersion + 1,
+        version: lastAppliedVersion + 1,
         activeRendererDeviceId: current.activeRendererDeviceId,
         activeRendererDeviceName: current.activeRendererDeviceName,
         state: PlaybackState.playing,
@@ -690,7 +878,7 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
       return;
     }
 
-    if (current.positionMs > 4000) {
+    if (currentPositionMs > 4000) {
       await seekTo(0);
       return;
     }
@@ -774,16 +962,65 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
     await _dispatchTransport(current.state, repeatMode: nextMode);
   }
 
-  Future<void> setVolume(double volume) async {
+  Future<void> setVolume(double volume, {bool immediate = true}) async {
     final current = _session;
-    if (current == null) {
+    if (_disposed || current == null || !volume.isFinite) {
       return;
     }
+
     final clamped = volume.clamp(0.0, 1.0);
     if (clamped > 0.0) {
       _lastNonZeroVolume = clamped;
     }
-    await _dispatchTransport(current.state, volume: clamped);
+
+    if (isLocalRenderer) {
+      if (audioEngine case final ControllableAudioEngine controllable) {
+        _lastAppliedEngineVolume = clamped;
+        await controllable.setVolume(clamped);
+      }
+    }
+
+    _pendingVolumeOverride = clamped;
+    notifyListeners();
+
+    if (transport == null || immediate) {
+      _volumeThrottleTimer?.cancel();
+      _volumeThrottleTimer = null;
+      _queuedVolumeToSend = null;
+      await _dispatchTransport(
+        _session?.state ?? current.state,
+        volume: clamped,
+      );
+      if (!_disposed && _pendingVolumeOverride == clamped) {
+        _pendingVolumeOverride = null;
+        notifyListeners();
+      }
+      return;
+    }
+
+    _queuedVolumeToSend = clamped;
+    _volumeThrottleTimer ??= Timer(
+      const Duration(milliseconds: 100),
+      () => unawaited(_flushThrottledVolume()),
+    );
+  }
+
+  Future<void> _flushThrottledVolume() async {
+    _volumeThrottleTimer = null;
+    if (_disposed) {
+      _queuedVolumeToSend = null;
+      return;
+    }
+    final nextVolume = _queuedVolumeToSend;
+    _queuedVolumeToSend = null;
+    if (nextVolume == null || _session == null) {
+      return;
+    }
+    await _dispatchTransport(_session!.state, volume: nextVolume);
+    if (!_disposed && _queuedVolumeToSend == null && _pendingVolumeOverride == nextVolume) {
+      _pendingVolumeOverride = null;
+      notifyListeners();
+    }
   }
 
   Future<void> toggleMute() async {
@@ -791,8 +1028,9 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
     if (current == null) {
       return;
     }
-    final nextVol = current.volume > 0 ? 0.0 : (_lastNonZeroVolume > 0 ? _lastNonZeroVolume : 0.7);
-    await setVolume(nextVol);
+    final currentVol = effectiveVolume;
+    final nextVol = currentVol > 0 ? 0.0 : (_lastNonZeroVolume > 0 ? _lastNonZeroVolume : 0.7);
+    await setVolume(nextVol, immediate: true);
   }
 
   Future<void> transferOutputTo(String targetDeviceId) async {
@@ -847,7 +1085,7 @@ class MusicPlaybackCoordinator extends ChangeNotifier {
     await applyServerSession(
       PlaybackSessionState(
         sessionId: current.sessionId,
-        version: _lastAppliedVersion + 1,
+        version: lastAppliedVersion + 1,
         activeRendererDeviceId: nextRendererId,
         activeRendererDeviceName: nextRendererName,
         state: state,

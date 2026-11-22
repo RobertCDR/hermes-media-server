@@ -250,6 +250,8 @@ class HermesSyncClient {
     }
 
     final epoch = ++_connectEpoch;
+    final connectionTokenObj = Object();
+    _activeConnectionToken = connectionTokenObj;
     _setConnectionState(
       _reconnectAttempt == 0
           ? HermesSyncConnectionState.connecting
@@ -327,8 +329,6 @@ class HermesSyncClient {
       );
 
       final channel = _channelFactory(wsUri);
-      final connectionTokenObj = Object();
-      _activeConnectionToken = connectionTokenObj;
       _channel = channel;
       _rxBuffer = '';
 
@@ -409,7 +409,7 @@ class HermesSyncClient {
       if (_disposed || !_started || epoch != _connectEpoch) {
         return;
       }
-      await _handleSocketDisconnected(_activeConnectionToken);
+      await _handleSocketDisconnected(connectionTokenObj);
     }
   }
 
@@ -504,36 +504,40 @@ class HermesSyncClient {
       return;
     }
 
-    switch (target) {
-      case 'SessionStateUpdated':
-        final payload = args.first;
-        if (payload is Map<String, dynamic>) {
-          final state = PlaybackSessionState.fromJson(payload);
-          _currentSession = state;
-          if (!_disposed && !_sessionController.isClosed) {
-            _sessionController.add(state);
+    try {
+      switch (target) {
+        case 'SessionStateUpdated':
+          final payload = args.first;
+          if (payload is Map<String, dynamic>) {
+            final state = PlaybackSessionState.fromJson(payload);
+            _currentSession = state;
+            if (!_disposed && !_sessionController.isClosed) {
+              _sessionController.add(state);
+            }
           }
-        }
-      case 'DevicesUpdated':
-        final payload = args.first;
-        if (payload is List<dynamic>) {
-          final devices = payload
-              .whereType<Map<String, dynamic>>()
-              .map(OnlineDeviceModel.fromJson)
-              .toList(growable: false);
-          _currentDevices = devices;
-          if (!_disposed && !_devicesController.isClosed) {
-            _devicesController.add(devices);
+        case 'DevicesUpdated':
+          final payload = args.first;
+          if (payload is List<dynamic>) {
+            final devices = payload
+                .whereType<Map<String, dynamic>>()
+                .map(OnlineDeviceModel.fromJson)
+                .toList(growable: false);
+            _currentDevices = devices;
+            if (!_disposed && !_devicesController.isClosed) {
+              _devicesController.add(devices);
+            }
           }
-        }
-      case 'WatchProgressUpdated':
-        final payload = args.first;
-        if (payload is Map<String, dynamic>) {
-          final evt = WatchProgressUpdatedEvent.fromJson(payload);
-          if (!_disposed && !_watchProgressController.isClosed) {
-            _watchProgressController.add(evt);
+        case 'WatchProgressUpdated':
+          final payload = args.first;
+          if (payload is Map<String, dynamic>) {
+            final evt = WatchProgressUpdatedEvent.fromJson(payload);
+            if (!_disposed && !_watchProgressController.isClosed) {
+              _watchProgressController.add(evt);
+            }
           }
-        }
+      }
+    } catch (_) {
+      // Ignore malformed SignalR payloads safely so the transport loop stays alive.
     }
   }
 
@@ -561,7 +565,7 @@ class HermesSyncClient {
   }
 
   Future<void> _handleSocketDisconnected(Object? connectionTokenObj) async {
-    if (connectionTokenObj != null &&
+    if (connectionTokenObj == null ||
         !identical(_activeConnectionToken, connectionTokenObj)) {
       return;
     }
@@ -632,6 +636,10 @@ class HermesSyncClient {
     _setConnectionState(nextState);
   }
 
+  void recordOfflineSession(PlaybackSessionState state) {
+    _currentSession = state;
+  }
+
   void _setConnectionState(HermesSyncConnectionState next) {
     if (!_disposed && _connectionState.value != next) {
       _connectionState.value = next;
@@ -682,7 +690,7 @@ class SignalRConnectTransport implements ConnectTransport {
 
     final prev = syncClient.currentSession;
     _offlineVersion = _nextOfflineVersion(prev);
-    return PlaybackSessionState(
+    final fallback = PlaybackSessionState(
       sessionId: prev?.sessionId ?? 'local',
       version: _offlineVersion,
       activeRendererDeviceId: localDeviceId,
@@ -698,6 +706,8 @@ class SignalRConnectTransport implements ConnectTransport {
       positionMs: 0,
       queueSongIds: List<String>.from(queueSongIds),
     );
+    syncClient.recordOfflineSession(fallback);
+    return fallback;
   }
 
   @override
@@ -738,7 +748,7 @@ class SignalRConnectTransport implements ConnectTransport {
         ? 0
         : (currentIndex ?? prev?.currentIndex ?? 0).clamp(0, queue.length - 1);
     _offlineVersion = _nextOfflineVersion(prev);
-    return PlaybackSessionState(
+    final fallback = PlaybackSessionState(
       sessionId: prev?.sessionId ?? 'local',
       version: _offlineVersion,
       activeRendererDeviceId: prev?.activeRendererDeviceId ?? localDeviceId,
@@ -753,6 +763,8 @@ class SignalRConnectTransport implements ConnectTransport {
       positionMs: positionMs ?? prev?.positionMs ?? 0,
       queueSongIds: queue,
     );
+    syncClient.recordOfflineSession(fallback);
+    return fallback;
   }
 
   @override

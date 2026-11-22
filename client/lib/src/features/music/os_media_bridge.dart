@@ -329,7 +329,9 @@ class AndroidAudioServiceMediaBridge
   Future<void> _performInit() async {
     try {
       final session = await _sessionProvider();
+      if (_disposed) return;
       await session.configure(const AudioSessionConfiguration.music());
+      if (_disposed) return;
       _audioSession = session;
 
       _noisySub = session.becomingNoisyEventStream.listen((_) {
@@ -378,6 +380,9 @@ class AndroidAudioServiceMediaBridge
       );
       _handler = handler;
     } catch (_) {
+      if (!_disposed) {
+        _initFuture = null;
+      }
       // Allow playback to continue cleanly if OS service registration fails.
     }
   }

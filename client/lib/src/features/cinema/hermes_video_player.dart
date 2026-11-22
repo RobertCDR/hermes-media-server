@@ -90,13 +90,17 @@ class WatchProgressReporter {
       return null;
     }
 
-    return cinemaService.updateWatchProgress(
-      movieId: movieId,
-      episodeId: episodeId,
-      positionMs: getPositionMs(),
-      durationMs: duration,
-      markWatched: markWatched,
-    );
+    try {
+      return await cinemaService.updateWatchProgress(
+        movieId: movieId,
+        episodeId: episodeId,
+        positionMs: getPositionMs(),
+        durationMs: duration,
+        markWatched: markWatched,
+      );
+    } catch (_) {
+      return null;
+    }
   }
 
   void dispose() {
@@ -203,6 +207,8 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
       widget.windowBridge ?? HermesWindowBridge.instance;
   List<String> _liveSubtitleLines = const [];
   String? _playbackError;
+  int _loadGeneration = 0;
+  bool _disposed = false;
   Timer? _idleTimer;
   late final WatchProgressReporter _reporter;
   late final HermesVideoPlaybackController _playback;
@@ -380,6 +386,8 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
       }
     }
     _playerFocusNode.dispose();
+    _disposed = true;
+    _loadGeneration++;
     unawaited(_playback.dispose());
     super.dispose();
   }
@@ -417,6 +425,8 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
     int? overridePositionMs,
     bool forceFreshTicket = false,
   }) async {
+    final gen = ++_loadGeneration;
+    if (_disposed) return;
     try {
       if (forceFreshTicket) {
         final prevTicket = _ticket;
@@ -426,8 +436,10 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
         } catch (_) {
           _ticket = prevTicket;
         }
+        if (_disposed || !mounted || gen != _loadGeneration) return;
       }
       final ticket = await _ensureTicket();
+      if (_disposed || !mounted || gen != _loadGeneration) return;
       final targetPosMs = overridePositionMs ?? _positionMs;
       final isDirect = _quality == VideoQualityPreset.directPlay;
       final anchorMs = isDirect ? 0 : (targetPosMs ~/ 1000) * 1000;
@@ -450,15 +462,14 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
               streamIndex: _selectedSubtitleIndex!,
               ticket: ticket,
             );
-      if (mounted) {
-        setState(() {
-          _hlsAnchorMs = anchorMs;
-          _completionHandled = false;
-          _playbackError = null;
-          _activeStreamUri = streamUri;
-          _activeSubtitleUri = subUri;
-        });
-      }
+      if (_disposed || !mounted || gen != _loadGeneration) return;
+      setState(() {
+        _hlsAnchorMs = anchorMs;
+        _completionHandled = false;
+        _playbackError = null;
+        _activeStreamUri = streamUri;
+        _activeSubtitleUri = subUri;
+      });
       await _playback.open(
         streamUri,
         startPositionMs: isDirect ? targetPosMs : 0,
@@ -467,9 +478,15 @@ class _HermesVideoPlayerScreenState extends State<HermesVideoPlayerScreen> {
         subtitleLanguage: subStream?.language,
         autoPlay: _playing,
       );
+      if (_disposed || !mounted || gen != _loadGeneration) return;
       await _playback.setVolume(_muted ? 0 : _volume);
-    } catch (_) {
-      // Surface kept intact cleanly when running against offline test stubs.
+    } catch (e) {
+      if (_disposed || !mounted || gen != _loadGeneration) return;
+      if (_playback.hasVideoOutput) {
+        setState(() {
+          _playbackError = 'Unable to load video stream: $e';
+        });
+      }
     }
   }
 

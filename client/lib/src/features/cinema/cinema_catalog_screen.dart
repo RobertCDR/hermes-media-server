@@ -95,6 +95,7 @@ class CinemaCatalogScreen extends StatefulWidget {
     this.navigationController,
     this.searchHistoryStore,
     this.externalMobileNav = false,
+    this.onBeforeStartVideo,
   });
 
   final CinemaService cinemaService;
@@ -106,6 +107,7 @@ class CinemaCatalogScreen extends StatefulWidget {
   final CinemaNavigationController? navigationController;
   final SearchHistoryStore? searchHistoryStore;
   final bool externalMobileNav;
+  final VoidCallback? onBeforeStartVideo;
 
   @override
   State<CinemaCatalogScreen> createState() => _CinemaCatalogScreenState();
@@ -520,7 +522,9 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
                                         .map((l) => l.id == updated.id ? updated : l)
                                         .toList(growable: false);
                                   });
-                                  setDialogState(() {});
+                                  if (dialogCtx.mounted) {
+                                    setDialogState(() {});
+                                  }
                                 } catch (e) {
                                   _showToast('List update failed: $e');
                                 }
@@ -680,6 +684,7 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
     int initialPositionMs = 0,
     bool replaceRoute = false,
   }) {
+    widget.onBeforeStartVideo?.call();
     final title = movie?.title ?? series?.title ?? 'Playback';
     final ep = episodeEntry;
     final subtitleLabel = ep != null
