@@ -92,12 +92,15 @@ class _HermesHorizontalShelfState extends State<HermesHorizontalShelf> {
         ? event.scrollDelta.dx
         : (shift ? event.scrollDelta.dy : 0.0);
     if (delta == 0) return;
-    final pos = _controller.position;
-    final target = (_controller.offset + delta).clamp(
-      pos.minScrollExtent,
-      pos.maxScrollExtent,
-    );
-    _controller.jumpTo(target);
+    GestureBinding.instance.pointerSignalResolver.register(event, (_) {
+      if (!mounted || !_controller.hasClients) return;
+      final pos = _controller.position;
+      final target = (_controller.offset + delta).clamp(
+        pos.minScrollExtent,
+        pos.maxScrollExtent,
+      );
+      _controller.jumpTo(target);
+    });
   }
 
   @override

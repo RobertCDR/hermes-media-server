@@ -518,11 +518,16 @@ class TvSeriesSummary {
     final eps = allEpisodes;
     if (eps.isEmpty) return null;
 
-    final inProgress = eps.where((e) {
+    final inProgressList = eps.where((e) {
       final wp = e.episode.watchProgress;
       return wp != null && !wp.isWatched && wp.positionMs > 0;
-    }).firstOrNull;
-    if (inProgress != null) {
+    }).toList();
+    if (inProgressList.isNotEmpty) {
+      inProgressList.sort(
+        (a, b) => b.episode.watchProgress!.updatedAtUtc
+            .compareTo(a.episode.watchProgress!.updatedAtUtc),
+      );
+      final inProgress = inProgressList.first;
       return CinemaResumePoint(
         mode: CinemaResumeMode.resume,
         progress: inProgress.episode.watchProgress!.completionRatio,
@@ -724,6 +729,8 @@ class CinemaNavigationController {
   CinemaNavigationController({
     this.onSelectMobileTab,
     this.onHandleBack,
+    this.onOpenMovie,
+    this.onOpenSeries,
   });
 
   final ValueNotifier<CinemaMobileTab> mobileTabNotifier =
@@ -731,10 +738,43 @@ class CinemaNavigationController {
 
   void Function(CinemaMobileTab tab)? onSelectMobileTab;
   bool Function()? onHandleBack;
+  void Function(String movieId)? onOpenMovie;
+  void Function(String seriesId)? onOpenSeries;
+  String? _pendingMovieId;
+  String? _pendingSeriesId;
 
   void selectMobileTab(CinemaMobileTab tab) {
     mobileTabNotifier.value = tab;
     onSelectMobileTab?.call(tab);
+  }
+
+  void openMovie(String movieId) {
+    if (onOpenMovie != null) {
+      _pendingMovieId = null;
+      _pendingSeriesId = null;
+      onOpenMovie!(movieId);
+    } else {
+      _pendingMovieId = movieId;
+      _pendingSeriesId = null;
+    }
+  }
+
+  void openSeries(String seriesId) {
+    if (onOpenSeries != null) {
+      _pendingMovieId = null;
+      _pendingSeriesId = null;
+      onOpenSeries!(seriesId);
+    } else {
+      _pendingSeriesId = seriesId;
+      _pendingMovieId = null;
+    }
+  }
+
+  ({String? movieId, String? seriesId}) takePendingSelection() {
+    final res = (movieId: _pendingMovieId, seriesId: _pendingSeriesId);
+    _pendingMovieId = null;
+    _pendingSeriesId = null;
+    return res;
   }
 
   bool handleBack() => onHandleBack?.call() ?? false;

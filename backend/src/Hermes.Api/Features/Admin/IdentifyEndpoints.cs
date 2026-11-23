@@ -137,9 +137,9 @@ public static class IdentifyEndpoints
             if (movie is not null)
             {
                 var details = await tmdbClient.GetDetailsAsync(LibraryMediaType.Movies, request.TmdbId, cancellationToken);
-                var posterHash = await TryDownloadAndStoreAsync(tmdbClient, artworkStore, details?.PosterPath, cancellationToken)
+                var posterHash = await tmdbClient.DownloadAndStoreArtworkAsync(artworkStore, details?.PosterPath, cancellationToken)
                     ?? movie.ArtworkHash;
-                var backdropHash = await TryDownloadAndStoreAsync(tmdbClient, artworkStore, details?.BackdropPath, cancellationToken)
+                var backdropHash = await tmdbClient.DownloadAndStoreArtworkAsync(artworkStore, details?.BackdropPath, cancellationToken)
                     ?? movie.BackdropHash;
 
                 movie.LockManualMatch(
@@ -167,9 +167,9 @@ public static class IdentifyEndpoints
             if (series is not null)
             {
                 var details = await tmdbClient.GetDetailsAsync(LibraryMediaType.Series, request.TmdbId, cancellationToken);
-                var posterHash = await TryDownloadAndStoreAsync(tmdbClient, artworkStore, details?.PosterPath, cancellationToken)
+                var posterHash = await tmdbClient.DownloadAndStoreArtworkAsync(artworkStore, details?.PosterPath, cancellationToken)
                     ?? series.ArtworkHash;
-                var backdropHash = await TryDownloadAndStoreAsync(tmdbClient, artworkStore, details?.BackdropPath, cancellationToken)
+                var backdropHash = await tmdbClient.DownloadAndStoreArtworkAsync(artworkStore, details?.BackdropPath, cancellationToken)
                     ?? series.BackdropHash;
 
                 series.LockManualMatch(
@@ -205,22 +205,5 @@ public static class IdentifyEndpoints
         }
 
         return Results.NotFound(new { error = "media_not_found" });
-    }
-
-    private static async Task<string?> TryDownloadAndStoreAsync(
-        ITmdbClient tmdbClient,
-        IArtworkStore artworkStore,
-        string? remotePath,
-        CancellationToken cancellationToken)
-    {
-        if (string.IsNullOrWhiteSpace(remotePath))
-        {
-            return null;
-        }
-
-        var bytes = await tmdbClient.DownloadImageBytesAsync(remotePath, cancellationToken);
-        return bytes is { Length: > 0 }
-            ? await artworkStore.SaveArtworkVariantsAsync(bytes, cancellationToken)
-            : null;
     }
 }

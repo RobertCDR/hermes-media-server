@@ -41,6 +41,7 @@ class DualWorldShell extends StatefulWidget {
     this.onToggleFullscreen,
     this.onOpenShortcuts,
     this.onMediaKeyAction,
+    this.onDismissOverlay,
   });
 
   final String username;
@@ -72,6 +73,7 @@ class DualWorldShell extends StatefulWidget {
   final VoidCallback? onToggleFullscreen;
   final VoidCallback? onOpenShortcuts;
   final ValueChanged<String>? onMediaKeyAction;
+  final bool Function()? onDismissOverlay;
 
   @override
   State<DualWorldShell> createState() => _DualWorldShellState();
@@ -141,9 +143,14 @@ class _DualWorldShellState extends State<DualWorldShell> {
       return KeyEventResult.handled;
     }
 
-    if (key == LogicalKeyboardKey.escape && _popoverOpen) {
-      setState(() => _popoverOpen = false);
-      return KeyEventResult.handled;
+    if (key == LogicalKeyboardKey.escape) {
+      if (_popoverOpen) {
+        setState(() => _popoverOpen = false);
+        return KeyEventResult.handled;
+      }
+      if (widget.onDismissOverlay?.call() == true) {
+        return KeyEventResult.handled;
+      }
     }
 
     if (key == LogicalKeyboardKey.f11 && widget.onToggleFullscreen != null) {
@@ -181,7 +188,8 @@ class _DualWorldShellState extends State<DualWorldShell> {
       return KeyEventResult.ignored;
     }
 
-    if (key == LogicalKeyboardKey.slash && hw.isShiftPressed) {
+    if (key == LogicalKeyboardKey.question ||
+        (key == LogicalKeyboardKey.slash && hw.isShiftPressed)) {
       if (widget.onOpenShortcuts != null) {
         widget.onOpenShortcuts!();
         return KeyEventResult.handled;
@@ -229,35 +237,38 @@ class _DualWorldShellState extends State<DualWorldShell> {
   }
 
   void _selectWorld(HermesWorld world) {
+    if (world == HermesWorld.settings && widget.settingsBuilder == null) {
+      if (_popoverOpen) {
+        setState(() => _popoverOpen = false);
+      }
+      widget.onOpenSettings?.call();
+      return;
+    }
     setState(() {
       _popoverOpen = false;
-      if (world == HermesWorld.settings && widget.settingsBuilder == null) {
-        widget.onOpenSettings?.call();
-        return;
-      }
       _world = world;
       if (world == HermesWorld.music || world == HermesWorld.cinema) {
         _lastContentWorld = world;
       }
-      widget.worldNotifier?.value = world;
     });
+    widget.worldNotifier?.value = world;
   }
 
   void _openSettings({required bool accountTab}) {
     setState(() {
       _popoverOpen = false;
-      if (accountTab) {
-        widget.onOpenAccountSettings?.call();
-      } else {
-        widget.onOpenSettings?.call();
-      }
       if (widget.settingsBuilder != null) {
         _world = HermesWorld.settings;
-        widget.worldNotifier?.value = HermesWorld.settings;
-      } else if (!accountTab) {
-        widget.onOpenSettings?.call();
       }
     });
+    if (accountTab) {
+      widget.onOpenAccountSettings?.call();
+    } else {
+      widget.onOpenSettings?.call();
+    }
+    if (widget.settingsBuilder != null) {
+      widget.worldNotifier?.value = HermesWorld.settings;
+    }
   }
 
   void _handleSystemBack() {

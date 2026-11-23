@@ -1,3 +1,5 @@
+using System.Buffers.Text;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using Hermes.Domain.Ports;
@@ -26,9 +28,9 @@ public sealed class HmacStreamTicketService : IStreamTicketService
     {
         var expiresAtUnix = (_timeProvider.GetUtcNow() + ttl).ToUnixTimeSeconds();
         var payload = $"{userId:N}:{mediaSourceId:N}:{expiresAtUnix}";
-        var payloadB64 = Base64UrlEncode(Encoding.UTF8.GetBytes(payload));
+        var payloadB64 = Base64Url.EncodeToString(Encoding.UTF8.GetBytes(payload));
         var signature = HMACSHA256.HashData(_secretBytes, Encoding.UTF8.GetBytes(payloadB64));
-        return $"{payloadB64}.{Base64UrlEncode(signature)}";
+        return $"{payloadB64}.{Base64Url.EncodeToString(signature)}";
     }
 
     public bool TryValidateStreamTicket(string ticket, Guid expectedMediaSourceId, out Guid userId)
@@ -70,7 +72,7 @@ public sealed class HmacStreamTicketService : IStreamTicketService
 
         if (!Guid.TryParseExact(payloadParts[0], "N", out var parsedUserId) ||
             !Guid.TryParseExact(payloadParts[1], "N", out var parsedMediaSourceId) ||
-            !long.TryParse(payloadParts[2], out var expiresAtUnix))
+            !long.TryParse(payloadParts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out var expiresAtUnix))
         {
             return false;
         }
@@ -89,9 +91,6 @@ public sealed class HmacStreamTicketService : IStreamTicketService
         return true;
     }
 
-    private static string Base64UrlEncode(byte[] bytes) =>
-        Convert.ToBase64String(bytes).Replace('+', '-').Replace('/', '_').TrimEnd('=');
-
     private static bool TryBase64UrlDecode(string input, out byte[] bytes)
     {
         bytes = [];
@@ -100,23 +99,15 @@ public sealed class HmacStreamTicketService : IStreamTicketService
             return false;
         }
 
-        var padded = input.Replace('-', '+').Replace('_', '/');
-        padded = (padded.Length % 4) switch
-        {
-            2 => padded + "==",
-            3 => padded + "=",
-            0 => padded,
-            _ => string.Empty
-        };
-
-        if (padded.Length == 0)
-        {
-            return false;
-        }
-
         try
         {
-            bytes = Convert.FromBase64String(padded);
+            var buffer = new byte[Base64Url.GetMaxDecodedLength(input.Length)];
+            if (!Base64Url.TryDecodeFromChars(input, buffer, out var bytesWritten))
+            {
+                return false;
+            }
+
+            bytes = buffer[..bytesWritten];
             return true;
         }
         catch (FormatException)

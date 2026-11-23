@@ -32,6 +32,16 @@ class AudioQualityPolicy {
 
   AudioQualityPreset presetFor(NetworkTransportMode mode) =>
       mode == NetworkTransportMode.wifi ? wifiPreset : cellularPreset;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is AudioQualityPolicy &&
+          other.wifiPreset == wifiPreset &&
+          other.cellularPreset == cellularPreset;
+
+  @override
+  int get hashCode => Object.hash(wifiPreset, cellularPreset);
 }
 
 enum PlaybackState {

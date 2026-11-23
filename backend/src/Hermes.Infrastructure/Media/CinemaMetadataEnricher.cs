@@ -139,11 +139,7 @@ public static class CinemaMetadataEnricher
             {
                 try
                 {
-                    var bytes = await tmdbClient.DownloadImageBytesAsync(member.ProfilePath, cancellationToken);
-                    if (bytes is { Length: > 0 })
-                    {
-                        artworkHash = await artworkStore.SaveArtworkVariantsAsync(bytes, cancellationToken);
-                    }
+                    artworkHash = await tmdbClient.DownloadAndStoreArtworkAsync(artworkStore, member.ProfilePath, cancellationToken);
                 }
                 catch (Exception) when (!cancellationToken.IsCancellationRequested)
                 {

@@ -16,6 +16,8 @@ import 'cinema_service.dart';
 import 'cinema_shared_widgets.dart';
 import 'hermes_video_player.dart';
 
+part 'cinema_catalog_widgets.dart';
+
 enum _CinemaFilter {
   all('Home'),
   movies('Movies'),
@@ -149,6 +151,13 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
         widget.navigationController?.mobileTabNotifier.value ??
         CinemaMobileTab.home;
     _attachNavigationController(widget.navigationController);
+    final pendingSelection = widget.navigationController?.takePendingSelection();
+    if (pendingSelection != null &&
+        (pendingSelection.movieId != null ||
+            pendingSelection.seriesId != null)) {
+      _selectedMovieId = pendingSelection.movieId;
+      _selectedSeriesId = pendingSelection.seriesId;
+    }
     if (widget.cinemaService.hasCachedCatalog) {
       _movies = List<MovieSummary>.from(widget.cinemaService.cachedMovies!);
       _series =
@@ -172,6 +181,13 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
     if (oldWidget.navigationController != widget.navigationController) {
       _detachNavigationController(oldWidget.navigationController);
       _attachNavigationController(widget.navigationController);
+    final pendingSelection = widget.navigationController?.takePendingSelection();
+    if (pendingSelection != null &&
+        (pendingSelection.movieId != null ||
+            pendingSelection.seriesId != null)) {
+      _selectedMovieId = pendingSelection.movieId;
+      _selectedSeriesId = pendingSelection.seriesId;
+    }
     }
   }
 
@@ -250,6 +266,8 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
     if (controller == null) return;
     controller.onSelectMobileTab = _onSelectMobileTab;
     controller.onHandleBack = _handleBack;
+    controller.onOpenMovie = _openMovieById;
+    controller.onOpenSeries = _openSeriesById;
   }
 
   void _detachNavigationController(CinemaNavigationController? controller) {
@@ -260,6 +278,33 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
     if (controller.onHandleBack == _handleBack) {
       controller.onHandleBack = null;
     }
+    if (controller.onOpenMovie == _openMovieById) {
+      controller.onOpenMovie = null;
+    }
+    if (controller.onOpenSeries == _openSeriesById) {
+      controller.onOpenSeries = null;
+    }
+  }
+
+  void _openMovieById(String movieId) {
+    if (!mounted) return;
+    _selectCinemaItem(movieId: movieId);
+  }
+
+  void _openSeriesById(String seriesId) {
+    if (!mounted) return;
+    _selectCinemaItem(seriesId: seriesId);
+  }
+
+  void _selectCinemaItem({String? movieId, String? seriesId}) {
+    if (_desktopSearchOverlayController.isShowing) {
+      _desktopSearchOverlayController.hide();
+    }
+    _searchFocusNode.unfocus();
+    setState(() {
+      _selectedMovieId = movieId;
+      _selectedSeriesId = seriesId;
+    });
   }
 
   void _onSelectMobileTab(CinemaMobileTab tab) {
@@ -557,6 +602,7 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
 
   Future<void> _toggleMovieWatchlist(MovieSummary movie) async {
     final targetState = !movie.isInWatchlist;
+    final previousMovies = _movies;
     setState(() {
       _movies = _movies
           .map((m) =>
@@ -572,12 +618,15 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
         inWatchlist: targetState,
       );
     } catch (_) {
-      // Keep responsive state; next refresh reconciles with backend.
+      if (!mounted) return;
+      setState(() => _movies = previousMovies);
+      _showToast('Could not update library state.');
     }
   }
 
   Future<void> _toggleSeriesWatchlist(TvSeriesSummary show) async {
     final targetState = !show.isInWatchlist;
+    final previousSeries = _series;
     setState(() {
       _series = _series
           .map((s) =>
@@ -593,7 +642,9 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
         inWatchlist: targetState,
       );
     } catch (_) {
-      // Keep responsive state; next refresh reconciles with backend.
+      if (!mounted) return;
+      setState(() => _series = previousSeries);
+      _showToast('Could not update library state.');
     }
   }
 
@@ -606,6 +657,7 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
       isWatched: targetWatched,
       updatedAtUtc: DateTime.now().toUtc(),
     );
+    final previousMovies = _movies;
 
     setState(() {
       _movies = _movies
@@ -623,12 +675,17 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
         durationMs: durationMs,
         markWatched: targetWatched,
       );
-    } catch (_) {}
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _movies = previousMovies);
+      _showToast('Could not update library state.');
+    }
   }
 
   Future<void> _toggleSeriesWatched(TvSeriesSummary show) async {
     final targetWatched = !show.isWatched;
     final now = DateTime.now().toUtc();
+    final previousSeries = _series;
 
     setState(() {
       _series = _series.map((s) {
@@ -659,7 +716,11 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
         seriesId: show.id,
         watched: targetWatched,
       );
-    } catch (_) {}
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _series = previousSeries);
+      _showToast('Could not update library state.');
+    }
   }
 
   void _showToast(String message) {
@@ -1049,7 +1110,7 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
                 return _buildMobileLibraryView(
                   context,
                   tokens,
-                  query,
+                  '',
                   horizontalPad,
                 );
               }
@@ -1639,10 +1700,10 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
                                 color: Colors.white,
                               ),
                               label: 'Details',
-                              onPressed: () => setState(() {
-                                _selectedMovieId = movie?.id;
-                                _selectedSeriesId = show?.id;
-                              }),
+                              onPressed: () => _selectCinemaItem(
+                                movieId: movie?.id,
+                                seriesId: show?.id,
+                              ),
                             ),
                           ],
                         ),
@@ -2073,9 +2134,9 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
                         reduceMotion: widget.reduceMotion,
                         onTap: () {
                           if (item.movieId != null) {
-                            setState(() => _selectedMovieId = item.movieId);
+                            _selectCinemaItem(movieId: item.movieId);
                           } else if (item.tvSeriesId != null) {
-                            setState(() => _selectedSeriesId = item.tvSeriesId);
+                            _selectCinemaItem(seriesId: item.tvSeriesId);
                           }
                         },
                       );
@@ -2188,7 +2249,7 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
                       : (entry.episode.watchProgress?.completionRatio ?? 0),
                   reduceMotion: widget.reduceMotion,
                   onTap: src == null
-                      ? () => setState(() => _selectedSeriesId = show.id)
+                      ? () => _selectCinemaItem(seriesId: show.id)
                       : () => _launchPlayback(
                             src,
                             widget.defaultQuality,
@@ -2252,10 +2313,7 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
         if (_searchQuery.trim().isNotEmpty) {
           unawaited(_recordCinemaSearchQuery(_searchQuery));
         }
-        setState(() {
-          _selectedMovieId = movie.id;
-          _selectedSeriesId = null;
-        });
+        _selectCinemaItem(movieId: movie.id);
       },
     );
   }
@@ -2283,10 +2341,7 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
         if (_searchQuery.trim().isNotEmpty) {
           unawaited(_recordCinemaSearchQuery(_searchQuery));
         }
-        setState(() {
-          _selectedSeriesId = show.id;
-          _selectedMovieId = null;
-        });
+        _selectCinemaItem(seriesId: show.id);
       },
     );
   }
@@ -2552,178 +2607,6 @@ class _CinemaCatalogScreenState extends State<CinemaCatalogScreen> {
       emptyMessage: 'No watch history yet',
       items: entries.map((e) => e.$2).toList(growable: false),
       horizontalPad: horizontalPad,
-    );
-  }
-}
-
-class _RowHeader extends StatelessWidget {
-  const _RowHeader({
-    required this.title,
-    required this.horizontalPad,
-    this.trailing,
-  });
-
-  final String title;
-  final double horizontalPad;
-  final Widget? trailing;
-
-  @override
-  Widget build(BuildContext context) {
-    final tokens = HermesThemeTokens.of(context);
-    return Padding(
-      padding: EdgeInsets.symmetric(horizontal: horizontalPad),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Flexible(
-            child: Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontFamily: 'Figtree',
-                fontSize: 20,
-                fontWeight: FontWeight.w800,
-                letterSpacing: -0.2,
-                color: tokens.text,
-              ),
-            ),
-          ),
-          ?trailing,
-        ],
-      ),
-    );
-  }
-}
-
-class _PosterStrip extends StatelessWidget {
-  const _PosterStrip({
-    required this.horizontalPad,
-    required this.items,
-  });
-
-  final double horizontalPad;
-  final List<Widget> items;
-
-  @override
-  Widget build(BuildContext context) {
-    return HermesHorizontalShelf(
-      height: 318,
-      horizontalPadding: horizontalPad,
-      itemCount: items.length,
-      itemBuilder: (_, idx) => items[idx],
-    );
-  }
-}
-
-class _ResponsivePosterGrid extends StatelessWidget {
-  const _ResponsivePosterGrid({required this.children});
-
-  final List<Widget> children;
-
-  @override
-  Widget build(BuildContext context) {
-    return Wrap(
-      spacing: 14,
-      runSpacing: 28,
-      children: children,
-    );
-  }
-}
-
-class _CustomListEditorDialog extends StatefulWidget {
-  const _CustomListEditorDialog({this.existing});
-
-  final CustomListModel? existing;
-
-  @override
-  State<_CustomListEditorDialog> createState() =>
-      _CustomListEditorDialogState();
-}
-
-class _CustomListEditorDialogState extends State<_CustomListEditorDialog> {
-  late final TextEditingController _nameController;
-  late final TextEditingController _descController;
-
-  @override
-  void initState() {
-    super.initState();
-    _nameController = TextEditingController(text: widget.existing?.name ?? '');
-    _descController =
-        TextEditingController(text: widget.existing?.description ?? '');
-  }
-
-  @override
-  void dispose() {
-    _nameController.dispose();
-    _descController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final tokens = HermesThemeTokens.of(context);
-    final isEdit = widget.existing != null;
-    return AlertDialog(
-      backgroundColor: tokens.surface2,
-      surfaceTintColor: Colors.transparent,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      title: Text(
-        isEdit ? 'Rename list' : 'Create list',
-        style: TextStyle(fontWeight: FontWeight.w800, color: tokens.text),
-      ),
-      content: SizedBox(
-        width: 380,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: _nameController,
-              autofocus: true,
-              decoration: InputDecoration(
-                labelText: 'List name',
-                hintText: 'Weekend Sci-Fi',
-                filled: true,
-                fillColor: tokens.surface3,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(6),
-                  borderSide: BorderSide.none,
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _descController,
-              decoration: InputDecoration(
-                labelText: 'Description (optional)',
-                filled: true,
-                fillColor: tokens.surface3,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(6),
-                  borderSide: BorderSide.none,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text('Cancel', style: TextStyle(color: tokens.text2)),
-        ),
-        FilledButton(
-          onPressed: () {
-            final name = _nameController.text.trim();
-            if (name.isEmpty) return;
-            Navigator.of(context).pop((
-              name: name,
-              description: _descController.text.trim(),
-            ));
-          },
-          child: Text(isEdit ? 'Save' : 'Create list'),
-        ),
-      ],
     );
   }
 }
