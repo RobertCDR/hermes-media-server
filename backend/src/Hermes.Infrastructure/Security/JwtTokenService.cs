@@ -1,3 +1,4 @@
+using System.Buffers.Text;
 using System.Globalization;
 using System.Security.Claims;
 using System.Security.Cryptography;
@@ -62,11 +63,7 @@ public sealed class JwtTokenService : ITokenService
 
     public string CreateOpaqueRefreshToken()
     {
-        var bytes = RandomNumberGenerator.GetBytes(32);
-        return Convert.ToBase64String(bytes)
-            .Replace('+', '-')
-            .Replace('/', '_')
-            .TrimEnd('=');
+        return Base64Url.EncodeToString(RandomNumberGenerator.GetBytes(32));
     }
 
     public string HashToken(string rawToken)

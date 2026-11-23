@@ -144,6 +144,7 @@ class _HermesMarqueeTextState extends State<HermesMarqueeText>
     final disableAnimations = MediaQuery.disableAnimationsOf(context);
     if (disableAnimations) {
       _stopLoop();
+      _startedForCurrentSize = false;
       return Text(
         widget.text,
         maxLines: 1,

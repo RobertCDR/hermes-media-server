@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using FluentAssertions;
+using Hermes.Api.Features.Admin;
 using Hermes.Api.Features.Auth;
 using Hermes.Api.Features.Cinema;
 using Hermes.Api.Features.Music;
@@ -185,6 +186,30 @@ public class HistoryListsAndCreditsTests
 
         var listAll = await adminClient.GetFromJsonAsync<List<CustomListDto>>("/api/v1/cinema/lists");
         listAll.Should().ContainSingle(l => l.Id == created.Id);
+
+        // Register a second user and verify strict per-user isolation on lists
+        var invite = await (await adminClient.PostAsJsonAsync(
+            "/api/v1/admin/invites",
+            new CreateInviteRequest(1, 24))).Content.ReadFromJsonAsync<InviteResponse>();
+        using var otherAnon = factory.CreateClient();
+        (await otherAnon.PostAsJsonAsync(
+            "/api/v1/auth/register",
+            new RegisterRequest("viewer", "ViewerPass!123", invite!.Code))).StatusCode.Should().Be(HttpStatusCode.Created);
+        var viewerLogin = await (await otherAnon.PostAsJsonAsync(
+            "/api/v1/auth/login",
+            new LoginRequest("viewer", "ViewerPass!123", "viewer-phone", "Android"))).Content.ReadFromJsonAsync<AuthTokenResponse>();
+        using var viewerClient = factory.CreateClient();
+        viewerClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", viewerLogin!.AccessToken);
+
+        (await viewerClient.GetFromJsonAsync<List<CustomListDto>>("/api/v1/cinema/lists")).Should().BeEmpty();
+        (await viewerClient.PutAsJsonAsync(
+            $"/api/v1/cinema/lists/{created.Id}",
+            new UpdateCustomListRequest("Hijacked", null))).StatusCode.Should().Be(HttpStatusCode.NotFound);
+        (await viewerClient.PostAsJsonAsync(
+            $"/api/v1/cinema/lists/{created.Id}/items",
+            new AddCustomListItemRequest(movieId, null))).StatusCode.Should().Be(HttpStatusCode.NotFound);
+        (await viewerClient.DeleteAsync($"/api/v1/cinema/lists/{created.Id}"))
+            .StatusCode.Should().Be(HttpStatusCode.NotFound);
 
         (await adminClient.DeleteAsync($"/api/v1/cinema/lists/{created.Id}"))
             .StatusCode.Should().Be(HttpStatusCode.NoContent);

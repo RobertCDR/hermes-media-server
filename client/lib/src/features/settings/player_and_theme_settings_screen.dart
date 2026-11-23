@@ -186,8 +186,9 @@ class _PlayerAndThemeSettingsScreenState
     if (next.defaultVideoQuality != widget.defaultVideoQuality) {
       widget.onDefaultVideoQualityChanged(next.defaultVideoQuality);
     }
-    if (next.wifiAudioPreset != widget.audioQualityPolicy.wifiPreset ||
-        next.cellularAudioPreset != widget.audioQualityPolicy.cellularPreset) {
+    if (widget.onDevicePreferencesChanged == null &&
+        (next.wifiAudioPreset != widget.audioQualityPolicy.wifiPreset ||
+            next.cellularAudioPreset != widget.audioQualityPolicy.cellularPreset)) {
       widget.onAudioQualityPolicyChanged?.call(next.toAudioQualityPolicy());
     }
   }

@@ -78,10 +78,18 @@ class SharedPrefsSearchHistoryStore implements SearchHistoryStore {
   static const String _cinemaKey = 'hermes.search_history.cinema.v1';
   static const int maxItems = 20;
 
+  Future<SharedPreferences?> _prefsOrNull() async {
+    try {
+      return await SharedPreferences.getInstance();
+    } catch (_) {
+      return null;
+    }
+  }
+
   @override
   Future<List<MusicSearchHistoryItem>> loadMusicHistory() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_musicKey);
+    final prefs = await _prefsOrNull();
+    final raw = prefs?.getString(_musicKey);
     if (raw == null || raw.isEmpty) return const [];
     try {
       final decoded = jsonDecode(raw) as List<dynamic>;
@@ -98,12 +106,16 @@ class SharedPrefsSearchHistoryStore implements SearchHistoryStore {
   Future<List<MusicSearchHistoryItem>> _saveMusicHistory(
     List<MusicSearchHistoryItem> items,
   ) async {
-    final prefs = await SharedPreferences.getInstance();
     final trimmed = items.take(maxItems).toList(growable: false);
-    await prefs.setString(
-      _musicKey,
-      jsonEncode(trimmed.map((e) => e.toJson()).toList(growable: false)),
-    );
+    final prefs = await _prefsOrNull();
+    if (prefs != null) {
+      try {
+        await prefs.setString(
+          _musicKey,
+          jsonEncode(trimmed.map((e) => e.toJson()).toList(growable: false)),
+        );
+      } catch (_) {}
+    }
     return trimmed;
   }
 
@@ -132,22 +144,29 @@ class SharedPrefsSearchHistoryStore implements SearchHistoryStore {
 
   @override
   Future<void> clearMusicHistory() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_musicKey);
+    final prefs = await _prefsOrNull();
+    if (prefs == null) return;
+    try {
+      await prefs.remove(_musicKey);
+    } catch (_) {}
   }
 
   @override
   Future<List<String>> loadCinemaHistory() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getStringList(_cinemaKey);
+    final prefs = await _prefsOrNull();
+    final raw = prefs?.getStringList(_cinemaKey);
     if (raw == null) return const [];
     return raw.where((q) => q.trim().isNotEmpty).toList(growable: false);
   }
 
   Future<List<String>> _saveCinemaHistory(List<String> queries) async {
-    final prefs = await SharedPreferences.getInstance();
     final trimmed = queries.take(maxItems).toList(growable: false);
-    await prefs.setStringList(_cinemaKey, trimmed);
+    final prefs = await _prefsOrNull();
+    if (prefs != null) {
+      try {
+        await prefs.setStringList(_cinemaKey, trimmed);
+      } catch (_) {}
+    }
     return trimmed;
   }
 
@@ -178,8 +197,11 @@ class SharedPrefsSearchHistoryStore implements SearchHistoryStore {
 
   @override
   Future<void> clearCinemaHistory() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_cinemaKey);
+    final prefs = await _prefsOrNull();
+    if (prefs == null) return;
+    try {
+      await prefs.remove(_cinemaKey);
+    } catch (_) {}
   }
 }
 

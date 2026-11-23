@@ -603,7 +603,7 @@ public sealed partial class LibraryScannerService(
                     string? stillHash = episode.StillArtworkHash;
                     if (string.IsNullOrWhiteSpace(stillHash))
                     {
-                        stillHash = await TryCacheTmdbArtworkAsync(remote.StillPath, cancellationToken);
+                        stillHash = await tmdbClient.DownloadAndStoreArtworkAsync(artworkStore, remote.StillPath, cancellationToken);
                     }
 
                     episode.ApplyScannedMetadata(remote.Title, remote.Overview, stillHash);
@@ -633,27 +633,14 @@ public sealed partial class LibraryScannerService(
                 return null;
             }
 
-            var posterHash = await TryCacheTmdbArtworkAsync(match.PosterPath, cancellationToken);
-            var backdropHash = await TryCacheTmdbArtworkAsync(match.BackdropPath, cancellationToken);
+            var posterHash = await tmdbClient.DownloadAndStoreArtworkAsync(artworkStore, match.PosterPath, cancellationToken);
+            var backdropHash = await tmdbClient.DownloadAndStoreArtworkAsync(artworkStore, match.BackdropPath, cancellationToken);
             return (match, posterHash, backdropHash);
         }
         catch (Exception) when (!cancellationToken.IsCancellationRequested)
         {
             return null;
         }
-    }
-
-    private async Task<string?> TryCacheTmdbArtworkAsync(string? remotePath, CancellationToken cancellationToken)
-    {
-        if (string.IsNullOrWhiteSpace(remotePath))
-        {
-            return null;
-        }
-
-        var bytes = await tmdbClient.DownloadImageBytesAsync(remotePath, cancellationToken);
-        return bytes is { Length: > 0 }
-            ? await artworkStore.SaveArtworkVariantsAsync(bytes, cancellationToken)
-            : null;
     }
 
     private static List<string> EnumerateSupportedFiles(string rootPath, HashSet<string> extensions)

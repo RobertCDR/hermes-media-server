@@ -500,11 +500,13 @@ class _HermesAppState extends State<HermesApp> {
         _flyoutArtCache.remove(_flyoutArtCache.keys.first);
       }
       _flyoutArtCache[artHash] = decoded;
-      if (_musicCoordinator?.currentSong?.artworkHash == artHash) {
+      if (!mounted) return;
+      final current = _musicCoordinator?.currentSong;
+      if (current != null && current.artworkHash == artHash) {
         await _windowBridge.showMediaFlyout(
           HermesMediaFlyoutData(
-            title: song.title,
-            artist: song.artistName,
+            title: current.title,
+            artist: current.artistName,
             isPlaying: _musicCoordinator?.session?.state == PlaybackState.playing,
             artBgra: decoded.bgra,
             artWidth: decoded.width,
@@ -912,6 +914,14 @@ class _HermesAppState extends State<HermesApp> {
         musicCoordinator: musicCoordinator,
         searchHistoryStore: _searchHistoryStore,
         onOpenMusicRoute: _openMusicRoute,
+        onOpenMovie: (movieId) {
+          _worldNotifier.value = HermesWorld.cinema;
+          _cinemaNav.openMovie(movieId);
+        },
+        onOpenSeries: (seriesId) {
+          _worldNotifier.value = HermesWorld.cinema;
+          _cinemaNav.openSeries(seriesId);
+        },
       ),
     );
   }
@@ -1089,6 +1099,11 @@ class _HermesAppState extends State<HermesApp> {
                       ),
                       onMediaKeyAction: (_) =>
                           unawaited(_triggerMediaFlyout()),
+                      onDismissOverlay: () {
+                        if (!_connectPopoverOpen) return false;
+                        setState(() => _connectPopoverOpen = false);
+                        return true;
+                      },
                       username: session.username,
                       isAdmin: session.isAdmin,
                       serverName: _serverNameOverride ?? endpoint.info.serverName,
@@ -1365,12 +1380,16 @@ class _LibrarySearchDialog extends StatefulWidget {
     required this.musicCoordinator,
     required this.searchHistoryStore,
     required this.onOpenMusicRoute,
+    this.onOpenMovie,
+    this.onOpenSeries,
   });
 
   final MusicService musicService;
   final MusicPlaybackCoordinator musicCoordinator;
   final SearchHistoryStore searchHistoryStore;
   final ValueChanged<MusicPageRoute> onOpenMusicRoute;
+  final ValueChanged<String>? onOpenMovie;
+  final ValueChanged<String>? onOpenSeries;
 
   @override
   State<_LibrarySearchDialog> createState() => _LibrarySearchDialogState();
@@ -1382,6 +1401,7 @@ class _LibrarySearchDialogState extends State<_LibrarySearchDialog> {
   List<MusicSearchHistoryItem> _recent = const [];
   bool _searching = false;
   String? _error;
+  int _searchSeq = 0;
 
   @override
   void initState() {
@@ -1421,10 +1441,12 @@ class _LibrarySearchDialogState extends State<_LibrarySearchDialog> {
 
   Future<void> _runSearch() async {
     final q = _queryController.text.trim();
+    final seq = ++_searchSeq;
     if (q.isEmpty) {
       setState(() {
         _result = null;
         _error = null;
+        _searching = false;
       });
       return;
     }
@@ -1434,6 +1456,7 @@ class _LibrarySearchDialogState extends State<_LibrarySearchDialog> {
     });
     try {
       final next = await widget.musicService.searchLibrary(q);
+      if (!mounted || seq != _searchSeq) return;
       unawaited(
         _record(
           MusicSearchHistoryItem(
@@ -1445,13 +1468,12 @@ class _LibrarySearchDialogState extends State<_LibrarySearchDialog> {
           ),
         ),
       );
-      if (!mounted) return;
       setState(() {
         _result = next;
         _searching = false;
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || seq != _searchSeq) return;
       setState(() {
         _error = e.toString();
         _searching = false;
@@ -1634,7 +1656,10 @@ class _LibrarySearchDialogState extends State<_LibrarySearchDialog> {
                                               ? 'Movie'
                                               : 'Movie • ${movie.year}',
                                         ),
-                                        onTap: () => Navigator.of(context).pop(),
+                                        onTap: () {
+                                          Navigator.of(context).pop();
+                                          widget.onOpenMovie?.call(movie.id);
+                                        },
                                       ),
                                     for (final show in _result!.series)
                                       ListTile(
@@ -1655,7 +1680,10 @@ class _LibrarySearchDialogState extends State<_LibrarySearchDialog> {
                                               ? 'TV Series'
                                               : 'TV Series • ${show.year}',
                                         ),
-                                        onTap: () => Navigator.of(context).pop(),
+                                        onTap: () {
+                                          Navigator.of(context).pop();
+                                          widget.onOpenSeries?.call(show.id);
+                                        },
                                       ),
                                     for (final album in _result!.albums)
                                       ListTile(
