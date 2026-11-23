@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:material_ui/material_ui.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
@@ -202,7 +203,8 @@ class MediaKitVideoPlaybackController implements HermesVideoPlaybackController {
   Future<void> _ensureMpvProperties() async {
     if (_propertiesApplied || _disposed) return;
     _propertiesApplied = true;
-    if (_player.platform case final NativePlayer nativePlatform) {
+    if (!kIsWeb && _player.platform is NativePlayer) {
+      final dynamic nativePlatform = _player.platform;
       for (final entry in config.mpvBackendProperties.entries) {
         try {
           await nativePlatform.setProperty(entry.key, entry.value);
@@ -331,7 +333,8 @@ class MediaKitVideoPlaybackController implements HermesVideoPlaybackController {
   Future<void> setSubtitleDelaySeconds(double seconds) async {
     _subtitleDelaySeconds = seconds.clamp(-10.0, 10.0);
     if (_disposed) return;
-    if (_player.platform case final NativePlayer nativePlatform) {
+    if (!kIsWeb && _player.platform is NativePlayer) {
+      final dynamic nativePlatform = _player.platform;
       try {
         await nativePlatform.setProperty(
           'sub-delay',

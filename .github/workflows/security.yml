@@ -8,6 +8,9 @@ on:
   schedule:
     - cron: '0 6 * * 1'
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -16,12 +19,12 @@ jobs:
   nuget-vulnerability-audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           global-json-file: global.json
       - name: Cache NuGet packages
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.nuget/packages
           key: ${{ runner.os }}-nuget-${{ hashFiles('backend/Directory.Packages.props', 'backend/**/*.csproj') }}
@@ -30,36 +33,92 @@ jobs:
       - name: Restore packages
         run: dotnet restore backend/Hermes.slnx
       - name: Check vulnerable NuGet packages
+        shell: bash
         run: |
-          AUDIT_OUTPUT=$(dotnet list backend/Hermes.slnx package --vulnerable --include-transitive)
-          echo "$AUDIT_OUTPUT"
-          if echo "$AUDIT_OUTPUT" | grep -qE "has the following vulnerable packages"; then
-            echo "Vulnerable NuGet package detected!"
-            exit 1
-          fi
+          dotnet list backend/Hermes.slnx package --vulnerable --include-transitive --format json > nuget-audit.json
+          python3 - <<'PY'
+          import json
+          import sys
+
+          with open("nuget-audit.json", "r", encoding="utf-8") as fh:
+              data = json.load(fh)
+
+          findings = []
+          for proj in data.get("projects", []):
+              proj_path = proj.get("path", "<unknown>")
+              for fw in proj.get("frameworks", []):
+                  fw_name = fw.get("framework", "")
+                  for bucket in ("topLevelPackages", "transitivePackages"):
+                      for pkg in fw.get(bucket, []):
+                          vulns = pkg.get("vulnerabilities", [])
+                          if vulns:
+                              findings.append((
+                                  proj_path,
+                                  fw_name,
+                                  pkg.get("id", "?"),
+                                  pkg.get("resolvedVersion", "?"),
+                                  vulns,
+                              ))
+
+          if findings:
+              for proj_path, fw_name, pkg_id, ver, vulns in findings:
+                  for v in vulns:
+                      print(f"::error::{pkg_id} {ver} ({proj_path} / {fw_name}): {v.get('severity')} - {v.get('advisoryurl')}")
+              sys.exit(1)
+
+          print("No vulnerable NuGet packages found.")
+          PY
 
   secret-scan:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v2
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  codeql:
+  codeql-matrix:
+    name: codeql (${{ matrix.language }})
     runs-on: ubuntu-latest
     permissions:
-      security-events: write
+      actions: read
       contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [csharp, actions]
     steps:
-      - uses: actions/checkout@v4
-      - uses: github/codeql-action/init@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: github/codeql-action/init@d2aacf54c2fbc910db8d7ec338fdb54ea48c692d # v3
         with:
-          languages: csharp
-      - uses: actions/setup-dotnet@v4
+          languages: ${{ matrix.language }}
+      - if: matrix.language == 'csharp'
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           global-json-file: global.json
-      - run: dotnet build backend/Hermes.slnx --configuration Release
-      - uses: github/codeql-action/analyze@v3
+      - if: matrix.language == 'csharp'
+        run: dotnet build backend/Hermes.slnx --configuration Release
+      - uses: github/codeql-action/analyze@d2aacf54c2fbc910db8d7ec338fdb54ea48c692d # v3
+        with:
+          category: "/language:${{ matrix.language }}"
+
+  codeql:
+    name: codeql
+    needs: [codeql-matrix]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify CodeQL matrix succeeded
+        env:
+          MATRIX_RESULT: ${{ needs.codeql-matrix.result }}
+        run: |
+          if [ "$MATRIX_RESULT" != "success" ]; then
+            echo "CodeQL matrix failed: $MATRIX_RESULT"
+            exit 1
+          fi
