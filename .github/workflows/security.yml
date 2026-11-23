@@ -82,7 +82,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  codeql:
+  codeql-matrix:
+    name: codeql (${{ matrix.language }})
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -106,3 +107,18 @@ jobs:
       - uses: github/codeql-action/analyze@d2aacf54c2fbc910db8d7ec338fdb54ea48c692d # v3
         with:
           category: "/language:${{ matrix.language }}"
+
+  codeql:
+    name: codeql
+    needs: [codeql-matrix]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify CodeQL matrix succeeded
+        env:
+          MATRIX_RESULT: ${{ needs.codeql-matrix.result }}
+        run: |
+          if [ "$MATRIX_RESULT" != "success" ]; then
+            echo "CodeQL matrix failed: $MATRIX_RESULT"
+            exit 1
+          fi
