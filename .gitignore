@@ -23,6 +23,9 @@ appsettings.Development.json
 appsettings.Local.json
 *.pfx
 *.key
+client/android/key.properties
+*.jks
+*.keystore
 
 # Superpowers & IDE agent scratch
 .superpowers/

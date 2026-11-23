@@ -16,10 +16,13 @@ class MainActivity : AudioServiceActivity() {
                     WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
             }
         }
+        val prefs = getSharedPreferences("hermes_native_prefs", MODE_PRIVATE)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            !prefs.getBoolean("post_notifications_prompted", false) &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
                 PackageManager.PERMISSION_GRANTED
         ) {
+            prefs.edit().putBoolean("post_notifications_prompted", true).apply()
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1001)
         }
     }

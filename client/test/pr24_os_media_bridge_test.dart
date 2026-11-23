@@ -348,17 +348,21 @@ void main() {
   });
 
   group('PR24 Android Manifest & Network Security Config', () {
-    test('declares required permissions, LAN cleartext config, and AudioService components', () {
+    test('declares required permissions, hardened security config, and AudioService components', () {
       final manifestFile = File('android/app/src/main/AndroidManifest.xml');
       final netConfigFile =
           File('android/app/src/main/res/xml/network_security_config.xml');
       final mainActivityFile = File(
         'android/app/src/main/kotlin/dev/hermes/hermes_client/MainActivity.kt',
       );
+      final v28StylesFile = File(
+        'android/app/src/main/res/values-v28/styles.xml',
+      );
 
       expect(manifestFile.existsSync(), isTrue);
       expect(netConfigFile.existsSync(), isTrue);
       expect(mainActivityFile.existsSync(), isTrue);
+      expect(v28StylesFile.existsSync(), isTrue);
 
       final manifest = manifestFile.readAsStringSync();
       expect(manifest, contains('android.permission.INTERNET'));
@@ -369,7 +373,8 @@ void main() {
         contains('android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK'),
       );
       expect(manifest, contains('android.permission.POST_NOTIFICATIONS'));
-      expect(manifest, contains('android:usesCleartextTraffic="true"'));
+      expect(manifest, contains('android:allowBackup="false"'));
+      expect(manifest, isNot(contains('android:usesCleartextTraffic="true"')));
       expect(
         manifest,
         contains('android:networkSecurityConfig="@xml/network_security_config"'),
@@ -378,6 +383,7 @@ void main() {
         manifest,
         contains('com.ryanheise.audioservice.AudioService'),
       );
+      expect(manifest, contains('android:stopWithTask="false"'));
       expect(manifest, contains('android:foregroundServiceType="mediaPlayback"'));
       expect(
         manifest,
@@ -386,10 +392,21 @@ void main() {
 
       final netConfig = netConfigFile.readAsStringSync();
       expect(netConfig, contains('cleartextTrafficPermitted="true"'));
-      expect(netConfig, contains('<certificates src="user"'));
+      expect(netConfig, contains('<certificates src="system"'));
+      expect(netConfig, contains('<debug-overrides>'));
+      expect(
+        netConfig.indexOf('<certificates src="user"'),
+        greaterThan(netConfig.indexOf('<debug-overrides>')),
+      );
+
+      final v28Styles = v28StylesFile.readAsStringSync();
+      expect(v28Styles, contains('name="LaunchTheme"'));
+      expect(v28Styles, contains('name="NormalTheme"'));
+      expect(v28Styles, contains('windowLayoutInDisplayCutoutMode'));
 
       final mainActivity = mainActivityFile.readAsStringSync();
       expect(mainActivity, contains('AudioServiceActivity'));
+      expect(mainActivity, contains('post_notifications_prompted'));
     });
   });
 }

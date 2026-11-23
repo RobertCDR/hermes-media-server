@@ -2,9 +2,11 @@ name: hermes
 
 services:
   postgres:
-    image: postgres:17-alpine
+    image: postgres:17-alpine@sha256:f9cf3e1f0066f0eb0c48707d864f0ac5941e9ff454a072077d97a4d278d07d73
     container_name: hermes-postgres
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-hermes}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
@@ -27,8 +29,21 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: ${HERMES_MEMORY_LIMIT:-2g}
+    cpus: ${HERMES_CPU_LIMIT:-4}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--max-time", "3", "http://127.0.0.1:8080/health/live"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
     ports:
-      - "${HERMES_PORT:-5258}:8080"
+      - "${HERMES_BIND_HOST:-0.0.0.0}:${HERMES_PORT:-5258}:8080"
     environment:
       ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=${POSTGRES_DB:-hermes};Username=${POSTGRES_USER:-hermes};Password=${POSTGRES_PASSWORD}"
       Hermes__ServerName: ${HERMES_SERVER_NAME:-Hermes Media Server}

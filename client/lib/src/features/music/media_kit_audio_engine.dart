@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:media_kit/media_kit.dart';
 
 import '../../core/media/hermes_media_runtime.dart';
@@ -108,7 +109,8 @@ class MediaKitAudioEngineAdapter
   }
 
   Future<void> _configureLowLatencyAudioProperties(Player player) async {
-    if (player.platform case final NativePlayer nativePlatform) {
+    if (!kIsWeb && player.platform is NativePlayer) {
+      final dynamic nativePlatform = player.platform;
       const props = <String, String>{
         'demuxer-max-bytes': '8MiB',
         'demuxer-max-back-bytes': '2MiB',
@@ -127,7 +129,8 @@ class MediaKitAudioEngineAdapter
   }
 
   Future<void> _applyNormalizationFilter(Player player, bool enabled) async {
-    if (player.platform case final NativePlayer nativePlatform) {
+    if (!kIsWeb && player.platform is NativePlayer) {
+      final dynamic nativePlatform = player.platform;
       try {
         await nativePlatform.setProperty(
           'af',
